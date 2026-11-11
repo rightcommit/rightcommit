@@ -180,7 +180,7 @@ rightcommit 是开源软件，采用 **[Apache-2.0 许可证](LICENSE)** 发布�
 
 ## 参与贡献
 
-欢迎提交 Pull Request。首个 Pull Request 合并前，需要签署[贡献者许可协议](CLA.md)。机器人会在 Pull Request 下留言，请按提示回复指定句子。只需签署一次。参见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+欢迎提交 Pull Request。项目依据 [Apache-2.0 许可证](LICENSE)接受贡献。参见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 发现问题或有建议？欢迎[创建 Issue](https://github.com/rightcommit/rightcommit/issues)。
 欢迎用中文提 Issue。

@@ -191,9 +191,8 @@ Third-party notices for bundled icons and Spec Kit files are in [`licenses/`](li
 
 ## Contributing
 
-Pull requests are welcome. Before your first one is merged you sign the
-[Contributor License Agreement](CLA.md): a bot comments on the pull request, and you reply with
-the sentence it asks for. You only need to do this once. See [CONTRIBUTING.md](CONTRIBUTING.md).
+Pull requests are welcome. Contributions are accepted under [Apache-2.0](LICENSE).
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Found a bug or have an idea? [Open an issue](https://github.com/rightcommit/rightcommit/issues).
 

@@ -79,8 +79,8 @@ What changed in each version of rightcommit. Releases are also listed on
 - rightcommit is now licensed under the [Apache License 2.0](LICENSE), starting with this
   version. A new [NOTICE](NOTICE) file lists the bundled third-party material and its
   licenses, and is included in the crates.io package.
-- The [Contributor License Agreement](CLA.md) names Apache 2.0 as the project's current
-  license.
+- The [contributor agreement used in this release](https://github.com/rightcommit/rightcommit/blob/b3c9d0ee5dac34c67fa740706679cc22f832587b/CLA.md)
+  names Apache 2.0 as the project's license.
 - The README is aimed at developers and small self-hosted teams, explains the new license
   and states that rightcommit is an independent personal project.
 

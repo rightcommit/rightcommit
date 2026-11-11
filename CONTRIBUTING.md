@@ -2,20 +2,6 @@
 
 Thank you for your interest in contributing. Pull requests are welcome.
 
-## Contributor License Agreement (CLA)
-
-Before your first pull request can be merged, you must sign the [Contributor License Agreement](CLA.md).
-
-1. Open a pull request.
-2. The CLA bot will comment on it with a link to the agreement if you have not signed yet.
-3. Read the CLA, then reply to the bot's comment with exactly this sentence:
-
-   `I have read the CLA Document and I hereby sign the CLA`
-
-4. The bot records your signature and updates the check on the pull request. If the check does not update, comment `recheck`.
-
-Signing is a one-time step and applies to all your future contributions. Pull requests from contributors who have not signed cannot be merged. If you contribute on behalf of your employer, make sure you are authorized to do so.
-
 ## Workflow
 
 1. Fork the repository and create a topic branch from `main`.
@@ -33,4 +19,6 @@ Open an issue with clear steps to reproduce (for bugs) or the problem you want t
 
 ## License
 
-By contributing you agree that your contributions are licensed under the terms in [LICENSE](LICENSE) and the CLA.
+Contributions are accepted under [Apache-2.0](LICENSE). Submit only work you have the right
+to contribute under those terms. If you contribute on behalf of an employer or another
+organization, make sure you are authorized to do so.
