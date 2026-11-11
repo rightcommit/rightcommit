@@ -198,6 +198,10 @@ Found a bug or have an idea? [Open an issue](https://github.com/rightcommit/righ
 
 Questions and feedback: [hello@rightcommit.com](mailto:hello@rightcommit.com).
 
+## Contributors
+
+<a href="https://github.com/Shards-inc"><img src="https://avatars.githubusercontent.com/u/226203219?v=4&amp;s=96" alt="Shards-inc" width="48" height="48"></a>
+
 ---
 
 rightcommit is an independent side project created and maintained by Lorenzo Toscano in his personal capacity. It is developed in his own time, with his own resources, and is not affiliated with, endorsed by, or sponsored by his employer, any of its clients, or any other organization. Views and choices expressed in this project are his own.

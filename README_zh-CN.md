@@ -187,6 +187,10 @@ rightcommit 是开源软件，采用 **[Apache-2.0 许可证](LICENSE)** 发布�
 
 咨询与反馈请发邮件至 [hello@rightcommit.com](mailto:hello@rightcommit.com)。
 
+## 贡献者
+
+<a href="https://github.com/Shards-inc"><img src="https://avatars.githubusercontent.com/u/226203219?v=4&amp;s=96" alt="Shards-inc" width="48" height="48"></a>
+
 ---
 
 rightcommit 是 Lorenzo Toscano 以个人身份创建并维护的独立业余项目。他在业余时间使用个人资源开发。该项目与其雇主、雇主的客户或其他组织无关，也未获得这些机构的背书或赞助。项目中的观点与决定均为个人立场。
