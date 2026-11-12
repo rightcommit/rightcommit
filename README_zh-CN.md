@@ -18,13 +18,11 @@
 <!-- 更新 README.md 时，请同步更新本文件。 -->
 
 <p align="center">
-  <strong>AI agents say “done”. rightcommit proves it.</strong><br>
-  <strong>AI 智能体说“完成了”，rightcommit 来证明。</strong>
+  <strong>面向 AI 编程智能体的开源工作流引擎。</strong>
 </p>
 
 <p align="center">
-  面向 Claude Code、Codex 和 Pi 的自托管编排工具。<br>
-  描述要自动化的任务，<strong>Project Manager</strong>（项目经理）会在可视化画布上生成可编辑的工作流草稿。
+  描述要做的事，即可在可视化画布上获得可编辑的工作流。让 Claude Code、Codex 和 Pi 按你设定的流程执行任务，并经过你指定的测试、审查和审批。支持自托管。
 </p>
 
 <p align="center">
@@ -34,6 +32,8 @@
   <a href="#contributing"><strong>参与贡献</strong></a> ·
   <a href="#license"><strong>许可证</strong></a>
 </p>
+
+![rightcommit 演示：Project Manager 生成工作流草稿，随后执行、测试、审查、本地提交并查看 FinOps](.github/assets/rightcommit-walkthrough.gif)
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-6254e8" alt="许可证：Apache-2.0"></a>
@@ -45,7 +45,11 @@
 
 ---
 
-![rightcommit 演示：Project Manager 生成工作流草稿，随后执行、测试、审查、本地提交并查看 FinOps](.github/assets/rightcommit-walkthrough.gif)
+## 可以用它构建什么
+
+- **用 Spec Kit 交付新功能。** 从功能想法出发，编写规范、计划和任务清单，再实现功能并运行本地测试。
+- **梳理 GitHub Issue。** 阅读 Issue 并查看代码仓库，起草需求、验收标准和测试计划。
+- **根据 Confluence 页面生成简报。** 在简报中引用原文，列出风险、待确认的问题和建议的测试。
 
 <a name="quickstart"></a>
 
@@ -85,25 +89,23 @@ rightcommit
 如果觉得有用，欢迎[给 rightcommit 点 Star](https://github.com/rightcommit/rightcommit)。
 你也可以[报告问题或提出建议](https://github.com/rightcommit/rightcommit/issues)，或阅读[贡献指南](CONTRIBUTING.md)。
 
-## 为什么选择 rightcommit
+<a name="为什么选择-rightcommit"></a>
+<a name="主要功能"></a>
 
-- **已验证的提交（commit）。** 构建工作流，要求通过测试、智能体审查和人工审批后才能提交。
-- **协调多个智能体。** 在同一工作流中，为不同步骤分配 Claude Code、Codex 或 Pi。
-- **Token 与成本追踪。** 在 FinOps 中按智能体、模型和执行查看成本与 Token 用量。
+## 如何掌控工作流
 
-## 主要功能
+### AI 智能体说“完成了”，rightcommit 来验证。
 
-- **智能体工作流编排。** 设计并运行结合 AI 智能体和工具的工作流。工作流可发布为兼容 A2A 的智能体。
-- **质量门禁。** 检查任务是否已关闭，运行服务端测试。如果文件在测试后发生变化，则重新验证结果。
-- **可追溯的工作记录。** 每个步骤都保存文件版本，记录 SHA-256 指纹和逐行差异。检查失败时，在限定次数内退回修改。
-- **按需构建工作流。** 可以只用三个步骤，也可以搭建完整交付流程。可从预置工作流开始，例如 Spec Kit 的规范 → 计划 → 任务 → 实现，也可自行创建。
-- **执行控制。** 支持交互、辅助和无人值守模式。可暂停等待人工决策，再从暂停处继续。
-- **适用于其他任务。** 同样的模块也可用于研究、文档分析或报告生成工作流。
+- **分配智能体和工具。** 为每个需要智能体的步骤选择 Claude Code、Codex 或 Pi。可以直接在画布上搭建流程，也可以编辑 Project Manager 生成的草稿。
+- **设置质量门禁。** 检查任务是否已关闭，在服务端运行测试，文件变更后要求重新测试。还可以在本地提交前加入智能体审查和人工审批。
+- **查看工作记录。** 查看受跟踪文件的版本和 SHA-256 指纹，并对支持的文本文件逐行比对。检查失败时可退回修改，并限制重试次数。
+- **决定何时介入。** 可选择交互、辅助或无人值守模式，暂停等待人工决定，再从保存的位置继续。
+- **追踪用量与成本。** 在 FinOps 中按步骤、运行记录、工作流、智能体和模型查看已记录的 Token 用量和可用的成本数据。智能体报告的成本和估算值分别显示。
 
 ## 连接与集成
 
 - **智能体：** 支持 Claude Code、Codex 和 Pi。可使用 API 密钥或已获授权的网关，例如 Anthropic、OpenAI、OpenRouter、AWS Bedrock、Google Vertex 和 Microsoft Foundry。
-- **服务：** 支持 GitHub、Azure DevOps、ServiceNow，以及通过 Atlassian CLI 接入的 Jira、Confluence 和 Bitbucket。每次向外部系统写入前，都需要确认具体写入内容。
+- **服务：** 支持 GitHub、Azure DevOps、ServiceNow，以及通过 Atlassian CLI 接入的 Jira、Confluence 和 Bitbucket。默认情况下，内置集成在向外部系统写入前会要求确认具体写入内容。
 - **开放标准：** 使用 MCP 为智能体接入 MCP 服务器上的工具，使用 A2A 发布可供其他智能体调用的工作流。
 
 ## 适用人群

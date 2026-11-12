@@ -18,13 +18,11 @@ English | [简体中文](README_zh-CN.md)
 <!-- Keep README_zh-CN.md in sync when updating this README. -->
 
 <p align="center">
-  <strong>AI agents say “done”. rightcommit proves it.</strong>
+  <strong>The open source workflow engine for AI coding agents.</strong>
 </p>
 
 <p align="center">
-  Self-hosted orchestration for Claude Code, Codex, and Pi.<br>
-  Describe what you want to automate and the <strong>Project Manager</strong> drafts
-  an editable workflow on the visual canvas.
+  Describe the job, get an editable workflow on a visual canvas, and run Claude Code, Codex and Pi through the tests, reviews and approvals you define. Self-hosted.
 </p>
 
 <p align="center">
@@ -34,6 +32,8 @@ English | [简体中文](README_zh-CN.md)
   <a href="#contributing"><strong>Contribute</strong></a> ·
   <a href="#license"><strong>License</strong></a>
 </p>
+
+![rightcommit demo showing the Project Manager drafting a workflow, then execution, tests, review, a local commit, and FinOps](.github/assets/rightcommit-walkthrough.gif)
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-6254e8" alt="License: Apache 2.0"></a>
@@ -45,7 +45,11 @@ English | [简体中文](README_zh-CN.md)
 
 ---
 
-![rightcommit demo showing the Project Manager drafting a workflow, then execution, tests, review, a local commit, and FinOps](.github/assets/rightcommit-walkthrough.gif)
+## What you can build
+
+- **Feature delivery with Spec Kit.** Turn a feature idea into a specification, plan and tasks, then implement it and run local tests.
+- **GitHub issue triage.** Read an issue and the repository to draft requirements, acceptance criteria and a test plan.
+- **Confluence reporting.** Turn a page into a briefing that cites its source and lists risks, open questions and proposed tests.
 
 ## Quickstart
 
@@ -85,36 +89,25 @@ on future starts to reuse your data. See the [macOS install guide](INSTALL_MAC.m
 [Report a bug or suggest an idea](https://github.com/rightcommit/rightcommit/issues),
 or see [how to contribute](CONTRIBUTING.md).
 
-## Why rightcommit
+<a name="why-rightcommit"></a>
+<a name="what-you-get"></a>
 
-- **Verified commits.** Build workflows that require passing tests, agent review, and human
-  approval before a commit.
-- **Coordinated agents.** Assign Claude Code, Codex, or Pi to different steps in the same workflow.
-- **Transparent costs.** See costs and tokens by agent, model, and run in FinOps.
+## How you stay in control
 
-## What you get
+### AI agents say done. rightcommit proves it.
 
-- **Agentic workflow orchestration.** Design and run workflows that combine AI agents
-  and tools. Workflows can be exposed as A2A-compatible agents.
-- **Quality gates.** Check that tasks are closed, run tests on the server, and recheck
-  results when files change after testing.
-- **Traceable work.** Every step saves its files as versions with a SHA-256 fingerprint and
-  a line-by-line diff. Failed checks send the work back for correction, within a set number
-  of attempts.
-- **A workflow that fits the job.** Three steps or a full delivery pipeline. Start from one
-  of the ready-made workflows, such as Spec Kit specification → plan → tasks → implementation,
-  or build your own.
-- **You stay in control.** Run interactively, assisted or unattended. Pause for human
-  decisions and resume where you left off.
-- **Not only code.** The same blocks can run research, document analysis or reporting workflows.
+- **Assign agents and tools.** Pick Claude Code, Codex or Pi for each agent step. Build the workflow on the canvas or edit a draft from Project Manager.
+- **Set quality gates.** Require closed tasks, run tests on the server and require fresh test results if files change. Add agent reviews and human approval before a local commit.
+- **Inspect the work.** See versions of tracked files with SHA-256 fingerprints and line-by-line diffs for supported text files. Route failed checks back for a limited number of retries.
+- **Choose when to intervene.** Run in interactive, assisted or unattended mode. Pause for human decisions and resume from the saved state.
+- **Track usage and costs.** FinOps shows recorded tokens and available costs by step, run, workflow, agent and model. It shows reported costs and estimates separately.
 
 ## Connections
 
 - **Agents:** Claude Code, Codex and Pi, with an API key or an authorized gateway (Anthropic,
   OpenAI, OpenRouter, AWS Bedrock, Google Vertex, Microsoft Foundry and more).
 - **Services:** GitHub, Azure DevOps, ServiceNow, and Jira, Confluence and Bitbucket through
-  the Atlassian CLI. Every write to an outside system waits for your confirmation of the
-  exact content.
+  the Atlassian CLI. By default, built-in external writes wait for confirmation of the exact content.
 - **Open standards:** MCP to give agents tools from your MCP servers, and A2A to publish a
   workflow that other agents can call.
 
