@@ -33,7 +33,9 @@ English | [简体中文](README_zh-CN.md)
   <a href="#license"><strong>License</strong></a>
 </p>
 
-![rightcommit demo showing the Project Manager drafting a workflow, then execution, tests, review, a local commit, and FinOps](.github/assets/rightcommit-walkthrough.gif)
+<p align="center">
+  <img src=".github/assets/rightcommit-walkthrough.gif" alt="rightcommit demo showing the Project Manager drafting a workflow, then execution, tests, review, a local commit, and FinOps" width="780">
+</p>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-6254e8" alt="License: Apache 2.0"></a>

@@ -33,7 +33,9 @@
   <a href="#license"><strong>许可证</strong></a>
 </p>
 
-![rightcommit 演示：Project Manager 生成工作流草稿，随后执行、测试、审查、本地提交并查看 FinOps](.github/assets/rightcommit-walkthrough.gif)
+<p align="center">
+  <img src=".github/assets/rightcommit-walkthrough.gif" alt="rightcommit 演示：Project Manager 生成工作流草稿，随后执行、测试、审查、本地提交并查看 FinOps" width="780">
+</p>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-6254e8" alt="许可证：Apache-2.0"></a>
