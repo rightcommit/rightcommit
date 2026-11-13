@@ -8,7 +8,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   const index=fs.readFileSync('web/index.html','utf8');
   const sourceTags=['download-workflow','artifacts-panel','log-lines'].map(id=>index.match(new RegExp('<[^>]+ id="'+id+'"[^>]*>'))[0]);
   const labelMarkup=sourceTags.map((tag,i)=>tag+['</button>','</aside>','</div>'][i]).join('');
-  await page.route('http://labels.test/**',r=>r.fulfill({contentType:'text/html',body:'<html><body><select data-language><option>it</option><option>en</option></select><div id="probes"></div>'+labelMarkup+'</body></html>'}));
+  await page.route('http://labels.test/**',r=>r.fulfill({contentType:'text/html; charset=utf-8',body:'<html><body><select data-language><option>it</option><option>en</option></select><div id="probes"></div>'+labelMarkup+'</body></html>'}));
   await page.goto('http://labels.test/');await page.addScriptTag({path:path.resolve('web/i18n.js')});
   const labels=[['Tariffe acquisite il:','Prices retrieved on:'],['Workflow principale','Parent workflow'],['Credenziali personali','Personal credentials'],['Bozza','Draft'],['Decisione umana','Human decision'],['Esecuzione in corso','Working on Run'],['Progettazione in corso','Working on Design'],['Mostra nascosti','Show hidden'],['Esci','Sign out'],['Deseleziona','Clear selection'],['Sposta','Move'],['Caricamento…','Loading…'],['Confronto per riga','Line-by-line comparison'],['Esporta workflow','Export workflow'],['Artefatti della run','Run artifacts'],['Registro attività','Activity log']];
   await page.evaluate(labels=>{for(const [it] of labels)for(const value of [' · '+it,it+' · ',' · '+it+' · ']){const p=document.createElement('p');p.textContent=value;document.querySelector('#probes').append(p)}},labels);
