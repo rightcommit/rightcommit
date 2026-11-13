@@ -219,6 +219,7 @@ Questions and feedback: [hello@rightcommit.com](mailto:hello@rightcommit.com).
 ## Contributors
 
 <a href="https://github.com/Shards-inc"><img src="https://avatars.githubusercontent.com/u/226203219?v=4&amp;s=96" alt="Shards-inc" width="48" height="48"></a>
+<a href="https://github.com/dannyward630"><img src="https://avatars.githubusercontent.com/u/71604164?v=4&amp;s=96" alt="dannyward630" width="48" height="48"></a>
 
 ---
 
