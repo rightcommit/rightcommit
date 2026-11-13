@@ -22,6 +22,6 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('nod
    const result=await api('/agents/pi/status','POST',{provider,model,multi_provider:true,api_key:'draft-key-must-not-be-used'});assert(result.connected);assert.deepEqual(requests.at(-1),{url:'/'+provider+'/v1/chat/completions',model,auth:'Bearer '+key});assert.deepEqual(await api('/settings'),original);
   }
   const single=await api('/agents/pi/status','POST',{provider:'openai',model:'gpt-fixture',multi_provider:false,api_key:'single-draft-key'});assert(single.connected);assert.equal(requests.at(-1).auth,'Bearer single-draft-key');assert.deepEqual(await api('/settings'),original);
-  console.log('PASS: real Pi 1.4 selects OpenAI/xAI/local with distinct environment keys, ignores generic/draft keys, uses the selected endpoint/model and does not save probe settings');
+  console.log('PASS: real Pi selects OpenAI/xAI/local with distinct environment keys, ignores generic/draft keys, uses the selected endpoint/model and does not save probe settings');
  }finally{server.kill('SIGINT');await new Promise(r=>server.exitCode!==null?r():server.once('exit',r));await new Promise(r=>mock.close(r));fs.rmSync(data,{recursive:true,force:true})}
 })().catch(error=>{console.error(error);process.exit(1)});

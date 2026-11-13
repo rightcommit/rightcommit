@@ -37,6 +37,6 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   const invalid=await page.request.post(base+'/api/agents/pi/status',{headers:{'X-Nodo-Request':'1'},data:{provider:'local',model:'local-test-model',base_url:'file:///tmp/model'}});assert.equal(invalid.status(),400);
   await page.evaluate(()=>{const language=document.querySelector('[data-language]');language.value='it';language.dispatchEvent(new Event('change',{bubbles:true}))});assert.equal(await provider.locator('.caption').textContent(),'Locale / OpenAI compatibile');
   await page.setViewportSize({width:390,height:844});assert(await page.locator('#settings-form').evaluate(el=>el.scrollWidth<=el.clientWidth));await page.screenshot({path:'/tmp/pi-local-settings.png'});assert.deepEqual(errors,[]);
-  console.log('PASS: real Pi 1.4 with local SSE server, draft URL/model/key, keyless endpoint, no cloud key reuse, endpoint-scoped credentials, persistence, IT/EN and invalid URL validation');
+  console.log('PASS: real Pi with local SSE server, draft URL/model/key, keyless endpoint, no cloud key reuse, endpoint-scoped credentials, persistence, IT/EN and invalid URL validation');
  }finally{await browser?.close();server.kill('SIGINT');await new Promise(r=>server.exitCode!==null?r():server.once('exit',r));await new Promise(r=>mock.close(r));fs.rmSync(data,{recursive:true,force:true})}
 })().catch(e=>{console.error(e);process.exit(1)});

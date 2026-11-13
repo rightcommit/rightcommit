@@ -3,10 +3,22 @@
 What changed in each version of rightcommit. Releases are also listed on
 [GitHub](https://github.com/rightcommit/rightcommit/releases).
 
-## [Unreleased]
+## [1.5.1] - 2026-11-13
+
+### Added
+
+- A guide to the local A2A incident demo, `examples/a2a/README.md`: two workflows that talk
+  through A2A on the bundled Northstar incident, with no API key or external service.
+
+### Changed
+
+- Pi 1.5.2. Its catalog adds the Qwen Token Plan Individual Cn provider (43 providers).
 
 ### Fixed
 
+- Some labels were missing from the English interface: the workflow export button, the run
+  artifacts list, the line-by-line comparison, the loading message and the screen-reader name
+  of the Activity Log.
 - A project file that the run did not change could appear as modified among the run's files,
   mostly on macOS, when the system reported a change to it late. Files written just before the
   run starts are now compared by content.

@@ -1,5 +1,5 @@
 {
-  "version": "1.4.0",
+  "version": "1.5.2",
   "providers": [
     {
       "id": "amazon-bedrock",
@@ -282,6 +282,14 @@
       "key_env": "QWEN_TOKEN_PLAN_API_KEY",
       "env": [
         "QWEN_TOKEN_PLAN_API_KEY"
+      ]
+    },
+    {
+      "id": "qwen-token-plan-individual-cn",
+      "label": "Qwen Token Plan Individual Cn",
+      "key_env": "QWEN_TOKEN_PLAN_CN_API_KEY",
+      "env": [
+        "QWEN_TOKEN_PLAN_CN_API_KEY"
       ]
     },
     {
