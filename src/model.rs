@@ -58,6 +58,10 @@ pub struct Node {
     pub location: String,
     pub source_type: String,
     pub source_mode: String,
+    /// Source only: add rightcommit's Spec Kit files when the folder has no `.specify`.
+    pub speckit: bool,
+    /// Source only: command run in the Source folder before the first node, without a shell.
+    pub setup_command: String,
     pub target: String,
     pub workflow_id: String,
     pub rag_index: String,

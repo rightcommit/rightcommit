@@ -19,7 +19,7 @@ pub fn edge_allowed(a: &Node, b: &Node, kind: &str, outcome: &str) -> bool {
             ["MCP", "RAG"].contains(&a.kind.as_str()) && b.kind == "Agent"
                 || a.kind == "Source"
                     && ["Agent", "Connection", "Workflow", "A2A"].contains(&b.kind.as_str())
-                || a.kind == "Agent" && b.kind == "Task" && b.agent == a.id
+                || a.kind == "Agent" && ["Task", "Review", "Gate"].contains(&b.kind.as_str()) && b.agent == a.id
         }
         "control" => {
             !["Source", "Agent", "MCP", "RAG"].contains(&a.kind.as_str())
@@ -386,8 +386,10 @@ pub fn validate(w: &Workflow) -> Result<()> {
         if !["Agent", "Source", "MCP", "RAG"].contains(&n.kind.as_str()) {
             ensure!(live.contains(&n.id), "Nodo non raggiungibile: {}", n.title);
         } else {
+            // An Agent chosen in a Task, Review or Gate field is in use even without an edge.
+            let assigned = n.kind == "Agent" && w.nodes.iter().any(|m| m.agent == n.id && ["Task", "Review", "Gate"].contains(&m.kind.as_str()));
             ensure!(
-                w.edges.iter().any(|e| e.from == n.id || e.to == n.id),
+                assigned || w.edges.iter().any(|e| e.from == n.id || e.to == n.id),
                 "Nodo senza collegamenti: {}",
                 n.title
             );
@@ -409,7 +411,7 @@ pub fn validate(w: &Workflow) -> Result<()> {
                 feeds = true;
                 break;
             }
-            // Review and Gate bind their agent by field rather than a context edge.
+            // Task, Review and Gate bind their agent by field; an edge is optional.
             if w.node(&x).is_ok_and(|node| node.kind == "Agent") {
                 pending.extend(
                     w.nodes
@@ -417,6 +419,7 @@ pub fn validate(w: &Workflow) -> Result<()> {
                         .filter(|node| {
                             node.agent == x
                                 && (node.kind == "Gate"
+                                    || node.kind == "Task" && !node.skip
                                     || node.kind == "Review" && node.mode != "human")
                         })
                         .map(|node| node.id.clone()),
@@ -585,9 +588,11 @@ pub async fn create_reserved(
         }
     }
     crate::source_access::available(app, &crate::source_access::paths(&source_context), &[])?;
+    let mut folders = vec![];
     for (i, n) in sources.iter().enumerate() {
         if let Some(path) = source_context.get(&format!("direct-source:{}", n.id)) {
             agents::own_tree_async(app, uid, Path::new(path)).await?;
+            folders.push(PathBuf::from(path));
             continue;
         }
         let dest = if i == 0 {
@@ -595,6 +600,7 @@ pub async fn create_reserved(
         } else {
             run_folder.join(".rightcommit/sources").join(&n.id)
         };
+        folders.push(dest.clone());
         if i > 0 && source_context.contains_key("direct-primary") {
             source_context.insert(
                 format!("source-path:{}", n.id),
@@ -693,6 +699,15 @@ pub async fn create_reserved(
         )
         .await?;
     }
+    // After the baseline commit, so files added here show up in the run's changes.
+    // A workspace continued from an earlier run was already prepared.
+    let mut prepared = vec![];
+    for (i, (n, folder)) in sources.iter().zip(&folders).enumerate() {
+        let fresh = !(i == 0 && base_run.is_some());
+        for line in crate::source_setup::prepare(app, uid, n, folder, fresh).await? {
+            prepared.push((n.id.clone(), line));
+        }
+    }
     let states = w
         .nodes
         .iter()
@@ -744,6 +759,12 @@ pub async fn create_reserved(
         error: None,
         input,
     };
+    // Name a missing skill now rather than when the run reaches its Task.
+    for n in r.workflow.nodes.iter().filter(|n| n.kind == "Task" && !n.skip && !n.command.trim().is_empty()) {
+        let (rt, ..) = runtime(&r, &n.agent)?;
+        agents::resolve_command(&n.command, &rt, Path::new(&r.workspace))
+            .map_err(|e| anyhow::anyhow!("Task {}: {e}", n.title))?;
+    }
     crate::artifacts::baseline_async(app, uid, &r).await?;
     app.store.save_run(uid, &r)?;
     emit(
@@ -754,6 +775,9 @@ pub async fn create_reserved(
         "",
         "Source preparate secondo la modalità selezionata. Nessun risultato simulato.",
     );
+    for (node, line) in prepared {
+        emit(app, uid, &r.id, "output", &node, &line);
+    }
     Ok(r)
 }
 #[derive(Clone)]

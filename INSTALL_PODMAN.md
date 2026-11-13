@@ -113,4 +113,4 @@ rightcommit folder, then use a **Source** node of type **Folder in /sources**.
 
 - Give the Pi agent extra tools: [ADD-PI-PACKAGES.md](ADD-PI-PACKAGES.md)
 - Add a skill to all agents: [ADD_A_SKILL.md](ADD_A_SKILL.md)
-- Use a framework such as OpenSpec: [ADD-OPENSPEC.md](ADD-OPENSPEC.md)
+- Use Spec Kit, OpenSpec or another framework with your project: [ADD-A-FRAMEWORK.md](ADD-A-FRAMEWORK.md)

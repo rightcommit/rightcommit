@@ -3,6 +3,45 @@
 What changed in each version of rightcommit. Releases are also listed on
 [GitHub](https://github.com/rightcommit/rightcommit/releases).
 
+## [1.5.0] - 2026-11-13
+
+### Added
+
+- **Add Spec Kit if missing** on the Source node: when a run starts and the project has no
+  `.specify` folder, rightcommit adds its Spec Kit (1.2.2, for Claude Code, Codex and Pi) to the
+  workspace without changing existing files. The Spec Kit workflow templates turn it on, so they
+  run on your own project; templates already in your catalog keep their settings.
+- **Setup command** on the Source node: a command run in the Source folder before the first
+  node, for frameworks such as OpenSpec (`openspec init --tools claude,codex,pi`). It runs
+  without a shell and without agent credentials, like the test command, and the import dialog
+  lists it.
+- New guide: [ADD-A-FRAMEWORK.md](ADD-A-FRAMEWORK.md) on using Spec Kit, OpenSpec or another
+  framework with your own project.
+
+### Changed
+
+- The **Skill** field of a Task takes any skill installed in the workspace, such as
+  `openspec-propose`, not only Spec Kit commands. Spec Kit short names such as `plan` still work.
+- A run now checks at start that every skill named in a Task exists for its Agent's runtime,
+  instead of failing when it reaches that Task.
+- An Agent chosen in the Agent field of a Task, Review or Gate no longer needs an edge. Dragging
+  an Agent onto a Task, Review or Gate assigns it.
+- Error messages from the server follow the interface language: they are shown in English when the
+  interface is in English, also in the Activity Log.
+- The Project Manager knows about skills, Source preparation and the new Agent edges.
+
+### Fixed
+
+- An error when starting a run is shown in the Start dialog, next to the button, not only in a
+  short notice at the bottom of the page.
+
+### Security
+
+- Updated the HTML sanitizer used for Markdown (ammonia 4.2.5), which fixes a mutation XSS with
+  embedded SVG and MathML
+  ([RUSTSEC-2026-0533](https://rustsec.org/advisories/RUSTSEC-2026-0533)). rightcommit's
+  settings did not allow the affected tags.
+
 ## [1.4.0] - 2026-11-13
 
 ### Added

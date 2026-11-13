@@ -132,7 +132,10 @@ To add tools, build your own image on top of rightcommit. In the rightcommit fol
 Repeat step 3 after each update. Debian packages can be older than the latest releases
 (Gradle is at 4.4): install a newer version from its official site if your project needs it.
 
-Outside Docker, the test command uses the tools installed on your machine.
+The same image is the place for the programs that a Source **setup command** runs, such as
+`openspec` (see [ADD-A-FRAMEWORK.md](ADD-A-FRAMEWORK.md)).
+
+Outside Docker, the test and setup commands use the tools installed on your machine.
 
 ## Troubleshooting
 
@@ -148,4 +151,4 @@ Outside Docker, the test command uses the tools installed on your machine.
 
 - Give the Pi agent extra tools: [ADD-PI-PACKAGES.md](ADD-PI-PACKAGES.md)
 - Add a skill to all agents: [ADD_A_SKILL.md](ADD_A_SKILL.md)
-- Use a framework such as OpenSpec: [ADD-OPENSPEC.md](ADD-OPENSPEC.md)
+- Use Spec Kit, OpenSpec or another framework with your project: [ADD-A-FRAMEWORK.md](ADD-A-FRAMEWORK.md)

@@ -39,6 +39,8 @@ fn preset(incident: bool) -> Workflow {
         100.,
     );
     src.source_type = "example".into();
+    // The example has Spec Kit; another project gets it when the Source is changed.
+    src.speckit = true;
     if incident {
         src.location = "baseline".into();
     }

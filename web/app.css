@@ -782,3 +782,4 @@ body.resizing-activity-log,body.resizing-activity-log *{cursor:row-resize!import
 .node-badge.memory-report-warning {
   font-weight: 700;
 }
+.modal-actions .run-error{flex:1 1 240px;margin:0;text-align:left}

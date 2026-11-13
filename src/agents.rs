@@ -669,45 +669,82 @@ async fn finish(app: &App, uid: i64, label: &str, child: tokio::process::Child, 
     );
     Ok(text)
 }
+/// Spec Kit commands, which Task nodes may name without the `speckit-` prefix.
+const SPECKIT_COMMANDS: &[&str] = &[
+    "analyze", "checklist", "clarify", "constitution", "converge", "implement", "plan", "specify",
+    "tasks", "taskstoissues",
+];
+
+/// The invocation of the skill or command named in a Task, for the Agent's runtime.
+/// Any skill installed in the workspace works (Spec Kit, OpenSpec or the project's own);
+/// Spec Kit commands also accept their short names, such as `plan` or `/speckit.plan`.
 pub fn resolve_command(command: &str, runtime: &str, workspace: &Path) -> Result<String> {
+    let command = command.trim();
     if command.is_empty() {
         return Ok(String::new());
     }
-    let mut name = command
-        .trim_start_matches(['/', '$'])
-        .replace("speckit.", "speckit-");
-    if !name.starts_with("speckit-") && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
-    {
-        name = format!("speckit-{name}");
-    }
+    let name = command.trim_start_matches(['/', '$']);
+    let name = name.strip_prefix("skill:").unwrap_or(name);
+    // `:` separates the folders of a Claude Code command, as in `/opsx:propose`.
     ensure!(
-        name.starts_with("speckit-") && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'),
-        "Comando Spec Kit non valido"
+        name.len() <= 128
+            && name.split(':').all(|part| {
+                part.starts_with(|c: char| c.is_ascii_alphanumeric())
+                    && part.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
+            }),
+        "Nome skill non valido: {name}. Usa lettere, numeri, -, _, . e :"
     );
-    let (file, invocation) = match runtime {
-        "codex" => (
-            workspace.join(format!(".agents/skills/{name}/SKILL.md")),
-            format!("${name}"),
-        ),
-        "claude" => (
-            workspace.join(format!(".claude/skills/{name}/SKILL.md")),
-            format!("/{name}"),
-        ),
-        "pi" => {
-            let d = name.replacen("speckit-", "speckit.", 1);
-            (
-                workspace.join(format!(".pi/prompts/{d}.md")),
-                format!("/{d}"),
-            )
-        }
+    let speckit = name.strip_prefix("speckit.").or_else(|| name.strip_prefix("speckit-"));
+    // Spec Kit short names keep meaning Spec Kit when the project also has a skill with that name.
+    let names = match speckit {
+        Some(short) => vec![format!("speckit-{short}")],
+        None if SPECKIT_COMMANDS.contains(&name) => vec![format!("speckit-{name}"), name.to_string()],
+        None => vec![name.to_string(), format!("speckit-{name}")],
+    };
+    let label = match runtime {
+        "claude" => "Claude Code",
+        "codex" => "Codex",
+        "pi" => "Pi",
         _ => bail!("Runtime non supportato"),
     };
-    ensure!(
-        file.is_file(),
-        "Skill assente: {}. Installa l'integrazione Spec Kit nel Source.",
-        file.display()
-    );
-    Ok(invocation)
+    let mut searched = vec![];
+    for name in &names {
+        let prompt = match name.strip_prefix("speckit-") {
+            Some(short) => format!("speckit.{short}"),
+            None => name.clone(),
+        };
+        let candidates = match runtime {
+            "claude" => vec![
+                (format!(".claude/skills/{name}/SKILL.md"), format!("/{name}")),
+                (format!(".claude/commands/{}.md", name.replace(':', "/")), format!("/{name}")),
+            ],
+            "codex" => vec![
+                (format!(".agents/skills/{name}/SKILL.md"), format!("${name}")),
+                (format!(".codex/skills/{name}/SKILL.md"), format!("${name}")),
+            ],
+            _ => vec![
+                (format!(".pi/prompts/{prompt}.md"), format!("/{prompt}")),
+                (format!(".pi/skills/{name}/SKILL.md"), format!("/skill:{name}")),
+                (format!(".agents/skills/{name}/SKILL.md"), format!("/skill:{name}")),
+            ],
+        };
+        for (file, invocation) in candidates {
+            if workspace.join(&file).is_file() {
+                return Ok(invocation);
+            }
+            searched.push(file);
+        }
+    }
+    let short = speckit.unwrap_or(name);
+    if speckit.is_some() || SPECKIT_COMMANDS.contains(&short) {
+        bail!(
+            "Skill Spec Kit {short} assente per {label} nel workspace. Attiva «Aggiungi Spec Kit se manca» nel nodo Source oppure aggiungi Spec Kit al repository."
+        );
+    }
+    bail!(
+        "Skill {name} assente per {label} nel workspace (cercata in {}). Aggiungi la skill al repository oppure imposta un comando di preparazione nel nodo Source.",
+        searched.join(", ")
+    )
 }
 
 const CONTRACT: &str = r#"

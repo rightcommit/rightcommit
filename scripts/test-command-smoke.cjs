@@ -43,7 +43,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   await page.locator('#workflow-import-file').setInputFiles({name:'imported.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(imported))});
   await page.locator('#workflow-import-commands').waitFor({state:'visible'});
   const warning=await page.locator('#workflow-import-commands').textContent();
-  assert(warning.includes('This workflow runs test commands on the server')&&warning.includes("Local CI · tests: pytest -q -k 'not slow'"),warning);
+  assert(warning.includes('This workflow runs these commands on the server')&&warning.includes("Local CI · tests: pytest -q -k 'not slow'"),warning);
   await page.locator('#workflow-import-file').setInputFiles({name:'plain.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify({...workflow,id:'y',name:'Plain'}))});
   await page.waitForFunction(()=>!document.querySelector('#workflow-import-confirm').disabled);
   assert(await page.locator('#workflow-import-commands').isHidden());

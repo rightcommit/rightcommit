@@ -2220,7 +2220,8 @@
             "outcomes": [],
             "require_tests": false,
             "require_tasks_closed": false,
-            "max_rework": 2
+            "max_rework": 2,
+            "speckit": true
           },
           {
             "id": "author",
@@ -3058,7 +3059,8 @@
             "outcomes": [],
             "require_tests": false,
             "require_tasks_closed": false,
-            "max_rework": 2
+            "max_rework": 2,
+            "speckit": true
           },
           {
             "id": "author",
@@ -4688,7 +4690,8 @@
             "outcomes": [],
             "require_tests": false,
             "require_tasks_closed": false,
-            "max_rework": 2
+            "max_rework": 2,
+            "speckit": true
           },
           {
             "id": "author",
@@ -6678,7 +6681,8 @@
             "outcomes": [],
             "require_tests": false,
             "require_tasks_closed": false,
-            "max_rework": 2
+            "max_rework": 2,
+            "speckit": true
           },
           {
             "id": "author",
@@ -7519,7 +7523,8 @@
             "outcomes": [],
             "require_tests": false,
             "require_tasks_closed": false,
-            "max_rework": 2
+            "max_rework": 2,
+            "speckit": true
           },
           {
             "id": "author",
@@ -8527,7 +8532,8 @@
             "outcomes": [],
             "require_tests": false,
             "require_tasks_closed": false,
-            "max_rework": 2
+            "max_rework": 2,
+            "speckit": true
           },
           {
             "id": "author",
@@ -12774,7 +12780,8 @@
             "source_mode": "copy",
             "location": "servicenow",
             "x": 40,
-            "y": 60
+            "y": 60,
+            "speckit": true
           },
           {
             "id": "agent",

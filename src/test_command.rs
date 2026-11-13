@@ -49,13 +49,18 @@ pub fn resolve(node: &Node, workspace: &Path) -> Result<TestCommand> {
 }
 
 pub fn split(command: &str) -> Result<Vec<String>> {
-    ensure!(!command.trim().is_empty(), "Il comando di test è vuoto");
-    ensure!(command.len() <= 4096, "Il comando di test supera 4096 caratteri");
-    ensure!(!command.contains(['\n', '\r', '\0']), "Il comando di test deve stare su una riga");
+    split_labeled("Il comando di test", command)
+}
+
+/// Words of a one-line command run without a shell. `label` names it in error messages.
+pub fn split_labeled(label: &str, command: &str) -> Result<Vec<String>> {
+    ensure!(!command.trim().is_empty(), "{label} è vuoto");
+    ensure!(command.len() <= 4096, "{label} supera 4096 caratteri");
+    ensure!(!command.contains(['\n', '\r', '\0']), "{label} deve stare su una riga");
     let Some(argv) = shlex::split(command) else {
-        bail!("Comando di test non valido: controlla virgolette e caratteri di escape");
+        bail!("{label} non è valido: controlla virgolette e caratteri di escape");
     };
-    ensure!(!argv.is_empty(), "Il comando di test è vuoto");
+    ensure!(!argv.is_empty(), "{label} è vuoto");
     Ok(argv)
 }
 

@@ -40,6 +40,7 @@ mod test_command;
 mod rag;
 mod revision;
 mod source_access;
+mod source_setup;
 mod storage;
 mod store;
 mod topics;

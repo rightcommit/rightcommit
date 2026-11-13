@@ -178,6 +178,7 @@ rightcommit 支持个人使用，也支持在组织内部部署并使用独立�
 | [CHANGELOG.md](CHANGELOG.md) | 各版本的变更 |
 | [ADD_A_SKILL.md](ADD_A_SKILL.md) | 一次为 Claude Code、Codex 和 Pi 添加技能 |
 | [ADD-PI-PACKAGES.md](ADD-PI-PACKAGES.md) | 将 pi.dev 上的包添加到 Pi 智能体 |
+| [ADD-A-FRAMEWORK.md](ADD-A-FRAMEWORK.md) | 在自己的项目中使用 Spec Kit、OpenSpec 或其他框架 |
 | [ADD-OPENSPEC.md](ADD-OPENSPEC.md) | 在工作流中使用 OpenSpec |
 | [UPDATE-PI-DEFAULT-PACKAGES.md](UPDATE-PI-DEFAULT-PACKAGES.md) | 更新 rightcommit 随附的 Pi 工具（面向维护者） |
 | [配置指南](guides/README.md) | 配置访问权限并运行工作流示例，涵盖 ServiceNow（ITSM、目录请求和 Spec Kit）、Atlassian（Jira、Bitbucket 和 Confluence）以及 GitHub（Issue 和 CI） |

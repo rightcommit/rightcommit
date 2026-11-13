@@ -218,7 +218,41 @@ fn real_installed_speckit_commands() {
         "/speckit.converge"
     );
     assert!(agents::resolve_command("../../secret", "codex", &root).is_err());
-    assert!(agents::resolve_command("invented", "codex", &root).is_err());
+    assert!(agents::resolve_command("a:..:b", "claude", &root).is_err());
+    let missing = agents::resolve_command("invented", "codex", &root).unwrap_err().to_string();
+    assert!(missing.contains("Skill invented assente per Codex") && missing.contains(".agents/skills/invented/SKILL.md"), "{missing}");
+    let empty = tempfile::tempdir().unwrap();
+    let missing = agents::resolve_command("plan", "pi", empty.path()).unwrap_err().to_string();
+    assert!(missing.contains("Skill Spec Kit plan assente per Pi") && missing.contains("Aggiungi Spec Kit se manca"), "{missing}");
+}
+#[test]
+fn any_installed_skill_resolves_for_each_runtime() {
+    let d = tempfile::tempdir().unwrap();
+    for file in [
+        ".claude/skills/openspec-propose/SKILL.md",
+        ".claude/commands/opsx/apply.md",
+        ".agents/skills/openspec-propose/SKILL.md",
+        ".pi/prompts/review-pr.md",
+        ".pi/skills/openspec-explore/SKILL.md",
+        ".agents/skills/plan/SKILL.md",
+    ] {
+        let path = d.path().join(file);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "x").unwrap();
+    }
+    let resolve = |command, runtime| agents::resolve_command(command, runtime, d.path()).unwrap();
+    assert_eq!(resolve("openspec-propose", "claude"), "/openspec-propose");
+    assert_eq!(resolve("/opsx:apply", "claude"), "/opsx:apply");
+    assert_eq!(resolve("$openspec-propose", "codex"), "$openspec-propose");
+    assert_eq!(resolve("openspec-propose", "pi"), "/skill:openspec-propose");
+    assert_eq!(resolve("review-pr", "pi"), "/review-pr");
+    assert_eq!(resolve("openspec-explore", "pi"), "/skill:openspec-explore");
+    // A Spec Kit short name means Spec Kit when it is installed, else the project's own skill.
+    assert_eq!(resolve("plan", "codex"), "$plan");
+    let path = d.path().join(".agents/skills/speckit-plan/SKILL.md");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, "x").unwrap();
+    assert_eq!(resolve("plan", "codex"), "$speckit-plan");
 }
 #[test]
 fn source_copy_refuses_symlinks() {
@@ -1677,4 +1711,80 @@ fn workflows_saved_without_test_command_still_load() {
     let ci = w.node("tests").unwrap();
     assert_eq!((ci.operation.as_str(), ci.test_command.as_str()), ("test", ""));
     engine::validate(&w).unwrap();
+}
+
+/// The SDD preset on a project folder without Spec Kit, as a user would set it up.
+fn own_project_workflow(a: &App) -> crate::model::Workflow {
+    let project = a.sources.join("own-project");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(project.join("README.md"), "# Own project\n").unwrap();
+    let mut w = crate::presets::all().remove(0);
+    let source = w.nodes.iter_mut().find(|n| n.kind == "Source").unwrap();
+    source.source_type = "folder".into();
+    source.source_mode = "copy".into();
+    source.location = "own-project".into();
+    w
+}
+
+#[tokio::test]
+async fn source_adds_speckit_as_run_changes_and_runs_its_setup_command() {
+    let d = tempfile::tempdir().unwrap();
+    let a = app(d.path());
+    let mut w = own_project_workflow(&a);
+    let project = a.sources.join("own-project");
+    std::fs::write(project.join("setup.js"), "require('fs').writeFileSync('prepared.txt', process.argv.slice(2).join('|'))\n").unwrap();
+    let source = w.nodes.iter_mut().find(|n| n.kind == "Source").unwrap();
+    assert!(source.speckit, "SDD presets add Spec Kit when the project lacks it");
+    source.setup_command = "node setup.js 'two words' --flag".into();
+    let r = engine::create(&a, 1, w, "own project".into(), None).await.unwrap();
+    let workspace = Path::new(&r.workspace);
+    assert!(workspace.join(".specify/scripts/bash/setup-plan.sh").is_file());
+    assert_eq!(std::fs::read_to_string(workspace.join("prepared.txt")).unwrap(), "two words|--flag");
+    // The original folder is untouched: only the run's copy is prepared.
+    assert!(!project.join(".specify").exists() && !project.join("prepared.txt").exists());
+    // Added after the baseline commit, so a delivery commit would carry them.
+    let status = std::process::Command::new("git").args(["status", "--porcelain"]).current_dir(workspace).output().unwrap();
+    let status = String::from_utf8_lossy(&status.stdout);
+    assert!(status.contains(".specify/") && status.contains("prepared.txt"), "{status}");
+    let log = logged(&a, &r);
+    assert!(log.iter().any(|t| t.starts_with("Spec Kit 1.2.2 aggiunto al Source")), "{log:?}");
+    assert!(log.iter().any(|t| t.starts_with("Comando di preparazione del Source") && t.contains("node setup.js 'two words' --flag")), "{log:?}");
+}
+
+#[tokio::test]
+async fn missing_skills_and_setup_tools_stop_the_run_before_it_starts() {
+    let d = tempfile::tempdir().unwrap();
+    let a = app(d.path());
+    let mut w = own_project_workflow(&a);
+    w.nodes.iter_mut().find(|n| n.kind == "Source").unwrap().speckit = false;
+    let error = engine::create(&a, 1, w.clone(), "x".into(), None).await.unwrap_err().to_string();
+    assert!(error.starts_with("Task ") && error.contains("Aggiungi Spec Kit se manca"), "{error}");
+
+    let source = w.nodes.iter_mut().find(|n| n.kind == "Source").unwrap();
+    source.speckit = true;
+    let task = w.nodes.iter_mut().find(|n| n.kind == "Task" && !n.command.is_empty()).unwrap();
+    task.command = "openspec-propose".into();
+    let error = engine::create(&a, 1, w.clone(), "x".into(), None).await.unwrap_err().to_string();
+    assert!(error.contains("Skill openspec-propose assente") && error.contains("comando di preparazione"), "{error}");
+
+    w.nodes.iter_mut().find(|n| n.kind == "Source").unwrap().setup_command = "openspec-cli-not-installed init".into();
+    let error = engine::create(&a, 1, w, "x".into(), None).await.unwrap_err().to_string();
+    assert!(error.contains("comando di preparazione non riuscito") && error.contains("openspec-cli-not-installed non è installato sul server"), "{error}");
+}
+
+#[test]
+fn agent_chosen_in_a_review_field_needs_no_edge() {
+    let mut w = crate::presets::all().remove(0);
+    let reviewer = Node { id: "reviewer".into(), kind: "Agent".into(), title: "Reviewer".into(), ..Default::default() };
+    let review = w.nodes.iter_mut().find(|n| n.kind == "Review" && n.mode != "human").expect("agent review in preset");
+    review.agent = reviewer.id.clone();
+    let review_id = review.id.clone();
+    w.nodes.push(reviewer);
+    engine::validate(&w).unwrap();
+    // The optional edge is accepted when it matches the field, refused when it does not.
+    w.edges.push(crate::model::Edge { from: "reviewer".into(), to: review_id.clone(), kind: "context".into(), outcome: String::new() });
+    engine::validate(&w).unwrap();
+    w.nodes.iter_mut().find(|n| n.id == review_id).unwrap().agent = "author".into();
+    let error = engine::validate(&w).unwrap_err().to_string();
+    assert!(error.contains("reviewer → ") && error.contains("(context)"), "{error}");
 }
