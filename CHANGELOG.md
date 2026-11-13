@@ -3,6 +3,14 @@
 What changed in each version of rightcommit. Releases are also listed on
 [GitHub](https://github.com/rightcommit/rightcommit/releases).
 
+## [Unreleased]
+
+### Fixed
+
+- A project file that the run did not change could appear as modified among the run's files,
+  mostly on macOS, when the system reported a change to it late. Files written just before the
+  run starts are now compared by content.
+
 ## [1.5.0] - 2026-11-13
 
 ### Added

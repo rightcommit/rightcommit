@@ -322,8 +322,28 @@ enum Baseline {
     Metadata {
         version: u8,
         metadata: BTreeMap<String, FileStamp>,
+        /// Content of the inputs whose timestamps were too recent to prove that a later
+        /// write changes them (empty when unreadable). Absent in older baselines.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hashes: Option<BTreeMap<String, String>>,
     },
     Legacy(BTreeMap<String, String>),
+}
+
+/// Hashes of the files whose stamps are not settled yet, like Git's racily clean
+/// entries: only their content tells a later identical stamp from an unchanged file.
+fn racy_hashes(metadata: &BTreeMap<String, FileStamp>) -> BTreeMap<String, String> {
+    metadata
+        .iter()
+        .filter(|(_, stamp)| !stamp.settled())
+        .map(|(path, stamp)| {
+            // A file written during the scan stays unknown and is always compared again.
+            (
+                path.clone(),
+                digest(Path::new(path), stamp).unwrap_or_default(),
+            )
+        })
+        .collect()
 }
 
 fn metadata_inventory(
@@ -383,6 +403,7 @@ fn baseline_cached(app: &App, uid: i64, run: &Run, cache: &mut InventoryCache) -
         let metadata = metadata_inventory(app, uid, run, cache)?;
         let json = serde_json::to_string(&Baseline::Metadata {
             version: 1,
+            hashes: Some(racy_hashes(&metadata)),
             metadata: metadata.clone(),
         })?;
         let observed = serde_json::to_string(&metadata)?;
@@ -562,6 +583,12 @@ pub fn snapshot(
             (info.change != "report").then_some((info.location, artifact))
         })
         .collect();
+    // Inputs the baseline can vouch for. Older baselines have no hashes and keep
+    // treating every candidate as changed.
+    let racy = match &baseline {
+        Baseline::Metadata { hashes, .. } => hashes.as_ref(),
+        Baseline::Legacy(_) => None,
+    };
     let mut observations = None;
     let files = match &baseline {
         Baseline::Legacy(_) => inventory_cached(app, uid, run, &mut cache)?,
@@ -588,6 +615,15 @@ pub fn snapshot(
                 // Overflow/errors and silent Docker loss are recovered by the
                 // full metadata reconciliation above, without reading all GB.
             }
+            // A write after the baseline always moves a settled ctime, so an input with
+            // the stamp it had then is unchanged, whatever a late notification says
+            // (FSEvents can deliver events for writes made before the watch started).
+            let unchanged_input = |path: &String, stamp: &FileStamp| {
+                racy.is_some_and(|racy| !racy.contains_key(path))
+                    && stamp.changed.0 > 0
+                    && metadata.get(path) == Some(stamp)
+                    && !previous_files.contains_key(path)
+            };
             let candidates = current
                 .iter()
                 .filter(|(path, stamp)| {
@@ -596,6 +632,7 @@ pub fn snapshot(
                         || (stamp.changed.1 == 0 && !stamp.settled())
                         || stamp.changed.0 <= 0
                 })
+                .filter(|(path, stamp)| !unchanged_input(path, stamp))
                 .map(|(p, _)| (p.clone(), String::new()))
                 .collect();
             observations = Some(current);
@@ -623,6 +660,14 @@ pub fn snapshot(
         let (hash, size, preview) = capture(app, uid, Path::new(&location))?;
         cache.hashed_files += usize::from(observations.is_some());
         if prior.is_some_and(|a| a.hash == hash) {
+            continue;
+        }
+        // A recent input with its baseline content is not a change.
+        if prior.is_none()
+            && racy
+                .and_then(|racy| racy.get(&location))
+                .is_some_and(|initial| *initial == hash)
+        {
             continue;
         }
         let (path, file) = description(
@@ -1395,7 +1440,10 @@ mod tests {
         baseline(&app, 1, &run).unwrap();
         std::fs::write(Path::new(&run.workspace).join("output.txt"), "output").unwrap();
         snapshot(&app, 1, &run, "task", "", "").unwrap();
-        let mut artifact = app.store.artifacts(1, &run.id).unwrap().remove(0);
+        let artifacts = app.store.artifacts(1, &run.id).unwrap();
+        let paths: Vec<_> = artifacts.iter().map(|a| a.path.as_str()).collect();
+        assert_eq!(paths, ["main/output.txt"]);
+        let mut artifact = artifacts.into_iter().next().unwrap();
         let mut new = run.clone();
         new.id = id();
         let dest = app.data.join(format!("users/1/workspaces/{}", new.id));
@@ -1548,6 +1596,126 @@ mod tests {
         );
     }
 
+    fn artifact_list(app: &App, run: &Run) -> Vec<(String, String)> {
+        app.store
+            .artifacts(1, &run.id)
+            .unwrap()
+            .into_iter()
+            .map(|a| (a.path, a.file.unwrap().change))
+            .collect()
+    }
+
+    /// As if every input had been written just before the run started, whatever the
+    /// time between the fixture and the baseline.
+    fn all_inputs_recent(app: &App, run: &Run) {
+        let db = app.store.db.lock().unwrap();
+        let raw: String = db
+            .query_row(
+                "SELECT json FROM artifact_baselines WHERE user_id=1 AND run=?",
+                params![run.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let Baseline::Metadata {
+            version, metadata, ..
+        } = serde_json::from_str(&raw).unwrap()
+        else {
+            panic!("metadata baseline expected");
+        };
+        let hashes = metadata
+            .iter()
+            .map(|(path, stamp)| (path.clone(), digest(Path::new(path), stamp).unwrap()))
+            .collect();
+        let json = serde_json::to_string(&Baseline::Metadata {
+            version,
+            metadata,
+            hashes: Some(hashes),
+        })
+        .unwrap();
+        db.execute(
+            "UPDATE artifact_baselines SET json=? WHERE user_id=1 AND run=?",
+            params![json, run.id],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn unchanged_inputs_are_not_reported_after_late_notifications_or_metadata_changes() {
+        let (_dir, app, run, _, _) = fixture(false);
+        baseline(&app, 1, &run).unwrap();
+        all_inputs_recent(&app, &run);
+        // FSEvents can report the fixture's own writes after the watch started.
+        let second = std::fs::canonicalize(app.sources.join("second/original.txt")).unwrap();
+        let tracker = app.artifact_tracker.run(1, &run.id);
+        tracker.inventory.lock().unwrap().pending.insert(second);
+        // A permission change moves ctime without changing the content.
+        let copied = Path::new(&run.workspace).join(".rightcommit/sources/copied/original.txt");
+        std::fs::set_permissions(&copied, std::fs::metadata(&copied).unwrap().permissions())
+            .unwrap();
+        // Real changes are still reported.
+        std::fs::write(Path::new(&run.workspace).join("original.txt"), "changed").unwrap();
+        std::fs::write(Path::new(&run.workspace).join("new.txt"), "new").unwrap();
+        snapshot(&app, 1, &run, "task", "", "").unwrap();
+        assert_eq!(
+            artifact_list(&app, &run),
+            [
+                ("new.txt".into(), "created".into()),
+                ("original.txt".into(), "modified".into())
+            ]
+        );
+    }
+
+    #[test]
+    fn settled_inputs_keep_their_baseline_stamp_despite_stale_notifications() {
+        let (_dir, app, run, _, _) = fixture(false);
+        baseline(&app, 1, &run).unwrap();
+        // As if every input was older than the timestamp resolution at the baseline.
+        app.store
+            .db
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE artifact_baselines SET json=json_set(json,'$.hashes',json('{}')) WHERE user_id=1 AND run=?",
+                params![run.id],
+            )
+            .unwrap();
+        let second = std::fs::canonicalize(app.sources.join("second/original.txt")).unwrap();
+        let tracker = app.artifact_tracker.run(1, &run.id);
+        tracker.inventory.lock().unwrap().pending.insert(second);
+        snapshot(&app, 1, &run, "task", "", "").unwrap();
+        assert!(artifact_list(&app, &run).is_empty());
+        // A write still moves the stamp, so the same input is reported once it changes.
+        std::fs::write(app.sources.join("second/original.txt"), "edited").unwrap();
+        snapshot(&app, 1, &run, "task", "", "").unwrap();
+        assert_eq!(
+            artifact_list(&app, &run),
+            [("second/original.txt".into(), "modified".into())]
+        );
+    }
+
+    #[test]
+    fn baselines_without_hashes_still_report_notified_inputs() {
+        let (_dir, app, run, _, _) = fixture(false);
+        baseline(&app, 1, &run).unwrap();
+        app.store
+            .db
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE artifact_baselines SET json=json_remove(json,'$.hashes') WHERE user_id=1 AND run=?",
+                params![run.id],
+            )
+            .unwrap();
+        let second = std::fs::canonicalize(app.sources.join("second/original.txt")).unwrap();
+        let tracker = app.artifact_tracker.run(1, &run.id);
+        tracker.inventory.lock().unwrap().pending.insert(second);
+        snapshot(&app, 1, &run, "task", "", "").unwrap();
+        assert_eq!(
+            artifact_list(&app, &run),
+            [("second/original.txt".into(), "modified".into())]
+        );
+    }
+
     #[test]
     fn artifact_preview_limit_changes_apply_to_existing_immutable_files() {
         let (_dir, app, run, _, _) = fixture(false);
@@ -1555,7 +1723,10 @@ mod tests {
         let path = Path::new(&run.workspace).join("large.txt");
         std::fs::write(&path, vec![b'x'; 2_000_000]).unwrap();
         snapshot(&app, 1, &run, "task", "", "").unwrap();
-        let artifact = app.store.artifacts(1, &run.id).unwrap().remove(0);
+        let artifacts = app.store.artifacts(1, &run.id).unwrap();
+        let paths: Vec<_> = artifacts.iter().map(|a| a.path.as_str()).collect();
+        assert_eq!(paths, ["large.txt"]);
+        let artifact = artifacts.into_iter().next().unwrap();
         assert!(!artifact.file.as_ref().unwrap().preview);
         assert_eq!(
             text_preview(
