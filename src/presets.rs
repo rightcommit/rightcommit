@@ -130,7 +130,7 @@ fn preset(incident: bool) -> Workflow {
         edges.push(edge("g-triage", "business", "control", "spec_change"));
         edges.push(edge("g-triage", "handoff", "control", "code_defect"));
     } else {
-        nodes.push(task("constitution","Constitution","constitution","Define concise principles: minimal Rust library, no network dependencies, deterministic tests, spec before code. Complete the constitution template and identify necessary questions.",100.));
+        nodes.push(task("constitution","Constitution","constitution","Define concise principles for the existing project: no new external services or dependencies unless the request requires them, deterministic tests, spec before code. Complete the constitution template and identify necessary questions.",100.));
         nodes.push(task("spec","Specify","specify","Specify the feature described in README.md: deterministic ticket deduplication. V1 preserves the oldest ticket priority, oldest ID and summed occurrences. Explicitly distinguish the V1 feature from the future V2 request in incident.json. A single feature specs/001-ticket-dedup is sufficient. Do not implement yet.",300.));
         nodes.push(task("clarify","Clarify","clarify","Clarify the V1 specification. Follow the rules for all decisions already documented in README. If an actual decision is missing, return needs_input with questions instead of assuming an answer.",500.));
         chain.extend(["constitution", "spec", "clarify"].map(str::to_owned));
@@ -140,7 +140,7 @@ fn preset(incident: bool) -> Workflow {
             "plan",
             "Plan",
             "plan",
-            "Plan the current feature in the existing Rust library. No external services or new dependencies. Use existing artifacts and keep the plan proportional to the repository.",
+            "Plan the current feature in the existing project. No new external services or dependencies unless the request requires them. Use existing artifacts and keep the plan proportional to the repository.",
             700.,
         ),
         (
@@ -198,7 +198,7 @@ fn preset(incident: bool) -> Workflow {
         "implement",
         "Implement",
         "implement",
-        "Execute all tasks in the current specification. Actually modify files and run cargo test. Keep the library small. Do not push or create PRs; if a test fails, fix it or declare blocked.",
+        "Execute all tasks in the current specification. Actually modify files and run the project's test suite. Do not push or create PRs; if a test fails, fix it or declare blocked.",
         1500.,
     );
     implement.phase = "Delivery".into();
@@ -208,7 +208,7 @@ fn preset(incident: bool) -> Workflow {
         "converge",
         "Converge",
         "converge",
-        "Verify actual convergence between implementation and the current spec. Run cargo test; compare acceptance criteria and tasks. Close only tasks actually completed. Return decision pass if convergent, rework if more work is needed.",
+        "Verify actual convergence between implementation and the current spec. Run the project's test suite; compare acceptance criteria and tasks. Close only tasks actually completed. Return decision pass if convergent, rework if more work is needed.",
         1700.,
     );
     converge.phase = "Delivery".into();
@@ -231,7 +231,7 @@ fn preset(incident: bool) -> Workflow {
     let mut ci = node(
         "tests",
         "Connection",
-        "Local CI · cargo test",
+        "Local CI · tests",
         "CI and PR",
         620.,
         1700.,

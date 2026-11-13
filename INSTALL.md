@@ -95,6 +95,45 @@ Run these commands from the rightcommit folder, while Docker is running.
 To work on folders from your computer, put them in the `sources` folder inside the
 rightcommit folder, then use a **Source** node of type **Folder in /sources**.
 
+## Tools for your project's tests
+
+The **Local CI** step runs your project's tests inside the container, with the tools installed
+there. The image includes Rust (`cargo`), Node.js with npm, Python 3, make and gcc. It does not
+include Go, Java, Maven, Gradle or pytest.
+
+To add tools, build your own image on top of rightcommit. In the rightcommit folder:
+
+1. Create `Dockerfile.tools` with the Debian packages you need:
+
+   ```dockerfile
+   FROM rightcommit:local
+   RUN apt-get update && apt-get install -y --no-install-recommends python3-pytest golang-go maven \
+       && rm -rf /var/lib/apt/lists/*
+   ```
+
+2. Create `compose.override.yaml`, which Docker Compose reads together with `compose.yaml`:
+
+   ```yaml
+   services:
+     rightcommit:
+       image: rightcommit:tools
+       build:
+         context: .
+         dockerfile: Dockerfile.tools
+   ```
+
+3. Build the rightcommit image, then start the extended one:
+
+   ```sh
+   docker build -t rightcommit:local .
+   docker compose up -d --build
+   ```
+
+Repeat step 3 after each update. Debian packages can be older than the latest releases
+(Gradle is at 4.4): install a newer version from its official site if your project needs it.
+
+Outside Docker, the test command uses the tools installed on your machine.
+
 ## Troubleshooting
 
 | Problem | What to do |

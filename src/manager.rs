@@ -403,7 +403,9 @@ fn design_guide(app: &App, uid: i64) -> Result<Value> {
             "runnable":"At least one Source for a root workflow, executable entry, all steps reachable, agents/configuration selected, non-skipped Task prompts filled (empty is allowed when Task.skip=true), Gate branches complete. A child workflow may inherit Source/workspace from its parent.",
             "drafts":"Incomplete graphs with unconnected nodes or empty configuration are allowed in editor. Never wire Comments; display pending requirements before Run.",
             "delivery_example":"Source -context-> Agent -context-> Task; entry Task; Task -control(empty)-> Review; Review -control(empty)-> Gate; Gate -control(pass)-> terminal Connection; Gate -rework(rework)-> Task.",
-            "local_operations":["read_ticket","test","commit"],"remote_operations":["create_pr","update_ticket"],"limits":{"nodes":200,"edges":600}
+            "local_operations":["read_ticket","test","commit"],
+            "local_test":"Connection provider local, operation test runs the project's tests on the server in the run workspace. Leave test_command empty to detect it from the workspace root, in this order: Cargo.toml -> cargo test, package.json -> npm test, pyproject.toml/pytest.ini/setup.py -> python3 -m pytest, go.mod -> go test ./..., pom.xml -> mvn -q test, build.gradle(.kts) -> gradle test, Makefile with a test target -> make test. Set test_command only when the project needs another command, for example node --test. It runs without a shell: no pipes, redirects or &&; call a script in the repository instead. The tool must be installed on the server.",
+            "remote_operations":["create_pr","update_ticket"],"limits":{"nodes":200,"edges":600}
         }}),
     )
 }

@@ -28,7 +28,7 @@ RUN . /tmp/agents.env \
     && apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates git curl bash python3 ripgrep jq util-linux tini build-essential pkg-config libssl-dev \
     && rm -rf /var/lib/apt/lists/* \
-    && npm install --global @openai/codex@${CODEX_VERSION} @anthropic-ai/claude-code@${CLAUDE_VERSION} @earendil-works/pi-coding-agent@${PI_VERSION} \
+    && npm install --global --allow-scripts=@anthropic-ai/claude-code @openai/codex@${CODEX_VERSION} @anthropic-ai/claude-code@${CLAUDE_VERSION} @earendil-works/pi-coding-agent@${PI_VERSION} \
     && npm cache clean --force \
     && rm /tmp/agents.env
 COPY pi-extensions/package.json pi-extensions/package-lock.json pi-extensions/.npmrc /app/pi-extensions/

@@ -36,6 +36,7 @@ mod model;
 mod parallelism;
 mod presets;
 mod templates;
+mod test_command;
 mod rag;
 mod revision;
 mod source_access;

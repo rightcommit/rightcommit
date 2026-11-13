@@ -46,6 +46,8 @@ pub struct Node {
     pub phase: String,
     pub prompt: String,
     pub command: String,
+    /// Local test Connection only: command to run instead of auto-detection.
+    pub test_command: String,
     pub skip: bool,
     pub agent: String,
     pub runtime: String,

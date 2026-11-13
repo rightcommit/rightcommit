@@ -104,11 +104,16 @@ pub(crate) fn redact_for_user(app: &App, uid: i64, text: &str, settings: &Settin
     let text = redact(text, settings);
     if uid != 1 && let Ok(admin) = app.store.settings(1) {redact(&text, &admin)} else {text}
 }
-pub fn command(app: &App, uid: i64, bin: &str, cwd: &Path, settings: &Settings) -> Result<Command> {
-    let home = user_home(app, uid)?;
+fn search_paths(app: &App) -> Vec<std::path::PathBuf> {
     let mut paths = vec![crate::distribution::tools(&app.data)];
     paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_else(|| "/usr/local/bin:/usr/bin:/bin".into())));
-    let search_path = std::env::join_paths(paths)?;
+    paths
+}
+/// Isolation, base environment and process group shared by agents and project tools.
+/// It adds no agent configuration and no provider credentials.
+fn base_command(app: &App, uid: i64, bin: &str, cwd: &Path) -> Result<Command> {
+    let home = user_home(app, uid)?;
+    let search_path = std::env::join_paths(search_paths(app))?;
     let mut c = if app.isolate {
         let mut c = Command::new("/usr/bin/setpriv");
         c.args([
@@ -132,9 +137,6 @@ pub fn command(app: &App, uid: i64, bin: &str, cwd: &Path, settings: &Settings) 
         .env("HOME", &home)
         .env("USER", format!("nodo-{uid}"))
         .env("LANG", "C.UTF-8")
-        .env("CODEX_HOME", home.join(".codex"))
-        .env("CLAUDE_CONFIG_DIR", home.join(".claude"))
-        .env("PI_CODING_AGENT_DIR", home.join(".pi/agent"))
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("TMPDIR", home.join("tmp"))
         .env("CARGO_HOME", home.join(".cargo"))
@@ -150,10 +152,18 @@ pub fn command(app: &App, uid: i64, bin: &str, cwd: &Path, settings: &Settings) 
         .env("GIT_AUTHOR_EMAIL", "rightcommit@localhost")
         .env("GIT_COMMITTER_NAME", "rightcommit")
         .env("GIT_COMMITTER_EMAIL", "rightcommit@localhost")
-        .env("SPECKIT_NON_INTERACTIVE", "1")
         .current_dir(cwd)
         .kill_on_drop(true)
         .process_group(0);
+    Ok(c)
+}
+pub fn command(app: &App, uid: i64, bin: &str, cwd: &Path, settings: &Settings) -> Result<Command> {
+    let home = user_home(app, uid)?;
+    let mut c = base_command(app, uid, bin, cwd)?;
+    c.env("CODEX_HOME", home.join(".codex"))
+        .env("CLAUDE_CONFIG_DIR", home.join(".claude"))
+        .env("PI_CODING_AGENT_DIR", home.join(".pi/agent"))
+        .env("SPECKIT_NON_INTERACTIVE", "1");
     let cfg = effective_agent_config(app, uid, bin, &settings.agents.get(bin).cloned().unwrap_or_default())?;
     if bin == "pi" {crate::pi_providers::validate_auth(&cfg, &home)?;}
     let provider_env = provider_environment_in_home(bin, &cfg, &home, uid);
@@ -601,11 +611,42 @@ pub async fn tool(
     let config = effective_agent_config(app, uid, bin, &s.agents.get(bin).cloned().unwrap_or_default())?;
     s.agents.insert(bin.into(), config);
     let mut c = command(app, uid, bin, cwd, &s)?;
-    c.args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let child = c.spawn()?;
+    c.args(args);
+    let child = c.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+    finish(app, uid, bin, child, timeout, &s).await
+}
+/// Run a project command, such as the local test step, as the run user. It gets only the
+/// base environment: no agent configuration and no provider credentials.
+pub async fn project_tool(app: &App, uid: i64, cwd: &Path, argv: &[String], timeout: u64) -> Result<String> {
+    let (program, args) = argv.split_first().context("Comando vuoto")?;
+    ensure!(
+        program_available(program, cwd, &search_paths(app)),
+        "{program} non è installato sul server: aggiungilo all'immagine o all'ambiente, \
+         oppure imposta un altro comando nel nodo"
+    );
+    let s = app.store.settings(uid)?;
+    let mut c = base_command(app, uid, program, cwd)?;
+    c.args(args);
+    let child = c.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            anyhow::anyhow!("{program} non è installato sul server")
+        } else {
+            anyhow::Error::from(e).context(format!("Avvio di {program} non riuscito"))
+        }
+    })?;
+    finish(app, uid, program, child, timeout, &s).await
+}
+/// A program name is looked up in PATH like the process will; a path is resolved from cwd.
+pub(crate) fn program_available(program: &str, cwd: &Path, paths: &[std::path::PathBuf]) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    let executable = |path: &Path| std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0);
+    if program.contains('/') {
+        executable(&cwd.join(program))
+    } else {
+        paths.iter().any(|dir| executable(&dir.join(program)))
+    }
+}
+async fn finish(app: &App, uid: i64, label: &str, child: tokio::process::Child, timeout: u64, s: &Settings) -> Result<String> {
     let _group = ProcessGroup(child.id().context("PID non disponibile")?);
     let out = tokio::time::timeout(
         std::time::Duration::from_secs(timeout),
@@ -619,11 +660,11 @@ pub async fn tool(
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         ),
-        &s,
+        s,
     );
     ensure!(
         out.status.success(),
-        "{bin}: {}",
+        "{label}: {}",
         text.chars().take(4000).collect::<String>()
     );
     Ok(text)
@@ -1491,6 +1532,8 @@ pub(crate) fn workspace_fingerprint(root: &Path) -> Result<String> {
                 ".mypy_cache",
                 ".cache",
                 ".venv",
+                ".tox",
+                ".gradle",
             ]
             .contains(&name.to_string_lossy().as_ref())
             {

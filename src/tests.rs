@@ -1546,3 +1546,135 @@ async fn active_workflow_count_is_owned_unlimited_and_does_not_double_count_chil
     assert_eq!(app.store.active_workflow_count(2).unwrap(),1);
     assert_eq!(app.store.active_workflow_count(3).unwrap(),0);
 }
+
+/// Turn the bundled Rust example workspace into a Node.js project.
+fn node_project(r: &Run, test_script: &str) {
+    let root = Path::new(&r.workspace);
+    std::fs::remove_file(root.join("Cargo.toml")).unwrap();
+    std::fs::write(
+        root.join("package.json"),
+        serde_json::to_string(&serde_json::json!({"name":"demo","private":true,"scripts":{"test":test_script}})).unwrap(),
+    )
+    .unwrap();
+}
+async fn local_test_run(a: &App) -> (Run, Node) {
+    let r = engine::create(a, 1, crate::presets::all().remove(0), "local test".into(), None).await.unwrap();
+    let ci = r.workflow.node("tests").unwrap().clone();
+    assert_eq!((ci.provider.as_str(), ci.operation.as_str(), ci.test_command.as_str()), ("local", "test", ""));
+    (r, ci)
+}
+fn logged(a: &App, r: &Run) -> Vec<String> {
+    a.store.events(1, &r.id, 0).unwrap().into_iter().map(|e| e.text).collect()
+}
+
+#[tokio::test]
+async fn local_test_detects_npm_and_follows_its_exit_code() {
+    let d = tempfile::tempdir().unwrap();
+    let a = app(d.path());
+    let (r, ci) = local_test_run(&a).await;
+    node_project(&r, "node -e \"console.log('npm suite ok')\"");
+    let out = crate::connectors::execute(&a, 1, &r, &ci).await.unwrap();
+    assert_eq!((out.status.as_str(), out.decision.as_str()), ("completed", "pass"));
+    assert!(out.summary.contains("npm suite ok"), "{}", out.summary);
+    assert!(logged(&a, &r).iter().any(|t| t == "Comando di test: npm test (rilevato da package.json)"));
+
+    node_project_failing(&r);
+    let error = crate::connectors::execute(&a, 1, &r, &ci).await.unwrap_err().to_string();
+    assert!(error.starts_with("npm:") && error.contains("npm suite failed"), "{error}");
+}
+fn node_project_failing(r: &Run) {
+    std::fs::write(
+        Path::new(&r.workspace).join("package.json"),
+        r#"{"private":true,"scripts":{"test":"node -e \"console.error('npm suite failed');process.exit(1)\""}}"#,
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn configured_test_command_runs_without_a_shell() {
+    let d = tempfile::tempdir().unwrap();
+    let a = app(d.path());
+    let (r, mut ci) = local_test_run(&a).await;
+    let tests = Path::new(&r.workspace).join("test");
+    std::fs::create_dir_all(&tests).unwrap();
+    std::fs::write(tests.join("sum.test.js"), "require('node:test')('sum',()=>{require('node:assert').equal(1+1,2)})\n").unwrap();
+    ci.test_command = "node --test 'test/sum.test.js'".into();
+    let out = crate::connectors::execute(&a, 1, &r, &ci).await.unwrap();
+    assert!(out.summary.contains("pass 1"), "{}", out.summary);
+    assert!(logged(&a, &r).iter().any(|t| t == "Comando di test: node --test test/sum.test.js (configurato nel nodo)"));
+    // With a shell, `&& false` would fail the step; here both are plain arguments to node.
+    ci.test_command = "node -e process.exit(0) && false".into();
+    crate::connectors::execute(&a, 1, &r, &ci).await.unwrap();
+}
+
+#[tokio::test]
+async fn missing_test_program_is_named() {
+    let d = tempfile::tempdir().unwrap();
+    let a = app(d.path());
+    let (r, mut ci) = local_test_run(&a).await;
+    ci.test_command = "rightcommit-missing-runner --all".into();
+    let error = crate::connectors::execute(&a, 1, &r, &ci).await.unwrap_err().to_string();
+    assert!(error.starts_with("rightcommit-missing-runner non è installato sul server"), "{error}");
+    std::fs::remove_file(Path::new(&r.workspace).join("Cargo.toml")).unwrap();
+    ci.test_command.clear();
+    let error = crate::connectors::execute(&a, 1, &r, &ci).await.unwrap_err().to_string();
+    assert!(error.contains("Imposta il comando di test nel nodo Connection"), "{error}");
+}
+
+#[tokio::test]
+async fn test_command_gets_no_agent_credentials() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = tempfile::tempdir().unwrap();
+    let a = app(d.path());
+    let mut settings = a.store.settings(1).unwrap();
+    settings.agents.entry("claude".into()).or_default().api_key = "sk-ant-api03-unit-test-secret".into();
+    settings.agents.entry("codex".into()).or_default().api_key = "sk-unit-test-codex-secret".into();
+    a.store.save_settings(1, &settings).unwrap();
+    // A program named like an agent must still not receive the agent's provider environment.
+    let tools = crate::distribution::tools(&a.data);
+    std::fs::create_dir_all(&tools).unwrap();
+    let fake = tools.join("claude");
+    std::fs::write(&fake, "#!/bin/sh\nenv\n").unwrap();
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let (r, mut ci) = local_test_run(&a).await;
+    ci.test_command = "claude".into();
+    let env = crate::connectors::execute(&a, 1, &r, &ci).await.unwrap().summary;
+    assert!(env.contains("HOME="), "{env}");
+    for leaked in ["ANTHROPIC", "CODEX_", "OPENAI", "AWS_", "CLAUDE_CONFIG_DIR", "[redacted]", "unit-test"] {
+        assert!(!env.contains(leaked), "{leaked} leaked into the test command environment:\n{env}");
+    }
+}
+
+#[tokio::test]
+async fn require_tests_gate_works_on_a_node_project() {
+    let d = tempfile::tempdir().unwrap();
+    let a = app(d.path());
+    let (mut r, ci) = local_test_run(&a).await;
+    node_project(&r, "node -e \"process.exit(0)\"");
+    let output = crate::connectors::execute(&a, 1, &r, &ci).await.unwrap();
+    r.outputs.insert(ci.id.clone(), output);
+    r.states.insert(ci.id.clone(), "completed".into());
+    r.context.insert(format!("test-proof:{}", ci.id), agents::workspace_fingerprint(Path::new(&r.workspace)).unwrap());
+    assert!(engine::tests_current(&r).unwrap());
+    // Dependencies and tool caches do not count as project changes.
+    for cache in ["node_modules/left-pad", ".pytest_cache", ".gradle", ".tox"] {
+        std::fs::create_dir_all(Path::new(&r.workspace).join(cache)).unwrap();
+        std::fs::write(Path::new(&r.workspace).join(cache).join("x"), "cache").unwrap();
+    }
+    assert!(engine::tests_current(&r).unwrap());
+    std::fs::write(Path::new(&r.workspace).join("index.js"), "module.exports = 1;\n").unwrap();
+    assert!(!engine::tests_current(&r).unwrap());
+}
+
+#[test]
+fn workflows_saved_without_test_command_still_load() {
+    let mut saved = serde_json::to_value(crate::presets::all().remove(0)).unwrap();
+    for node in saved["nodes"].as_array_mut().unwrap() {
+        node.as_object_mut().unwrap().remove("test_command");
+    }
+    assert!(!saved.to_string().contains("test_command"));
+    let w: Workflow = serde_json::from_value(saved).unwrap();
+    let ci = w.node("tests").unwrap();
+    assert_eq!((ci.operation.as_str(), ci.test_command.as_str()), ("test", ""));
+    engine::validate(&w).unwrap();
+}

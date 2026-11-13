@@ -3,6 +3,39 @@
 What changed in each version of rightcommit. Releases are also listed on
 [GitHub](https://github.com/rightcommit/rightcommit/releases).
 
+## [1.4.0] - 2026-11-13
+
+### Added
+
+- **Test command** on the Local CI step (a local Connection with the **test** operation): set the
+  command that runs your project's tests, or leave it empty to detect it from the workspace root:
+  `cargo test` (Cargo.toml), `npm test` (package.json), `python3 -m pytest` (pyproject.toml,
+  pytest.ini or setup.py), `go test ./...` (go.mod), `mvn -q test` (pom.xml), `gradle test`
+  (build.gradle) or `make test` (Makefile with a test target). The step and the Quality gate now
+  work on projects in any of these languages. The command runs without a shell, and the Activity
+  Log shows it with its origin. Workflows saved before this version detect the command.
+- When you import a workflow, the dialog lists the test commands it would run on the server.
+
+### Changed
+
+- The Feature and Incident SDD templates no longer assume a Rust project: their prompts ask for
+  the project's test suite, and the CI step is now called **Local CI · tests**. Templates you
+  have already saved or edited keep their text.
+- The test command gets only the basic environment: no agent API keys or provider credentials.
+- Contributions are accepted under the Apache License 2.0. A Contributor License Agreement is
+  no longer required.
+- The README has a new introduction, a shorter quickstart and a demo in the light theme. It is
+  also available in [Simplified Chinese](README_zh-CN.md) and credits external contributors.
+- [CONTRIBUTING.md](CONTRIBUTING.md) explains how to build rightcommit and run the tests
+  locally, and the [Docker install guide](INSTALL.md#tools-for-your-projects-tests) explains
+  which test tools the image includes and how to add others.
+
+### Fixed
+
+- `rightcommit setup` and the Docker image allow Claude Code's install script, so Claude Code
+  keeps working with npm 12. npm 12 blocks install scripts that are not allowed by name, and
+  without that script the `claude` command only reported that its native binary was missing.
+
 ## [1.3.0] - 2026-11-09
 
 ### Added

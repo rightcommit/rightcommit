@@ -79,6 +79,9 @@ pub fn setup(data: &Path, assets: &Path) -> Result<()> {
         .args([
             "--no-audit",
             "--no-fund",
+            // Claude Code's postinstall puts its native binary in place of a stub; npm 12
+            // blocks install scripts unless they are allowed by name.
+            "--allow-scripts=@anthropic-ai/claude-code",
         ])
         .args(agent_packages())
         .status()

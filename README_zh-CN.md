@@ -104,6 +104,22 @@ rightcommit
 - **决定何时介入。** 可选择交互、辅助或无人值守模式，暂停等待人工决定，再从保存的位置继续。
 - **追踪用量与成本。** 在 FinOps 中按步骤、运行记录、工作流、智能体和模型查看已记录的 Token 用量和可用的成本数据。智能体报告的成本和估算值分别显示。
 
+### 在服务器上运行测试
+
+**Local CI** 步骤（provider 为 **Local Git / CI**、operation 为 **test** 的 Connection 节点）会在运行工作区中执行项目的测试。你可以在节点上设置 **Test command**；留空时，rightcommit 会按以下顺序根据工作区根目录中的文件自动选择命令：
+
+| 文件 | 命令 |
+|---|---|
+| `Cargo.toml` | `cargo test` |
+| `package.json` | `npm test` |
+| `pyproject.toml`、`pytest.ini` 或 `setup.py` | `python3 -m pytest` |
+| `go.mod` | `go test ./...` |
+| `pom.xml` | `mvn -q test` |
+| `build.gradle` 或 `build.gradle.kts` | `gradle test` |
+| 含 `test` 目标的 `Makefile` | `make test` |
+
+命令不经过 shell 执行，因此管道、重定向和 `&&` 都不可用；如需多个步骤，请在仓库中编写脚本并调用它。活动日志会显示实际执行的命令，以及它来自节点设置还是自动检测。所需工具必须安装在运行 rightcommit 的环境中：Docker 镜像包含 Rust、Node.js 与 npm、Python 3 和 make，如需其他工具，请参阅 [Docker 安装指南](INSTALL.md#tools-for-your-projects-tests)。
+
 ## 连接与集成
 
 - **智能体：** 支持 Claude Code、Codex 和 Pi。可使用 API 密钥或已获授权的网关，例如 Anthropic、OpenAI、OpenRouter、AWS Bedrock、Google Vertex 和 Microsoft Foundry。

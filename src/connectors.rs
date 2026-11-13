@@ -77,7 +77,13 @@ pub async fn execute(app: &App, uid: i64, r: &Run, n: &Node) -> Result<AgentResu
                 );
                 std::fs::read_to_string(p)?
             }
-            "test" => agents::tool(app, uid, cwd, "cargo", &["test"], 600).await?,
+            "test" => {
+                let command = crate::test_command::resolve(n, cwd)?;
+                let line = format!("Comando di test: {} ({})", command.display(), command.origin_text());
+                // The Activity Log shows what ran; the report keeps only the tool output.
+                agents::emit(app, uid, &r.id, "output", &n.id, &line);
+                agents::project_tool(app, uid, cwd, &command.argv, 600).await?
+            }
             "commit" => {
                 let status =
                     agents::tool(app, uid, cwd, "git", &["status", "--porcelain"], 30).await?;

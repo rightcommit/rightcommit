@@ -104,6 +104,28 @@ or see [how to contribute](CONTRIBUTING.md).
 - **Choose when to intervene.** Run in interactive, assisted or unattended mode. Pause for human decisions and resume from the saved state.
 - **Track usage and costs.** FinOps shows recorded tokens and available costs by step, run, workflow, agent and model. It shows reported costs and estimates separately.
 
+### Tests on the server
+
+The **Local CI** step (a Connection node with provider **Local Git / CI** and operation
+**test**) runs your project's tests in the run workspace. Set **Test command** on the node, or
+leave it empty to detect it from the files in the workspace root, in this order:
+
+| File | Command |
+|---|---|
+| `Cargo.toml` | `cargo test` |
+| `package.json` | `npm test` |
+| `pyproject.toml`, `pytest.ini` or `setup.py` | `python3 -m pytest` |
+| `go.mod` | `go test ./...` |
+| `pom.xml` | `mvn -q test` |
+| `build.gradle` or `build.gradle.kts` | `gradle test` |
+| `Makefile` with a `test` target | `make test` |
+
+The command runs without a shell, so pipes, redirects and `&&` don't work: put several steps
+in a script in your repository and call it. The Activity Log shows the command and whether it
+was set on the node or detected. The tool must be installed where rightcommit runs: the Docker
+image includes Rust, Node.js with npm, Python 3 and make, and the
+[Docker install guide](INSTALL.md#tools-for-your-projects-tests) explains how to add others.
+
 ## Connections
 
 - **Agents:** Claude Code, Codex and Pi, with an API key or an authorized gateway (Anthropic,
