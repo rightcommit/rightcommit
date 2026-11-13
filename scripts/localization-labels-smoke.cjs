@@ -1,28 +1,32 @@
 const assert=require('node:assert/strict'),path=require('node:path');
+const fs=require('node:fs');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
 (async()=>{
  const browser=await chromium.launch({channel:'chrome',headless:true});
  try{
   const page=await browser.newPage({locale:'it-IT'});
-  await page.route('http://labels.test/**',r=>r.fulfill({contentType:'text/html',body:'<html><body><select data-language><option>it</option><option>en</option></select><div id="probes"></div></body></html>'}));
+  const index=fs.readFileSync('web/index.html','utf8');
+  const sourceTags=['download-workflow','artifacts-panel','log-lines'].map(id=>index.match(new RegExp('<[^>]+ id="'+id+'"[^>]*>'))[0]);
+  const labelMarkup=sourceTags.map((tag,i)=>tag+['</button>','</aside>','</div>'][i]).join('');
+  await page.route('http://labels.test/**',r=>r.fulfill({contentType:'text/html',body:'<html><body><select data-language><option>it</option><option>en</option></select><div id="probes"></div>'+labelMarkup+'</body></html>'}));
   await page.goto('http://labels.test/');await page.addScriptTag({path:path.resolve('web/i18n.js')});
-  const labels=[['Tariffe acquisite il:','Prices retrieved on:'],['Workflow principale','Parent workflow'],['Credenziali personali','Personal credentials'],['Bozza','Draft'],['Decisione umana','Human decision'],['Esecuzione in corso','Working on Run'],['Progettazione in corso','Working on Design'],['Mostra nascosti','Show hidden'],['Esci','Sign out'],['Deseleziona','Clear selection'],['Sposta','Move']];
+  const labels=[['Tariffe acquisite il:','Prices retrieved on:'],['Workflow principale','Parent workflow'],['Credenziali personali','Personal credentials'],['Bozza','Draft'],['Decisione umana','Human decision'],['Esecuzione in corso','Working on Run'],['Progettazione in corso','Working on Design'],['Mostra nascosti','Show hidden'],['Esci','Sign out'],['Deseleziona','Clear selection'],['Sposta','Move'],['Caricamento…','Loading…'],['Confronto per riga','Line-by-line comparison'],['Esporta workflow','Export workflow'],['Artefatti della run','Run artifacts'],['Registro attività','Activity log']];
   await page.evaluate(labels=>{for(const [it] of labels)for(const value of [' · '+it,it+' · ',' · '+it+' · ']){const p=document.createElement('p');p.textContent=value;document.querySelector('#probes').append(p)}},labels);
-  const fs=require('node:fs');
   const workspace=fs.readFileSync('web/index.html','utf8').match(/<strong id="workspace-mode"[^>]*>.*?<\/strong>/)[0];
   await page.evaluate(markup=>{document.body.insertAdjacentHTML('beforeend',markup);document.querySelector('#workspace-mode').textContent='Esecuzione in corso · e03ac425'},workspace);
   await page.selectOption('[data-language]','it');
   const italian=await page.locator('#probes p').allTextContents();
   const english=labels.flatMap(([,en])=>[' · '+en,en+' · ',' · '+en+' · ']);
+  const attributes=()=>Promise.all([page.locator('#download-workflow').getAttribute('aria-label'),page.locator('#download-workflow').getAttribute('data-tip'),page.locator('#artifacts-panel').getAttribute('aria-label'),page.locator('#log-lines').getAttribute('aria-label')]);
   // Mirror the actual history markup, including a user name that is also a UI label.
   const app=require('node:fs').readFileSync('web/app.js','utf8');
   await page.evaluate(source=>{window.app={runs:[{id:'child',workflow_id:'w',name:'Salva',parent:{run:'parent'},created:1793440800,status:'completed'}]};window.currentWorkflow=()=>({id:'w',name:'Salva'});window.$=s=>document.querySelector(s);window.esc=s=>String(s);window.icon=()=>'';window.states={completed:'Completato'};const host=document.createElement('div');host.id='run-history';document.body.append(host);(0,eval)(source);renderHistory()},app.slice(app.indexOf('function renderHistory()'),app.indexOf('async function showExecutions()')));
   for(let i=0;i<3;i++){
-   await page.selectOption('[data-language]','en');assert.deepEqual(await page.locator('#probes p').allTextContents(),english);
+   await page.selectOption('[data-language]','en');assert.deepEqual(await page.locator('#probes p').allTextContents(),english);assert.deepEqual(await attributes(),['Export workflow','Export workflow','Run artifacts','Activity log']);
    assert.equal(await page.locator('#workspace-mode').textContent(),'Working on Run · e03ac425');
    assert((await page.locator('#run-history').textContent()).includes('Parent workflow'));
    assert.equal(await page.locator('.history-row [data-no-i18n]').first().textContent(),'Salva');
-   await page.selectOption('[data-language]','it');assert.deepEqual(await page.locator('#probes p').allTextContents(),italian);
+   await page.selectOption('[data-language]','it');assert.deepEqual(await page.locator('#probes p').allTextContents(),italian);assert.deepEqual(await attributes(),['Esporta workflow','Esporta workflow','Artefatti della run','Registro attività']);
    assert.equal(await page.locator('#workspace-mode').textContent(),'Esecuzione in corso · e03ac425');
    assert((await page.locator('#run-history').textContent()).includes('Workflow principale'));
   }
