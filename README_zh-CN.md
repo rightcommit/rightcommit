@@ -30,6 +30,7 @@
   <a href="#quickstart"><strong>快速开始</strong></a> ·
   <a href="#documentation"><strong>文档</strong></a> ·
   <a href="#contributing"><strong>参与贡献</strong></a> ·
+  <a href="https://github.com/rightcommit/rightcommit/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22"><strong>入门议题</strong></a> ·
   <a href="#license"><strong>许可证</strong></a>
 </p>
 
@@ -202,6 +203,8 @@ rightcommit 是开源软件，采用 **[Apache-2.0 许可证](LICENSE)** 发布�
 ## 参与贡献
 
 欢迎提交 Pull Request。项目依据 [Apache-2.0 许可证](LICENSE)接受贡献。参见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
+第一次参与 rightcommit？[查看尚未关闭的入门议题](https://github.com/rightcommit/rightcommit/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)。
 
 发现问题或有建议？欢迎[创建 Issue](https://github.com/rightcommit/rightcommit/issues)。
 欢迎用中文提 Issue。

@@ -30,6 +30,7 @@ English | [简体中文](README_zh-CN.md)
   <a href="#quickstart"><strong>Quickstart</strong></a> ·
   <a href="#documentation"><strong>Docs</strong></a> ·
   <a href="#contributing"><strong>Contribute</strong></a> ·
+  <a href="https://github.com/rightcommit/rightcommit/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22"><strong>Good first issues</strong></a> ·
   <a href="#license"><strong>License</strong></a>
 </p>
 
@@ -211,6 +212,8 @@ Third-party notices for bundled icons and Spec Kit files are in [`licenses/`](li
 
 Pull requests are welcome. Contributions are accepted under [Apache-2.0](LICENSE).
 See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+New to rightcommit? [Browse open good first issues](https://github.com/rightcommit/rightcommit/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
 
 Found a bug or have an idea? [Open an issue](https://github.com/rightcommit/rightcommit/issues).
 
