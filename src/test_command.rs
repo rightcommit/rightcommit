@@ -160,6 +160,26 @@ mod tests {
     }
 
     #[test]
+    fn gnumakefile_takes_precedence_over_makefile() {
+        let found = detected(&[
+            ("GNUmakefile", "test:\n\t./run-gnu\n"),
+            ("Makefile", "test:\n\t./run\n"),
+        ])
+        .unwrap();
+        assert_eq!(found.argv, argv(&["make", "test"]));
+        assert_eq!(found.origin, Origin::Detected("GNUmakefile"));
+    }
+
+    #[test]
+    fn gnumakefile_without_test_target_shadows_makefile() {
+        let found = detected(&[
+            ("GNUmakefile", "build:\n\t./build\n"),
+            ("Makefile", "test:\n\t./run\n"),
+        ]);
+        assert!(found.is_err());
+    }
+
+    #[test]
     fn nothing_detected_asks_to_set_the_command() {
         let message = detected(&[("README.md", "# project")]).unwrap_err().to_string();
         assert!(message.contains("Imposta il comando di test nel nodo Connection"), "{message}");
