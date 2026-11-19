@@ -50,9 +50,17 @@
 
 ## 可以用它构建什么
 
-- **用 Spec Kit 或 OpenSpec 进行规范驱动开发。** 从功能想法出发，编写规范、计划和任务清单并提交审批，然后实现代码，并在服务器上运行测试，对照规范验证代码。详见 [使用 rightcommit 进行规范驱动开发](SPEC-DRIVEN-DEVELOPMENT.md)。
-- **梳理 GitHub Issue。** 阅读 Issue 并查看代码仓库，起草需求、验收标准和测试计划。
-- **根据 Confluence 页面生成简报。** 在简报中引用原文，列出风险、待确认的问题和建议的测试。
+可以从 20 多个现成的工作流开始，也可以向 Project Manager 描述新的工作流，再在画布上编辑草稿。
+
+- **任何 *-driven 开发流程。** 把你的方法变成一个强制执行它的工作流：规范驱动、测试驱动、行为驱动，或你自己的方法。每个阶段都是一个步骤，由审批和门禁决定何时进入下一阶段，测试在服务器上运行。规范驱动开发开箱即用：内置 Spec Kit，OpenSpec 或其他任何框架都可以通过 setup 命令安装。详见 [使用 rightcommit 进行规范驱动开发](SPEC-DRIVEN-DEVELOPMENT.md)。
+- **理解现有代码。** 根据源代码重建应用的行为、规则和测试，生成证据报告和功能目录。一个智能体编写，另一个智能体独立核查，结果可作为新规范的基线。
+- **变更与事件。** 评估计划中变更的影响；当事件改变了某项需求时，先更新规范，再交付变更并补充回归测试。
+- **从工单到规范。** 读取 GitHub Issue、Jira 工单或 ServiceNow 请求及其代码仓库，起草需求、验收标准和测试计划，或生成完整的 Spec Kit 规范。
+- **发布与审查文档。** 根据 Jira 和 GitHub 准备发布说明、上线和回滚计划；为 Bitbucket 拉取请求准备审查文档；检查提交的 CI 就绪情况；或对需求、规范、代码和测试做一致性审查。
+- **IT 服务管理。** 对 ServiceNow 工单分类，通过本地 RAG 从知识库中给出答复，并在审批后创建事件或订购目录请求。对照代码分析事件，提供复现问题的测试和修复计划。
+- **安全审查与修复。** 在服务器上把安全扫描器作为测试步骤运行，让智能体对照代码逐条分析发现的问题并准备修复，在扫描结果干净或有人接受剩余风险之前，门禁保持关闭。
+- **根据文档生成简报。** 把 Confluence 页面变成引用原文的简报，列出风险、待确认的问题和建议的测试。
+- **你自己的自动化。** 组合智能体步骤、审查、门禁和连接。用 Fork 和 Join 并行运行分支，把其他工作流作为步骤调用，按计划运行，并通过 A2A 发布工作流供其他智能体调用。
 
 <a name="quickstart"></a>
 
@@ -100,26 +108,11 @@ rightcommit
 ### AI 智能体说“完成了”，rightcommit 来验证。
 
 - **分配智能体和工具。** 为每个需要智能体的步骤选择 Claude Code、Codex 或 Pi。可以直接在画布上搭建流程，也可以编辑 Project Manager 生成的草稿。
-- **设置质量门禁。** 检查任务是否已关闭，在服务端运行测试，文件变更后要求重新测试。还可以在本地提交前加入智能体审查和人工审批。
-- **查看工作记录。** 查看受跟踪文件的版本和 SHA-256 指纹，并对支持的文本文件逐行比对。检查失败时可退回修改，并限制重试次数。
+- **设置质量门禁。** 检查任务是否已关闭，[在服务端运行项目测试](guides/CONFIGURING_LOCAL_CI.md)，文件变更后要求重新测试。还可以在本地提交前加入智能体审查和人工审批。
+- **查看每个产出文件。** 每个步骤都会记录它创建或修改的文件，包括版本、SHA-256 指纹，以及对支持的文本文件的逐行比对。可在运行视图中筛选、比较和下载这些文件。检查失败时可退回修改，并限制重试次数。
+- **从任意步骤重新开始。** 从你选择的节点继续已停止的运行。之前的结果、文件和智能体会话都会保留，只有该节点及其后续节点重新运行，已完成的工作不必再付一次费用。也可以修改工作流后在同一工作区中继续。
 - **决定何时介入。** 可选择交互、辅助或无人值守模式，暂停等待人工决定，再从保存的位置继续。
 - **追踪用量与成本。** 在 FinOps 中按步骤、运行记录、工作流、智能体和模型查看已记录的 Token 用量和可用的成本数据。智能体报告的成本和估算值分别显示。
-
-### 在服务器上运行测试
-
-**Local CI** 步骤（provider 为 **Local Git / CI**、operation 为 **test** 的 Connection 节点）会在运行工作区中执行项目的测试。你可以在节点上设置 **Test command**；留空时，rightcommit 会按以下顺序根据工作区根目录中的文件自动选择命令：
-
-| 文件 | 命令 |
-|---|---|
-| `Cargo.toml` | `cargo test` |
-| `package.json` | `npm test` |
-| `pyproject.toml`、`pytest.ini` 或 `setup.py` | `python3 -m pytest` |
-| `go.mod` | `go test ./...` |
-| `pom.xml` | `mvn -q test` |
-| `build.gradle` 或 `build.gradle.kts` | `gradle test` |
-| 含 `test` 目标的 `Makefile` | `make test` |
-
-命令不经过 shell 执行，因此管道、重定向和 `&&` 都不可用；如需多个步骤，请在仓库中编写脚本并调用它。活动日志会显示实际执行的命令，以及它来自节点设置还是自动检测。所需工具必须安装在运行 rightcommit 的环境中：Docker 镜像包含 Rust、Node.js 与 npm、Python 3 和 make，如需其他工具，请参阅 [Docker 安装指南](INSTALL.md#tools-for-your-projects-tests)。
 
 ## 连接与集成
 
@@ -176,14 +169,14 @@ rightcommit 支持个人使用，也支持在组织内部部署并使用独立�
 
 | 文档 | 内容 |
 |---|---|
-| [SPEC-DRIVEN-DEVELOPMENT.md](SPEC-DRIVEN-DEVELOPMENT.md) | 用 Spec Kit 或 OpenSpec 进行规范驱动开发：完整示例和 SDD 工作流模板 |
+| [SPEC-DRIVEN-DEVELOPMENT.md](SPEC-DRIVEN-DEVELOPMENT.md) | 用 Spec Kit、OpenSpec 或其他任何框架进行规范驱动开发：完整示例和 SDD 工作流模板 |
 | [CHANGELOG.md](CHANGELOG.md) | 各版本的变更 |
 | [ADD_A_SKILL.md](ADD_A_SKILL.md) | 一次为 Claude Code、Codex 和 Pi 添加技能 |
 | [ADD-PI-PACKAGES.md](ADD-PI-PACKAGES.md) | 将 pi.dev 上的包添加到 Pi 智能体 |
 | [ADD-A-FRAMEWORK.md](ADD-A-FRAMEWORK.md) | 在自己的项目中使用 Spec Kit、OpenSpec 或其他框架 |
 | [ADD-OPENSPEC.md](ADD-OPENSPEC.md) | 在工作流中使用 OpenSpec |
 | [UPDATE-PI-DEFAULT-PACKAGES.md](UPDATE-PI-DEFAULT-PACKAGES.md) | 更新 rightcommit 随附的 Pi 工具（面向维护者） |
-| [配置指南](guides/README.md) | 配置访问权限并运行工作流示例，涵盖 ServiceNow（ITSM、目录请求和 Spec Kit）、Atlassian（Jira、Bitbucket 和 Confluence）以及 GitHub（Issue 和 CI） |
+| [配置指南](guides/README.md) | 配置访问权限并运行工作流示例，涵盖 ServiceNow（ITSM、目录请求和 Spec Kit）、Atlassian（Jira、Bitbucket 和 Confluence）GitHub（Issue 和 CI）以及 Local CI 测试 |
 
 <a name="license"></a>
 
