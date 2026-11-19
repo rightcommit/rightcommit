@@ -1,0 +1,36 @@
+{
+  "id": "local-ci-example",
+  "name": "Local CI example",
+  "description": "Run a bundled Python test without a cloud account or model credentials.",
+  "entry": "tests",
+  "nodes": [
+    {
+      "id": "source",
+      "kind": "Source",
+      "title": "Bundled calculator project",
+      "x": 120,
+      "y": 180,
+      "source_type": "examples",
+      "source_mode": "copy",
+      "location": "local-ci/project"
+    },
+    {
+      "id": "tests",
+      "kind": "Connection",
+      "title": "Local CI tests",
+      "x": 420,
+      "y": 180,
+      "provider": "local",
+      "operation": "test",
+      "test_command": "python3 -m unittest -v test_calculator"
+    }
+  ],
+  "edges": [
+    {
+      "from": "source",
+      "to": "tests",
+      "kind": "context",
+      "outcome": ""
+    }
+  ]
+}

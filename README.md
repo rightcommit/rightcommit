@@ -127,6 +127,8 @@ was set on the node or detected. The tool must be installed where rightcommit ru
 image includes Rust, Node.js with npm, Python 3 and make, and the
 [Docker install guide](INSTALL.md#tools-for-your-projects-tests) explains how to add others.
 
+Try the [Local CI example](examples/local-ci/README.md) to import a workflow and inspect a passing run and an intentional test failure.
+
 ## Connections
 
 - **Agents:** Claude Code, Codex and Pi, with an API key or an authorized gateway (Anthropic,
