@@ -3,7 +3,19 @@
 What changed in each version of rightcommit. Releases are also listed on
 [GitHub](https://github.com/rightcommit/rightcommit/releases).
 
-## [Unreleased]
+## [1.6.1] - 2026-11-19
+
+### Added
+
+- A Local CI example, `examples/local-ci`: import its workflow to watch the server run a
+  project's tests, then change the test command to inspect an intentional failure. It needs
+  no API key or connector. Contributed by
+  [@Golden007-prog](https://github.com/Golden007-prog) (#17).
+- A guide to spec-driven development with rightcommit, `SPEC-DRIVEN-DEVELOPMENT.md`: a worked
+  example from spec to verified commit, the SDD workflow templates, and how to use Spec Kit,
+  OpenSpec or another framework.
+- A guide to the Local CI step, `guides/CONFIGURING_LOCAL_CI.md`: how the test command is
+  chosen or detected, the tools it needs, and the example above.
 
 ### Changed
 
@@ -12,6 +24,11 @@ What changed in each version of rightcommit. Releases are also listed on
   ([RUSTSEC-2026-0543](https://rustsec.org/advisories/RUSTSEC-2026-0543)). The time zone
   database stays built into rightcommit, and schedules still skip a local time that a daylight
   saving change removes and run once when one repeats.
+- The README opens with what you can build, from any agentic setup to security reviews, and
+  explains how to restart a run from a chosen step and inspect each step's files. The details
+  of the Local CI step moved to the new guide.
+- A test covers how the Local CI step picks `GNUmakefile`, then `makefile`, then `Makefile`,
+  as make does. Contributed by [@Golden007-prog](https://github.com/Golden007-prog) (#16).
 
 ## [1.6.0] - 2026-11-15
 
