@@ -3,6 +3,16 @@
 What changed in each version of rightcommit. Releases are also listed on
 [GitHub](https://github.com/rightcommit/rightcommit/releases).
 
+## [Unreleased]
+
+### Changed
+
+- Schedules and the FinOps timestamps use the `jiff` crate instead of `chrono` and
+  `chrono-tz`, which are no longer maintained
+  ([RUSTSEC-2026-0543](https://rustsec.org/advisories/RUSTSEC-2026-0543)). The time zone
+  database stays built into rightcommit, and schedules still skip a local time that a daylight
+  saving change removes and run once when one repeats.
+
 ## [1.6.0] - 2026-11-15
 
 ### Added

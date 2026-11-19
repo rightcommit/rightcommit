@@ -10,8 +10,11 @@ use axum::{
     Json,
     extract::{Path, State},
 };
-use chrono::{Datelike, Duration, LocalResult, NaiveDateTime, TimeZone};
-use chrono_tz::Tz;
+use jiff::{
+    Timestamp, ToSpan,
+    civil::DateTime,
+    tz::{AmbiguousOffset, TimeZone},
+};
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -52,15 +55,19 @@ pub struct Schedule {
     pub next: Option<i64>,
     pub created: i64,
 }
-fn local(value: &str) -> Result<NaiveDateTime> {
-    Ok(NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M").context("Data o ora non valida")?)
+fn local(value: &str) -> Result<DateTime> {
+    DateTime::strptime("%Y-%m-%dT%H:%M", value).context("Data o ora non valida")
 }
-fn instant(tz: Tz, value: NaiveDateTime) -> Option<i64> {
-    match tz.from_local_datetime(&value) {
-        LocalResult::Single(t) => Some(t.timestamp()),
-        LocalResult::Ambiguous(a, b) => Some(a.timestamp().min(b.timestamp())),
-        LocalResult::None => None,
+fn zone(name: &str) -> Result<TimeZone> {
+    TimeZone::get(name).context("Fuso orario non valido")
+}
+/// A local time skipped by a DST change has no instant; a repeated one uses the earlier instant.
+fn instant(tz: &TimeZone, value: DateTime) -> Option<i64> {
+    let ambiguous = tz.to_ambiguous_timestamp(value);
+    if matches!(ambiguous.offset(), AmbiguousOffset::Gap { .. }) {
+        return None;
     }
+    ambiguous.earlier().ok().map(|t| t.as_second())
 }
 impl Config {
     fn validate(&self) -> Result<()> {
@@ -78,16 +85,16 @@ impl Config {
                 && (self.kind != "weekly" || !self.weekdays.is_empty()),
             "Seleziona almeno un giorno valido"
         );
-        let tz: Tz = self.timezone.parse().context("Fuso orario non valido")?;
+        let tz = zone(&self.timezone)?;
         let start = local(&self.start)?;
         ensure!(
-            instant(tz, start).is_some(),
+            instant(&tz, start).is_some(),
             "L'orario iniziale non esiste nel fuso selezionato"
         );
         if let Some(end) = &self.end {
             let end = local(end)?;
             ensure!(
-                end >= start && instant(tz, end).is_some(),
+                end >= start && instant(&tz, end).is_some(),
                 "Fine periodo non valida"
             );
         }
@@ -97,14 +104,14 @@ impl Config {
         Ok(())
     }
     pub fn next_after(&self, after: i64) -> Result<Option<i64>> {
-        let tz: Tz = self.timezone.parse().context("Fuso orario non valido")?;
+        let tz = zone(&self.timezone)?;
         let start = local(&self.start)?;
-        let first = instant(tz, start).context("Orario iniziale non valido")?;
+        let first = instant(&tz, start).context("Orario iniziale non valido")?;
         let end = self
             .end
             .as_ref()
             .map(|v| {
-                Ok::<_, anyhow::Error>(instant(tz, local(v)?).context("Fine periodo non valida")?)
+                Ok::<_, anyhow::Error>(instant(&tz, local(v)?).context("Fine periodo non valida")?)
             })
             .transpose()?;
         let candidate = match self.kind.as_str() {
@@ -119,23 +126,20 @@ impl Config {
                 })
             }
             "daily" | "weekly" => {
-                let date = chrono::DateTime::from_timestamp(after, 0)
+                let date = Timestamp::from_second(after)
                     .context("Data fuori intervallo")?
-                    .with_timezone(&tz)
-                    .date_naive()
+                    .to_zoned(tz.clone())
+                    .date()
                     .max(start.date());
                 let mut found = None;
                 // Two weeks cover a weekly occurrence skipped by a DST gap.
                 for n in 0..15 {
-                    let date = date + Duration::days(n);
-                    if self.kind == "weekly"
-                        && !self
-                            .weekdays
-                            .contains(&date.weekday().num_days_from_monday())
-                    {
+                    let date = date.checked_add(n.days()).context("Data fuori intervallo")?;
+                    let weekday = u32::from(date.weekday().to_monday_zero_offset().unsigned_abs());
+                    if self.kind == "weekly" && !self.weekdays.contains(&weekday) {
                         continue;
                     }
-                    if let Some(at) = instant(tz, date.and_time(start.time())) {
+                    if let Some(at) = instant(&tz, date.to_datetime(start.time())) {
                         if at >= first && at > after {
                             found = Some(at);
                             break;
@@ -470,7 +474,7 @@ mod tests {
         }
     }
     fn utc(s: &str) -> i64 {
-        chrono::DateTime::parse_from_rfc3339(s).unwrap().timestamp()
+        s.parse::<Timestamp>().unwrap().as_second()
     }
     fn user(id: i64) -> User {
         User {
@@ -576,6 +580,12 @@ mod tests {
         assert!(c.validate().is_err());
         c.start = "2026-03-29T02:30".into();
         assert!(c.validate().is_err());
+        c.start = "2026-11-02T09:00".into();
+        c.timezone = "Europe/Atlantis".into();
+        assert!(c.validate().is_err());
+        c.timezone = "America/New_York".into();
+        c.validate().unwrap();
+        assert_eq!(c.next_after(utc("2026-11-02T13:00:00Z")).unwrap(), Some(utc("2026-11-02T14:00:00Z")));
     }
     async fn setup() -> (tempfile::TempDir, App, Schedule) {
         let dir = tempfile::tempdir().unwrap();

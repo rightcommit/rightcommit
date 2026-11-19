@@ -68,8 +68,8 @@ fn snapshots(
             }
             at = v["timestamp"]
                 .as_str()
-                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-                .map(|d| d.timestamp_millis());
+                .and_then(|s| s.parse::<jiff::Timestamp>().ok())
+                .map(|d| d.as_millisecond());
         }
         if v["type"] != "cost-state" {
             continue;
@@ -174,9 +174,7 @@ mod tests {
     use serde_json::json;
 
     fn row(sid: &str, cwd: &str, at: i64, total: u64) -> String {
-        let timestamp = chrono::DateTime::from_timestamp_millis(at)
-            .unwrap()
-            .to_rfc3339();
+        let timestamp = jiff::Timestamp::from_millisecond(at).unwrap().to_string();
         format!(
             "{}\n{}\n",
             json!({"type":"assistant","sessionId":sid,"cwd":cwd,"timestamp":timestamp}),

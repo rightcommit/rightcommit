@@ -1027,9 +1027,10 @@ runtime: "codex".into(),
         .unwrap();
         let mut tracker = Tracker::new("codex", "task", "author", "gpt-test", 1);
         let mut u=tracker.observe(&json!({"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":20,"cached_input_tokens":40}}),&sid).unwrap();
-        u.at = chrono::DateTime::parse_from_rfc3339("2026-10-31T10:00:01Z")
+        u.at = "2026-10-31T10:00:01Z"
+            .parse::<jiff::Timestamp>()
             .unwrap()
-            .timestamp_millis();
+            .as_millisecond();
         app.store
             .event(
                 1,

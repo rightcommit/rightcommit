@@ -297,8 +297,8 @@ pub fn history(
             }
             let Some(at) = v["timestamp"]
                 .as_str()
-                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-                .map(|d| d.timestamp_millis())
+                .and_then(|s| s.parse::<jiff::Timestamp>().ok())
+                .map(|d| d.as_millisecond())
             else {
                 failed = true;
                 break;

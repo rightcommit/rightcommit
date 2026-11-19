@@ -20,8 +20,8 @@ include = [
 ]
 
 [dependencies]
-chrono-tz = "0.10"
-chrono = { version = "0.4", default-features = false, features = ["std"] }
+# The time zone database is built in, so schedules do not depend on the files of the host.
+jiff = { version = "0.2", default-features = false, features = ["std", "tzdb-bundle-always"] }
 anyhow = "1"
 axum = { version = "0.8", features = ["macros"] }
 tokio = { version = "1", features = ["full"] }
