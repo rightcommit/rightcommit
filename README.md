@@ -22,7 +22,7 @@ English | [简体中文](README_zh-CN.md)
 </p>
 
 <p align="center">
-  Describe the job, get an editable workflow on a visual canvas, and run Claude Code, Codex and Pi through the tests, reviews and approvals you define. Ships with spec-driven workflows for Spec Kit. Self-hosted.
+  Describe the job, get an editable workflow on a visual canvas, and run Claude Code, Codex and Pi through the tests, reviews and approvals you define. Works with any method or framework. Self-hosted.
 </p>
 
 <p align="center">
@@ -50,37 +50,23 @@ English | [简体中文](README_zh-CN.md)
 
 ## What you can build
 
-Start from more than 20 ready-made workflows, or describe a new one to the Project Manager
-and edit the draft on the canvas.
+Start from more than 20 ready-made workflows, or describe a new one to the Project Manager.
 
-- **Any *-driven development process.** Turn your method into a workflow that enforces it:
-  spec-driven, test-driven, behavior-driven or your own. Each phase becomes a step, approvals
-  and gates decide when the next one can start, and tests run on the server. Spec-driven
-  development is ready to use, with Spec Kit built in and OpenSpec or any other framework
-  installed through a setup command. See
-  [Spec-driven development with rightcommit](SPEC-DRIVEN-DEVELOPMENT.md).
-- **Understand existing code.** Reconstruct an application's behavior, rules and tests from its
-  source into an evidence report and a functional catalog. One agent writes, a second agent
-  checks it independently, and the result becomes the baseline for new specs.
-- **Changes and incidents.** Assess the impact of a planned change, or update the spec first
-  when an incident changes a requirement, then deliver the change with regression tests.
-- **From tickets to specs.** Read a GitHub issue, a Jira ticket or a ServiceNow request with
-  its repository, and prepare requirements, acceptance criteria and a test plan, or a full
-  Spec Kit specification.
-- **Release and review dossiers.** Prepare release notes, rollout and rollback plans from Jira
-  and GitHub, a review dossier for a Bitbucket pull request, a CI readiness check for a commit,
-  or a consistency review of requirements, specs, code and tests.
-- **IT service management.** Classify ServiceNow tickets, answer from your knowledge base with
-  local RAG, and create incidents or order catalog requests after approval. Triage an incident
-  against the code with a test that reproduces it and a remediation plan.
-- **Security reviews and remediation.** Run security scanners as test steps on the server, let
-  an agent triage each finding against the code and prepare a fix, and keep a gate closed until
-  the scan is clean or a person accepts the remaining risk.
-- **Briefings from documentation.** Turn a Confluence page into a briefing that cites its
-  source and lists risks, open questions and proposed tests.
-- **Your own automations.** Combine agent steps, reviews, gates and connections. Run branches
-  in parallel with Fork and Join, call other workflows as steps, run on a schedule, and publish
-  a workflow over A2A so other agents can call it.
+- **Any agentic setup.** Combine agents, reviews, gates and connections on a canvas. Run steps
+  in parallel, call other workflows, schedule runs, or publish a workflow over A2A.
+- **Your preferred \*-driven development.** Spec-driven, test-driven, behavior-driven or your own method:
+  each phase is a step, and a gate decides when the next one can start. Spec Kit is built in;
+  OpenSpec or any other framework installs with a setup command. See
+  [Spec-driven development](SPEC-DRIVEN-DEVELOPMENT.md).
+- **From tickets to tested code.** Turn GitHub, Jira or ServiceNow tickets into requirements,
+  specs and tests, then deliver features, changes and incident fixes with regression tests.
+- **Legacy code analysis.** Reconstruct behavior, rules and tests from the source, checked by a
+  second agent, as a baseline for new work.
+- **Security reviews.** Run scanners on the server, let an agent triage and fix the findings,
+  and block the commit until the scan is clean or a person accepts the risk.
+- **Release, review and IT service management.** Release notes and rollback plans, pull request
+  review dossiers, Confluence briefings, and ServiceNow ticket classification with a local
+  knowledge base.
 
 ## Quickstart
 
