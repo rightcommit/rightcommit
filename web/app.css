@@ -622,16 +622,16 @@ body.resizing-right-panel,body.resizing-right-panel *{cursor:col-resize!importan
 /* Shared accordion indicator, independent of browser and font markers. */
 details>summary{list-style:none}
 details>summary::-webkit-details-marker{display:none}
-details>summary::before{
+details>summary::before,.finops-other-toggle::before{
  content:"";display:inline-block;width:16px;height:16px;flex:0 0 16px;
  margin-inline-end:8px;vertical-align:-3px;background:currentColor;
  -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m9 6 6 6-6 6' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat;
  mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m9 6 6 6-6 6' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat;
  transform:rotate(0deg);transition:transform .16s ease;
 }
-details[open]>summary::before{transform:rotate(90deg)}
+details[open]>summary::before,.finops-other-toggle[aria-expanded=true]::before{transform:rotate(90deg)}
 .workflow-topic>summary::before,.child-calls>summary::before{margin-inline-end:0}
-@media(prefers-reduced-motion:reduce){details>summary::before{transition:none}}
+@media(prefers-reduced-motion:reduce){details>summary::before,.finops-other-toggle::before{transition:none}}
 /* A fixed prefix window keeps commit and the surrounding navigation still. */
 .brand[role=button]{cursor:pointer}
 .brand[role=button]:focus-visible{outline:3px solid var(--accent);outline-offset:4px;border-radius:3px}
@@ -783,3 +783,88 @@ body.resizing-activity-log,body.resizing-activity-log *{cursor:row-resize!import
   font-weight: 700;
 }
 .modal-actions .run-error{flex:1 1 240px;margin:0;text-align:left}
+
+.finops-other-toggle.text-button {
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  /* Buttons center their content and stretch in a grid cell: keep the label at the start like the other rows.
+     The open/closed chevron is the one shared with details > summary. */
+  justify-content: flex-start;
+  justify-self: start;
+  gap: 0;
+  overflow-wrap: anywhere;
+}
+.finops-other-panel { margin-top: 16px; }
+.finops-other-panel .finops-table { margin: 8px 0 12px; }
+/* In a narrow chart card the name keeps a readable width and the table scrolls sideways instead. */
+.finops-other-panel .finops-table th:first-child,
+.finops-other-panel .finops-table td:first-child { min-width: 150px; }
+.finops-agent-models {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+.finops-agent-models > summary { cursor: pointer; overflow-wrap: anywhere; }
+.finops-agent-more > summary { color: var(--accent); }
+.finops-agent-more > .finops-agent-models { margin-left: 24px; }
+.finops-agent-more > .finops-agent-models:last-child { border-bottom: 0; padding-bottom: 0; }
+.finops-other-toggle:focus-visible,
+.finops-agent-models > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+/* A newer release is available: bell badge on the avatar and a line in the account menu. */
+.avatar.has-update { position: relative; }
+.avatar.has-update::after {
+  content: '';
+  position: absolute;
+  top: -5px;
+  right: -6px;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  border: 2px solid var(--surface);
+  box-sizing: border-box;
+  background: var(--red) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0'/%3E%3C/svg%3E") center / 9px no-repeat;
+  animation: update-blink 1.4s ease-in-out infinite;
+  pointer-events: none;
+}
+.account-update {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 10px 6px;
+}
+.account-update-link {
+  padding: 4px 6px;
+  border-radius: 7px;
+  color: var(--red);
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+  animation: update-blink 1.4s ease-in-out infinite;
+}
+.account-update-link:hover,
+.account-update-link:focus-visible {
+  text-decoration: underline;
+  animation: none;
+}
+.account-menu .account-update-dismiss {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--muted);
+}
+.account-update-dismiss .icon { width: 13px; height: 13px; }
+.account-update-link:focus-visible,
+.account-update-dismiss:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@keyframes update-blink { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) {
+  .avatar.has-update::after, .account-update-link { animation: none; }
+}

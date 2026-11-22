@@ -30,19 +30,16 @@ fn draft_config(mut draft: AgentConfig, saved: &AgentConfig) -> anyhow::Result<A
         draft.model.len() <= 200 && draft.api_key.len() <= 4096,
         "Configurazione Pi non valida."
     );
+    draft.provider_keys.clear();
     if draft.multi_provider {
         draft.multi_provider = true;
         draft.api_key.clear();
     } else if draft.api_key == "__CLEAR__" {
         draft.api_key.clear();
-    } else if draft.api_key.is_empty()
-        && !saved.multi_provider
-        && draft.provider == saved.provider
-        && (draft.provider != "local"
-            || draft.base_url.trim().trim_end_matches('/')
-                == saved.base_url.trim().trim_end_matches('/'))
-    {
-        draft.api_key = saved.api_key.clone();
+    } else if draft.api_key.is_empty() {
+        // The key saved for the draft's provider (and, for local, the same endpoint) only,
+        // as saving this draft would restore it.
+        draft.api_key = saved.saved_key(&draft.provider, &draft.base_url);
     }
     if draft.provider == "local" && draft.base_url.trim().is_empty() {
         draft.base_url = std::env::var("PI_LOCAL_BASE_URL").unwrap_or_default();
@@ -288,6 +285,18 @@ printf '%s\n' '{"type":"message_end","message":{"role":"assistant","stopReason":
                 .api_key
                 .is_empty()
         );
+        let mut stored = saved.clone();
+        stored.provider_keys.insert("openai".into(), crate::model::ProviderKey {api_key: "openai-key".into(), base_url: String::new()});
+        assert_eq!(draft_config(draft.clone(), &stored).unwrap().api_key, "openai-key");
+        draft.provider = "anthropic".into();
+        assert_eq!(draft_config(draft.clone(), &stored).unwrap().api_key, "saved-key");
+        // Leaving Multi-provider: the single-provider draft uses its saved key; a Multi-provider draft never does.
+        stored.multi_provider = true;
+        assert_eq!(draft_config(draft.clone(), &stored).unwrap().api_key, "saved-key");
+        draft.multi_provider = true;
+        assert!(draft_config(draft.clone(), &stored).unwrap().api_key.is_empty());
+        draft.multi_provider = false;
+        draft.provider = "openai".into();
         draft.api_key = "draft-key".into();
         assert_eq!(
             draft_config(draft.clone(), &saved).unwrap().api_key,

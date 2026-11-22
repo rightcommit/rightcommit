@@ -90,6 +90,12 @@ Run these commands from the rightcommit folder, while Docker is running.
 > ⚠️ Never use `docker compose down -v`: it **deletes all the app's data**
 > (the `rightcommit-data` volume).
 
+When a newer version is published on GitHub, a red bell appears on your account avatar and
+the account menu shows `vX.Y.Z available`, with a link to the release. The server asks
+GitHub at most every six hours; nothing about your account or installation is sent. To turn
+the check off, for example on a network without Internet access, set
+`RIGHTCOMMIT_UPDATE_CHECK=0` in `.env` and run `docker compose up -d`.
+
 ## Your own project folders
 
 To work on folders from your computer, put them in the `sources` folder inside the

@@ -560,10 +560,11 @@ pub fn redact(s: &str, settings: &Settings) -> String {
             }
         }
     }
-    for a in settings.agents.values() {
-        if !a.api_key.is_empty() {
-            t = t.replace(&a.api_key, "[redacted]");
-        }
+    // Longest first: a short key must not break up a longer one that contains it.
+    let mut keys: Vec<&String> = settings.agents.values().flat_map(|a| a.secrets()).collect();
+    keys.sort_by_key(|key| std::cmp::Reverse(key.len()));
+    for key in keys {
+        t = t.replace(key.as_str(), "[redacted]");
     }
     for a in settings.connections.values() {
         for secret in [&a.token, &a.password, &a.client_secret] {

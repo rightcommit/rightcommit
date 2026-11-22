@@ -25,6 +25,14 @@ The simplest option.
 The key is encrypted in the database; the full value is not returned by the app. Leave the
 field empty to keep it; use the bin icon to remove it.
 
+Pi keeps one personal key per provider. **Save** stores the key for the **Pi provider**
+selected at that moment and leaves the keys of the other providers untouched. When you select
+another provider, the field shows whether a key is saved for it; switching back to a provider
+uses its saved key again, with no retyping. The bin icon removes only the selected provider's
+key. A run uses only the key of the provider in effect, never the key of another provider. A
+key saved for the *Local* provider is reused only with the same server URL. A key saved by an
+earlier version belongs to the provider that was selected when you upgraded.
+
 ## 2. Environment variables
 
 The operator can set authorized API credentials for the installation, used by accounts
@@ -133,7 +141,10 @@ for configuration placeholders. Recreate the container after changing `.env`; a 
 
 An administrator's key is inherited only for the same Pi provider and endpoint, and only
 when configured in single-provider mode. It is not sent to a different provider or URL.
-In Multi-provider mode the generic personal field is ignored; the administrator's
+Only the key of the provider the administrator currently has selected is shared; keys the
+administrator saved for other providers are not.
+In Multi-provider mode personal keys are ignored, and kept for when you select a single
+provider again; the administrator's
 single-provider key can still cover that matching provider, while other providers require
 their own environment configuration. Shared keys are never exposed in another user's settings.
 

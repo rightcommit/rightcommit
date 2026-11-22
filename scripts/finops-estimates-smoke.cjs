@@ -12,6 +12,8 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   report.manager={turns:3,metrics:managerMetrics,daily:[{at:1793404800000,metrics:managerMetrics}]};
   browser=await chromium.launch({channel:'chrome',headless:true});const page=await browser.newPage({viewport:{width:1440,height:1000}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.route('**/api/finops',r=>r.fulfill({json:report}));
+  // A new account has no agents and starts in English: hide the setup notice and start in Italian, on every load.
+  await page.addInitScript(()=>{try{localStorage.setItem('rightcommit.hideAgentSetupNotice','true');if(localStorage.getItem('nodo.language')===null)localStorage.setItem('nodo.language','it')}catch{}});
   assert((await page.request.post(base+'/api/auth/register',{headers:{'X-Nodo-Request':'1'},data:{email:'finops@test.local',password:'temporary-finops-password'}})).ok());
   await page.goto(base);await page.locator('#app').waitFor({state:'visible'});await page.locator('#finops').click();await page.locator('[data-finops-refresh]').waitFor();
   assert((await page.locator('#dialog').textContent()).includes('Costo LLM stimato'));

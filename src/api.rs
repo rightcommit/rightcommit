@@ -245,6 +245,7 @@ pub fn router(app: App) -> Router {
             }),
         )
         .route("/api/finops", axum::routing::get(crate::finops::get))
+        .route("/api/update", axum::routing::get(crate::update_check::get))
         .route(
             "/api/connections/atlassian/status",
             axum::routing::get(twg_status).post(twg_check),
@@ -507,7 +508,14 @@ fn public_settings(a: &App, u: &User, s: &Settings) -> Value {
     let home = a.data.join("users").join(u.id.to_string());
     for (rt, cfg) in &s.agents {
         v["agents"][rt]["api_key"] = json!("");
+        if let Some(agent) = v["agents"][rt].as_object_mut() {agent.remove("provider_keys");}
         v["agents"][rt]["api_key_preview"] = json!(api_key_preview(&cfg.api_key));
+        if rt == "pi" {
+            // Preview per provider, so the form shows the saved/empty state as soon as the provider changes.
+            v["agents"][rt]["api_key_previews"] = json!(crate::pi_providers::catalog().iter()
+                .filter_map(|p| api_key_preview(&cfg.saved_key(&p.id, &cfg.base_url)).map(|preview| (p.id.clone(), preview)))
+                .collect::<BTreeMap<_, _>>());
+        }
         let inherited = agents::effective_agent_config(a, u.id, rt, cfg).unwrap_or_else(|_|cfg.clone());
         let provider_env = agents::provider_environment_in_home(rt, &inherited, &home, u.id);
         v["agents"][rt]["uses_admin_api_key"] = json!(u.id != 1 && !inherited.api_key.is_empty() && (cfg.api_key.is_empty() || (rt == "pi" && cfg.multi_provider)));
@@ -577,7 +585,7 @@ async fn openrouter_models(_u: User) -> ApiResult<Json<Value>> {
 fn reject_cross_service_credentials(s: &Settings) -> anyhow::Result<()> {
     if let Some(sn) = s.connections.get("servicenow") {
         for secret in [&sn.password, &sn.client_secret, &sn.token].into_iter().filter(|v| !v.is_empty()) {
-            anyhow::ensure!(!s.agents.values().any(|agent| &agent.api_key == secret),
+            anyhow::ensure!(!s.agents.values().any(|agent| agent.secrets().any(|key| key == secret)),
                 "Una credenziale ServiceNow è finita nei campi di un agente. Salvataggio bloccato: controlla l’autocompilazione del browser o del gestore password.");
         }
     }
@@ -622,16 +630,20 @@ fn validate_settings(s: &mut Settings, old: &Settings) -> anyhow::Result<()> {
         }
         if rt=="pi" {anyhow::ensure!(crate::pi_providers::known(&cfg.provider),"Provider Pi non valido.");}
         if !cfg.multi_provider || !cfg.base_url.trim().is_empty(){crate::pi_local::validate(cfg)?;}
+        // Pi keeps one personal key per provider. Only the server moves keys between `api_key`
+        // (selected provider) and `provider_keys`; submitted `provider_keys` are ignored.
+        let previous = old.agents.get(rt).cloned().unwrap_or_default();
+        let mut stored = if rt == "pi" {previous.provider_keys.clone()} else {BTreeMap::new()};
+        if rt == "pi" && !previous.api_key.is_empty() {
+            stored.insert(previous.provider.clone(), crate::model::ProviderKey {api_key: previous.api_key.clone(), base_url: AgentConfig::key_endpoint(&previous.provider, &previous.base_url)});
+        }
         if cfg.api_key.is_empty() {
-            cfg.api_key = old
-                .agents
-                .get(rt)
-                .filter(|previous| rt != "pi" || (!crate::pi_local::endpoint_changed(cfg, previous) && cfg.provider==previous.provider))
-                .map(|c| c.api_key.clone())
-                .unwrap_or_default()
+            cfg.api_key = if rt == "pi" {previous.saved_key(&cfg.provider, &cfg.base_url)} else {previous.api_key.clone()};
         } else if cfg.api_key == "__CLEAR__" {
             cfg.api_key.clear();
         }
+        stored.remove(&cfg.provider);
+        cfg.provider_keys = stored;
         if rt == "claude" || (rt == "pi" && cfg.provider == "anthropic") {
             anyhow::ensure!(!cfg.api_key.starts_with("sk-ant-oat"), "Inserisci una API key Anthropic, non un token dell’abbonamento Claude.");
         }
@@ -721,9 +733,9 @@ async fn write_settings(a: App,u: User,payload: Value,partial: bool) -> ApiResul
     let result=a.store.update_settings(u.id,|latest| {
         anyhow::ensure!(revision==settings_revision(latest),"{SETTINGS_CONFLICT}");
         let mut next=if partial {merge_settings_patch(latest,&payload["changes"])?}else{serde_json::from_value::<Settings>(payload.clone())?};
+        // A key that was not submitted means "the key saved for the selected provider", never the previous provider's key.
         if partial && payload["changes"]["agents"]["pi"].get("api_key").is_none()
-            && let (Some(config),Some(previous))=(next.agents.get_mut("pi"),latest.agents.get("pi"))
-            && (crate::pi_local::endpoint_changed(config,previous) || config.provider!=previous.provider) {
+            && let Some(config)=next.agents.get_mut("pi") {
             config.api_key.clear();
         }
         if partial && payload["changes"]["connections"]["servicenow"]["client_secret"].as_str().is_none_or(|s|s.is_empty())
@@ -1282,6 +1294,99 @@ mod settings_isolation_tests {
         let before=serde_json::to_value(app.store.settings(1).unwrap()).unwrap();let revision=settings_revision(&app.store.settings(1).unwrap());
         assert!(patch_settings(State(app.clone()),user(),Json(json!({"revision":revision,"changes":{"agents":{"pi":{"provider":"local","base_url":"file:///tmp/server"}}}}))).await.is_err());
         assert_eq!(serde_json::to_value(app.store.settings(1).unwrap()).unwrap(),before);
+    }
+    async fn patch_pi(app: &App, uid: i64, pi: Value) -> Value {
+        let revision=settings_revision(&app.store.settings(uid).unwrap());
+        patch_settings(State(app.clone()),User{id:uid,email:String::new()},Json(json!({"revision":revision,"changes":{"agents":{"pi":pi}}}))).await.unwrap().0
+    }
+    #[tokio::test]
+    async fn pi_keeps_one_private_key_per_provider() {
+        let dir=tempfile::tempdir().unwrap();let app=crate::tests::app(dir.path());
+        let pi=|app:&App|app.store.settings(1).unwrap().agents["pi"].clone();
+        patch_pi(&app,1,json!({"provider":"anthropic","model":"m","api_key":"anthropic-private-key"})).await;
+        // Changing provider without a key must not move the previous key onto the new provider.
+        let switched=patch_pi(&app,1,json!({"provider":"openrouter"})).await;
+        assert!(pi(&app).api_key.is_empty());assert_eq!(pi(&app).provider_keys["anthropic"].api_key,"anthropic-private-key");
+        assert!(switched["agents"]["pi"]["api_key_preview"].is_null());assert_eq!(switched["agents"]["pi"]["api_key_previews"]["anthropic"],"anthr...key");
+        patch_pi(&app,1,json!({"api_key":"openrouter-private-key"})).await;
+        let back=patch_pi(&app,1,json!({"provider":"anthropic"})).await;
+        assert_eq!(pi(&app).api_key,"anthropic-private-key");assert_eq!(pi(&app).provider_keys["openrouter"].api_key,"openrouter-private-key");assert!(!pi(&app).provider_keys.contains_key("anthropic"));
+        assert_eq!(back["agents"]["pi"]["api_key_previews"],json!({"anthropic":"anthr...key","openrouter":"openr...key"}));
+        for text in [back.to_string(),settings(State(app.clone()),user()).await.unwrap().0.to_string()] {
+            assert!(!text.contains("anthropic-private-key")&&!text.contains("openrouter-private-key")&&!text.contains("provider_keys"));
+        }
+        // Clients cannot write or delete stored keys directly, with either save mode.
+        let revision=settings_revision(&app.store.settings(1).unwrap());
+        assert!(patch_settings(State(app.clone()),user(),Json(json!({"revision":revision,"changes":{"agents":{"pi":{"provider_keys":{"xai":{"api_key":"injected"}}}}}}))).await.is_err());
+        let mut full=back.clone();full["_revision"]=json!(revision);full["agents"]["pi"]["provider_keys"]=json!({"xai":{"api_key":"injected"}});
+        let _=save_settings(State(app.clone()),user(),Json(full)).await.unwrap();
+        assert_eq!(pi(&app).provider_keys.keys().collect::<Vec<_>>(),["openrouter"]);assert_eq!(pi(&app).api_key,"anthropic-private-key");
+        // Every stored key is redacted, selected or not.
+        let redacted=crate::agents::redact("a=anthropic-private-key b=openrouter-private-key",&app.store.settings(1).unwrap());
+        assert_eq!(redacted,"a=[redacted] b=[redacted]");
+        // A short selected key that is a prefix of a stored one must not leave the rest of it readable.
+        let mut prefixed=app.store.settings(1).unwrap();prefixed.agents.get_mut("pi").unwrap().api_key="openrouter-".into();
+        assert_eq!(crate::agents::redact("b=openrouter-private-key",&prefixed),"b=[redacted]");
+        // Removing the key removes only the selected provider's key.
+        patch_pi(&app,1,json!({"api_key":"__CLEAR__"})).await;
+        assert!(pi(&app).api_key.is_empty());assert_eq!(pi(&app).provider_keys["openrouter"].api_key,"openrouter-private-key");
+        patch_pi(&app,1,json!({"provider":"openrouter"})).await;
+        assert_eq!(pi(&app).api_key,"openrouter-private-key");assert!(pi(&app).provider_keys.is_empty());
+        assert!(!std::fs::read(dir.path().join("system/nodo.sqlite")).unwrap().windows(b"openrouter-private-key".len()).any(|s|s==b"openrouter-private-key"));
+    }
+    #[tokio::test]
+    async fn pi_multi_provider_ignores_and_keeps_per_provider_keys() {
+        let dir=tempfile::tempdir().unwrap();let app=crate::tests::app(dir.path());
+        patch_pi(&app,1,json!({"provider":"openrouter","model":"m","api_key":"openrouter-private-key"})).await;
+        patch_pi(&app,1,json!({"provider":"anthropic","api_key":"anthropic-private-key"})).await;
+        patch_pi(&app,1,json!({"multi_provider":true,"provider":"openai"})).await;
+        let settings=app.store.settings(1).unwrap();
+        for provider in ["openrouter","anthropic","openai",""] {
+            let config=crate::pi_providers::effective(&settings,provider,"m","").unwrap();
+            assert!(config.api_key.is_empty());
+            assert!(crate::pi_providers::environment(&config,|_|None).values().all(|value|!value.contains("private-key")));
+        }
+        assert!(crate::agents::redact("anthropic-private-key openrouter-private-key",&settings).matches("[redacted]").count()==2);
+        patch_pi(&app,1,json!({"multi_provider":false,"provider":"openrouter"})).await;
+        let pi=app.store.settings(1).unwrap().agents["pi"].clone();
+        assert_eq!(pi.api_key,"openrouter-private-key");assert_eq!(pi.provider_keys["anthropic"].api_key,"anthropic-private-key");
+        let env=crate::pi_providers::environment(&pi,|_|None);
+        assert_eq!(env.get("OPENROUTER_API_KEY").map(String::as_str),Some("openrouter-private-key"));assert!(!env.contains_key("ANTHROPIC_API_KEY"));
+    }
+    #[tokio::test]
+    async fn pi_legacy_key_belongs_to_the_selected_provider_and_local_keys_follow_the_endpoint() {
+        let dir=tempfile::tempdir().unwrap();let app=crate::tests::app(dir.path());
+        let legacy:Settings=serde_json::from_value(json!({"agents":{"pi":{"provider":"openrouter","model":"m","api_key":"legacy-private-key","multi_provider":false,"base_url":"","effort":"low","codemode":false}}})).unwrap();
+        assert!(legacy.agents["pi"].provider_keys.is_empty());app.store.save_settings(1,&legacy).unwrap();
+        patch_pi(&app,1,json!({"provider":"local","base_url":"http://127.0.0.1:1234/v1","api_key":"local-private-key"})).await;
+        assert_eq!(app.store.settings(1).unwrap().agents["pi"].provider_keys["openrouter"].api_key,"legacy-private-key");
+        patch_pi(&app,1,json!({"provider":"openrouter"})).await;
+        assert_eq!(app.store.settings(1).unwrap().agents["pi"].api_key,"legacy-private-key");
+        // Back to local with the same endpoint: the key returns. With another endpoint it is dropped.
+        let same=patch_pi(&app,1,json!({"provider":"local"})).await;
+        assert_eq!(app.store.settings(1).unwrap().agents["pi"].api_key,"local-private-key");assert_eq!(same["agents"]["pi"]["api_key_preview"],"local...key");
+        patch_pi(&app,1,json!({"provider":"openrouter"})).await;
+        let moved=patch_pi(&app,1,json!({"provider":"local","base_url":"http://127.0.0.1:11434/v1"})).await;
+        let pi=app.store.settings(1).unwrap().agents["pi"].clone();
+        assert!(pi.api_key.is_empty());assert!(!pi.provider_keys.contains_key("local"));assert!(moved["agents"]["pi"]["api_key_previews"].get("local").is_none());
+        assert_eq!(pi.provider_keys["openrouter"].api_key,"legacy-private-key");
+        // A stored local key stays bound to the endpoint it was put aside with, also when the URL field is empty.
+        let mut bound=AgentConfig{provider:"openrouter".into(),..Default::default()};
+        bound.provider_keys.insert("local".into(),crate::model::ProviderKey{api_key:"local-private-key".into(),base_url:"http://127.0.0.1:1234/v1".into()});
+        assert_eq!(bound.saved_key("local","http://127.0.0.1:1234/v1/"),"local-private-key");
+        if std::env::var("PI_LOCAL_BASE_URL").is_err() {assert!(bound.saved_key("local","").is_empty());}
+        bound.provider_keys.get_mut("local").unwrap().base_url.clear();
+        assert!(bound.saved_key("local","http://127.0.0.1:1234/v1").is_empty());
+    }
+    #[tokio::test]
+    async fn pi_users_inherit_only_the_admins_selected_provider_key() {
+        let dir=tempfile::tempdir().unwrap();let app=crate::tests::app(dir.path());
+        patch_pi(&app,1,json!({"provider":"openrouter","model":"m","api_key":"admin-openrouter-key"})).await;
+        patch_pi(&app,1,json!({"provider":"anthropic","api_key":"admin-anthropic-key"})).await;
+        let config=|provider:&str|AgentConfig{provider:provider.into(),model:"m".into(),..Default::default()};
+        assert_eq!(crate::agents::effective_agent_config(&app,2,"pi",&config("anthropic")).unwrap().api_key,"admin-anthropic-key");
+        assert!(crate::agents::effective_agent_config(&app,2,"pi",&config("openrouter")).unwrap().api_key.is_empty());
+        assert_eq!(crate::agents::redact_for_user(&app,2,"admin-openrouter-key",&Settings::default()),"[redacted]");
     }
 
 }

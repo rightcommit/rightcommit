@@ -49,6 +49,7 @@ mod supervision;
 #[cfg(test)]
 mod tests;
 mod twg;
+mod update_check;
 
 use std::{
     collections::HashSet,

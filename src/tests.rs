@@ -663,6 +663,7 @@ fn pi_resume_restores_write_shell_tools_and_keeps_session_model() {
         effort: "high".into(),
         model: "changed-preference".into(),
         codemode: false,
+        provider_keys: Default::default(),
     };
     let session = NativeSession {
         provider: String::new(), base_url: String::new(),

@@ -102,6 +102,8 @@ pub(crate) fn effective(
         config.model.clear();
         config.base_url.clear();
     }
+    // The endpoint the saved personal key belongs to, before a node or session URL replaces it.
+    let key_endpoint = AgentConfig::key_endpoint(&config.provider, &config.base_url);
     if !base_url.is_empty() {
         config.base_url = base_url.into();
     }
@@ -115,6 +117,13 @@ pub(crate) fn effective(
     }
     if config.provider == "local" && config.base_url.trim().is_empty() {
         config.base_url = std::env::var("PI_LOCAL_BASE_URL").unwrap_or_default();
+    }
+    // A personal key is sent only to the local server it was saved for: a session created on
+    // another URL (compaction, resume) runs without it instead of receiving the current key.
+    if config.provider == "local"
+        && AgentConfig::key_endpoint(&config.provider, &config.base_url) != key_endpoint
+    {
+        config.api_key.clear();
     }
     crate::pi_local::validate(&config)?;
     agents::validate_pi_model("pi", &config.model)?;
@@ -282,6 +291,38 @@ mod tests {
         assert_eq!(local.base_url, "http://localhost:1234/v1");
         assert!(local.api_key.is_empty());
         assert!(effective(&settings, "unknown-provider", "model", "").is_err());
+    }
+    #[test]
+    fn local_personal_key_is_used_only_with_the_endpoint_it_was_saved_for() {
+        let mut settings = Settings::default();
+        settings.agents.insert(
+            "pi".into(),
+            AgentConfig {
+                provider: "local".into(),
+                model: "local-model".into(),
+                base_url: "http://127.0.0.1:2222/v1".into(),
+                api_key: "key-for-2222".into(),
+                ..Default::default()
+            },
+        );
+        let key = |config: &AgentConfig| environment(config, |_| None).get("PI_LOCAL_API_KEY").cloned();
+        // The saved endpoint, also when a session repeats it with a trailing slash.
+        for url in ["", "http://127.0.0.1:2222/v1", "http://127.0.0.1:2222/v1/"] {
+            let same = effective(&settings, "local", "local-model", url).unwrap();
+            assert_eq!(same.api_key, "key-for-2222");
+            assert_eq!(key(&same).as_deref(), Some("key-for-2222"));
+        }
+        // A session created on an older endpoint keeps its URL but does not receive the current key.
+        let older = effective(&settings, "local", "session-model", "http://127.0.0.1:1111/v1").unwrap();
+        assert_eq!(older.base_url, "http://127.0.0.1:1111/v1");
+        assert_eq!(older.model, "session-model");
+        assert!(older.api_key.is_empty());
+        assert!(key(&older).is_none());
+        // Other providers are not tied to the local URL.
+        let pi = settings.agents.get_mut("pi").unwrap();
+        pi.provider = "openrouter".into();
+        pi.base_url.clear();
+        assert_eq!(effective(&settings, "", "m", "").unwrap().api_key, "key-for-2222");
     }
     #[test]
     fn each_provider_receives_only_its_declared_environment() {

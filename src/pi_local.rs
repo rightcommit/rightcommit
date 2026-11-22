@@ -32,13 +32,6 @@ pub(crate) fn validate(config: &AgentConfig) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn endpoint_changed(config: &AgentConfig, previous: &AgentConfig) -> bool {
-    (config.provider == "local" || previous.provider == "local")
-        && (config.provider != previous.provider
-            || config.base_url.trim().trim_end_matches('/')
-                != previous.base_url.trim().trim_end_matches('/'))
-}
-
 /// Register only this request's endpoint/model. No shared models.json or cloud credentials change.
 pub(crate) fn configure(
     app: &App,

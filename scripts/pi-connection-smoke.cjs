@@ -27,6 +27,8 @@ printf '%s\\n' '{"type":"message_end","message":{"role":"assistant","stopReason"
   assert.deepEqual(await read(),original);assert.equal(await page.locator('[name=key_pi]').inputValue(),'draft-pi-key');
   for(const [provider,label] of [['xai','xAI (Grok)'],['deepseek','DeepSeek']]){
    await page.locator('[name=provider_pi]').getByRole('combobox').click();await page.locator('[name=provider_pi]').getByRole('option',{name:label,exact:true}).click();
+   // Keys are per provider: a key typed for the previous provider is not carried over.
+   assert.equal(await page.locator('[name=key_pi]').inputValue(),'');await page.locator('[name=key_pi]').fill('draft-pi-key');
    await button.click();await page.waitForFunction(()=>!document.querySelector('[data-action=pi-check]').disabled&&document.querySelector('[data-pi-status]').textContent.includes('Pi connection successful'));
    assert.equal(await page.locator('[name=provider_pi]').evaluate(el=>el.value),provider);assert.deepEqual(await read(),original);
   }
@@ -36,6 +38,9 @@ printf '%s\\n' '{"type":"message_end","message":{"role":"assistant","stopReason"
   assert.equal(await button.textContent(),'Verifica connessione');await button.click();await status.filter({hasText:'Autenticazione Pi fallita'}).waitFor();
   await page.locator('[data-action=save-settings]').click();await page.waitForFunction(()=>app.settings.agents.pi.provider==='deepseek');
   assert((await read()).agents.pi.configured);await page.evaluate(()=>settingsDialog('agents'));assert.equal(await page.locator('[name=provider_pi]').evaluate(el=>el.value),'deepseek');
+  // The key field shows the selected provider's saved state before saving.
+  const pick=async label=>{await page.locator('[name=provider_pi]').getByRole('combobox').click();await page.locator('[name=provider_pi]').getByRole('option',{name:label,exact:true}).click()},placeholder=async()=>await page.locator('[name=key_pi]').getAttribute('placeholder')||'';
+  assert.equal(await placeholder(),'draft...key');await pick('xAI (Grok)');assert.equal(await placeholder(),'');await pick('DeepSeek');assert.equal(await placeholder(),'draft...key');assert(!JSON.stringify(await read()).includes('draft-pi-key'));
   await page.screenshot({path:'/tmp/pi-connection-desktop.png'});assert.deepEqual(errors,[]);
   console.log('PASS: Pi-only draft check, actual native fixture, empty model, success/error IT/EN, loading state, xAI/DeepSeek routing and persistence, no implicit save, no secret leakage');
  }finally{await browser?.close();server.kill('SIGINT');await new Promise(r=>server.exitCode!==null?r():server.once('exit',r));fs.rmSync(data,{recursive:true,force:true})}

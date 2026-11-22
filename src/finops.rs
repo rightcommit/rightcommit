@@ -244,6 +244,8 @@ struct Metrics {
     tools: u64,
     repeated_usd: Option<f64>,
     agent_ms: Option<u64>,
+    /// Earliest usage record in milliseconds: when this model, agent or run was first used.
+    first_at: Option<i64>,
 }
 fn add_opt<T: std::ops::Add<Output = T> + Copy>(a: &mut Option<T>, b: Option<T>) {
     if let Some(b) = b {
@@ -269,6 +271,9 @@ impl Metrics {
             self.historical_codex_records += 1;
         }
         self.records += 1;
+        if u.at > 0 {
+            self.first_at = Some(self.first_at.map_or(u.at, |at| at.min(u.at)));
+        }
         self.input += u.input;
         self.output += u.output;
         self.total += u.input + u.output;
@@ -290,6 +295,47 @@ impl Metrics {
         }
     }
 }
+type ModelMetrics = BTreeMap<(String, String), Metrics>;
+
+fn model_key(usage: &Usage) -> (String, String) {
+    let model = usage.model.trim();
+    let model = if model.eq_ignore_ascii_case("unknown") {
+        ""
+    } else {
+        model
+    };
+    (usage.runtime.clone(), model.into())
+}
+
+fn model_rows(models: &ModelMetrics) -> Vec<Value> {
+    models
+        .iter()
+        .map(|((runtime, model), metrics)| {
+            let model = (!model.is_empty()).then_some(model.as_str());
+            json!({
+                "name": format!("{runtime} · {}", model.unwrap_or("unknown")),
+                "runtime": runtime, "model": model, "metrics": metrics
+            })
+        })
+        .collect()
+}
+
+#[derive(Default)]
+struct AgentMetrics {
+    metrics: Metrics,
+    models: ModelMetrics,
+}
+
+impl AgentMetrics {
+    fn add(&mut self, usage: &Usage, prices: &crate::codex_cost::Catalog) {
+        self.metrics.add_priced(usage, prices);
+        self.models
+            .entry(model_key(usage))
+            .or_default()
+            .add_priced(usage, prices);
+    }
+}
+
 pub(super) fn pi_files(dir: &Path, files: &mut Vec<PathBuf>, depth: usize) {
     if depth > 8 || dir.is_symlink() || files.len() > 10000 {
         return;
@@ -488,14 +534,14 @@ fn report_priced(
     let mut codex_missed = 0;
     let mut total = Metrics::default();
     let mut workflows = BTreeMap::<String, Metrics>::new();
-    let mut models = BTreeMap::<String, Metrics>::new();
-    let mut agents = BTreeMap::<String, Metrics>::new();
-    let mut names: BTreeMap<String, String> = app
-        .store
-        .workflows(uid)?
-        .into_iter()
-        .map(|w| (w.id, w.name))
-        .collect();
+    let mut models = ModelMetrics::new();
+    let mut agents = BTreeMap::<(&str, String), AgentMetrics>::new();
+    let mut manager_agents = BTreeMap::<(String, String), AgentMetrics>::new();
+    let saved = app.store.workflows(uid)?;
+    let mut created: BTreeMap<String, i64> =
+        saved.iter().map(|w| (w.id.clone(), w.created)).collect();
+    let mut names: BTreeMap<String, String> =
+        saved.into_iter().map(|w| (w.id, w.name)).collect();
     let mut run_rows = Vec::new();
     let mut completed = 0;
     let mut failed = 0;
@@ -532,6 +578,7 @@ fn report_priced(
         }
         crate::claude_time::enrich(r, &claude_files, &mut usage, &mut read_bytes, None);
         let mut metrics = Metrics::default();
+        let mut run_models = ModelMetrics::new();
         let mut nodes = BTreeMap::<String, Metrics>::new();
         let mut daily = BTreeMap::<i64, Metrics>::new();
         for u in usage.values() {
@@ -541,19 +588,11 @@ fn report_priced(
                 .entry(r.workflow.id.clone())
                 .or_default()
                 .add_priced(u, prices);
-            models
-                .entry(format!("{} · {}", u.runtime, u.model))
-                .or_default()
-                .add_priced(u, prices);
-            agents
-                .entry(format!(
-                    "{} · {} · {}",
-                    names.get(&r.workflow.id).unwrap_or(&r.workflow.name),
-                    r.workflow.id.chars().take(8).collect::<String>(),
-                    u.binding
-                ))
-                .or_default()
-                .add_priced(u, prices);
+            let model = model_key(u);
+            models.entry(model.clone()).or_default().add_priced(u, prices);
+            run_models.entry(model).or_default().add_priced(u, prices);
+            agents.entry((r.workflow.id.as_str(), u.binding.clone()))
+                .or_default().add(u, prices);
             nodes
                 .entry(u.node.clone())
                 .or_default()
@@ -621,6 +660,8 @@ fn report_priced(
         names
             .entry(r.workflow.id.clone())
             .or_insert_with(|| r.workflow.name.clone());
+        // A deleted workflow keeps the creation date saved with its runs.
+        created.entry(r.workflow.id.clone()).or_insert(r.workflow.created);
         workflows.entry(r.workflow.id.clone()).or_default();
         let end = if ["completed", "failed", "interrupted"].contains(&r.status.as_str()) {
             r.updated
@@ -633,7 +674,7 @@ fn report_priced(
                 node_rows.push(json!({"id":id,"name":"Non attribuito","kind":"","status":null,"attempts":0,"metrics":metrics}));
             }
         }
-        run_rows.push(json!({"id":r.id,"parent":r.parent,"children":r.children,"name":r.workflow.name,"workflow_id":r.workflow.id,"status":r.status,"created":r.created,"updated":r.updated,"steps":run_steps,"repetitions":repeats,"reworks":rework,"decisions":ds.len(),"approvals":ds.iter().filter(|d|d.decision=="approve").count(),"rejections":ds.iter().filter(|d|d.decision=="reject").count(),"errors":events.iter().filter(|e|e.kind=="error").count(),"artifacts":artifact_count,"elapsed_ms":(end-r.created).max(0) as u64*1000,"human_wait_ms":wait_ms(&events.iter().filter(|e|!r.workflow.nodes.iter().any(|n|n.id==e.node&&n.kind=="Workflow")).cloned().collect::<Vec<_>>(),end),"sessions":r.sessions.len(),"sessions_with_usage":bindings.len(),"metrics":metrics,"nodes":node_rows,"daily":daily.iter().map(|(at,m)|json!({"at":at,"metrics":m})).collect::<Vec<_>>() }));
+        run_rows.push(json!({"id":r.id,"parent":r.parent,"children":r.children,"name":r.workflow.name,"workflow_id":r.workflow.id,"status":r.status,"created":r.created,"updated":r.updated,"steps":run_steps,"repetitions":repeats,"reworks":rework,"decisions":ds.len(),"approvals":ds.iter().filter(|d|d.decision=="approve").count(),"rejections":ds.iter().filter(|d|d.decision=="reject").count(),"errors":events.iter().filter(|e|e.kind=="error").count(),"artifacts":artifact_count,"elapsed_ms":(end-r.created).max(0) as u64*1000,"human_wait_ms":wait_ms(&events.iter().filter(|e|!r.workflow.nodes.iter().any(|n|n.id==e.node&&n.kind=="Workflow")).cloned().collect::<Vec<_>>(),end),"sessions":r.sessions.len(),"sessions_with_usage":bindings.len(),"metrics":metrics,"models":model_rows(&run_models),"nodes":node_rows,"daily":daily.iter().map(|(at,m)|json!({"at":at,"metrics":m})).collect::<Vec<_>>() }));
     }
     // Inclusive totals are exposed separately; global/workflow aggregates remain exclusive.
     let own: BTreeMap<String, Option<f64>> = run_rows
@@ -821,14 +862,9 @@ fn report_priced(
                 .entry(u.at / 86400000 * 86400000)
                 .or_default()
                 .add_priced(&u, prices);
-            models
-                .entry(format!("{} · {}", u.runtime, u.model))
-                .or_default()
-                .add_priced(&u, prices);
-            agents
-                .entry(format!("Manager · {} · {}", u.runtime, u.model))
-                .or_default()
-                .add_priced(&u, prices);
+            let model = model_key(&u);
+            models.entry(model.clone()).or_default().add_priced(&u, prices);
+            manager_agents.entry(model).or_default().add(&u, prices);
         } else {
             let Some(id) = v["id"].as_str() else { continue };
             if !manager_seen.insert(format!("turn:{id}")) {
@@ -843,17 +879,23 @@ fn report_priced(
         }
     }
     let manager_report = json!({"metrics":manager,"turns":manager_turns,"daily":manager_daily.iter().map(|(at,m)|json!({"at":at,"metrics":m})).collect::<Vec<_>>()});
-    let workflow_rows:Vec<_>=workflows.iter().map(|(id,m)|json!({"id":id,"name":names.get(id),"runs":runs.iter().filter(|r|&r.workflow.id==id).count(),"completed":runs.iter().filter(|r|&r.workflow.id==id&&r.status=="completed").count(),"metrics":m})).collect();
-    let model_rows: Vec<_> = models
-        .iter()
-        .map(|(name, m)| json!({"name":name,"metrics":m}))
-        .collect();
-    let agent_rows: Vec<_> = agents
-        .iter()
-        .map(|(name, m)| json!({"name":name,"metrics":m}))
-        .collect();
+    let workflow_rows:Vec<_>=workflows.iter().map(|(id,m)|json!({"id":id,"name":names.get(id),"created":created.get(id).filter(|at|**at>0),"runs":runs.iter().filter(|r|&r.workflow.id==id).count(),"completed":runs.iter().filter(|r|&r.workflow.id==id&&r.status=="completed").count(),"metrics":m})).collect();
+    let mut agent_rows: Vec<_> = agents.iter().map(|((workflow, binding), agent)| {
+        let workflow_name = names.get(*workflow).map(String::as_str).unwrap_or(*workflow);
+        let short_id: String = workflow.chars().take(8).collect();
+        let detail = format!("{workflow_name} · {short_id}");
+        json!({"name":format!("{detail} · {binding}"),"label":binding,"detail":detail,
+               "metrics":agent.metrics,"models":model_rows(&agent.models)})
+    }).chain(manager_agents.iter().map(|((runtime, model), agent)| {
+        // An unattributed model keeps the name used by the model rows instead of an empty label.
+        let model = if model.is_empty() {"unknown"} else {model.as_str()};
+        json!({"name":format!("Manager · {runtime} · {model}"),"label":model,
+               "detail":format!("Manager · {runtime}"),
+               "metrics":agent.metrics,"models":model_rows(&agent.models)})
+    })).collect();
+    agent_rows.sort_by(|a,b| a["name"].as_str().cmp(&b["name"].as_str()));
     Ok(
-        json!({"pricing":prices.metadata(),"generated":now(),"scope":"current_user","currency":"USD","manager":manager_report,"summary":{"workflow_metrics":workflow_metrics,"runs":runs.len(),"completed":completed,"failed":failed,"waiting":waiting,"active":active,"steps":steps,"repetitions":repetitions,"reworks":reworks,"decisions":decisions,"sessions":sessions,"sessions_with_usage":covered,"historical_sessions_unavailable":historical_missed,"historical_codex_sessions_unavailable":codex_missed,"metrics":total},"workflows":workflow_rows,"models":model_rows,"agents":agent_rows,"runs":run_rows}),
+        json!({"pricing":prices.metadata(),"generated":now(),"scope":"current_user","currency":"USD","manager":manager_report,"summary":{"workflow_metrics":workflow_metrics,"runs":runs.len(),"completed":completed,"failed":failed,"waiting":waiting,"active":active,"steps":steps,"repetitions":repetitions,"reworks":reworks,"decisions":decisions,"sessions":sessions,"sessions_with_usage":covered,"historical_sessions_unavailable":historical_missed,"historical_codex_sessions_unavailable":codex_missed,"metrics":total},"workflows":workflow_rows,"models":model_rows(&models),"agents":agent_rows,"runs":run_rows}),
     )
 }
 pub async fn get(State(app): State<App>, u: User) -> ApiResult<Json<Value>> {
@@ -1070,6 +1112,82 @@ runtime: "codex".into(),
             fallback["summary"]["historical_codex_sessions_unavailable"],
             1
         );
+    }
+    #[tokio::test]
+    async fn runs_and_agents_split_costs_by_model_and_reconcile() {
+        let d = tempfile::tempdir().unwrap();
+        let app = crate::tests::app(d.path());
+        let mut workflow = crate::presets::all().remove(0);
+        workflow.created = 1_789_000_000;
+        let r = crate::engine::create(&app, 1, workflow, "models".into(), None)
+            .await
+            .unwrap();
+        // Two calls of model-a and one of model-b for the author, one call without a model for the reviewer.
+        let calls = [("r1", Some("model-a"), "author", 0.01), ("r2", Some("model-a"), "author", 0.02),
+            ("r3", Some("model-b"), "author", 0.04), ("r4", None, "reviewer", 0.08)];
+        for (response, model, binding, cost) in calls {
+            let mut m = message();
+            m["responseId"] = json!(response);
+            m["usage"]["cost"]["total"] = json!(cost);
+            match model {
+                Some(model) => m["model"] = json!(model),
+                None => {m.as_object_mut().unwrap().remove("model");}
+            }
+            let u = pi_usage(&m, "sid", "task", binding, 1, "live").unwrap();
+            app.store.event(1, &r.id, "usage", "task", &serde_json::to_string(&u).unwrap()).unwrap();
+        }
+        // The manager used a model that was not recorded.
+        let mut m = message();
+        m["responseId"] = json!("manager-1");
+        m.as_object_mut().unwrap().remove("model");
+        let u = pi_usage(&m, "manager-session", "manager", crate::manager::BINDING, 1, "live").unwrap();
+        app.store.event(1, "conversation", "usage", "manager", &serde_json::to_string(&u).unwrap()).unwrap();
+
+        let value = report(&app, 1).unwrap();
+        let usd = |row: &Value| row["metrics"]["usd"].as_f64().unwrap();
+        let sum = |rows: &Value| rows.as_array().unwrap().iter().map(usd).sum::<f64>();
+        let named = |rows: &Value, name: &str| rows.as_array().unwrap().iter().find(|row| row["name"] == name).cloned().unwrap_or_else(|| panic!("missing row {name}"));
+
+        let run = value["runs"].as_array().unwrap().iter().find(|run| run["id"] == r.id.as_str()).unwrap();
+        let models = &run["models"];
+        assert_eq!(models.as_array().unwrap().len(), 3);
+        let a = named(models, "pi · model-a");
+        assert_eq!(a["runtime"], "pi");assert_eq!(a["model"], "model-a");
+        assert_eq!(a["metrics"]["records"], 2);assert_eq!(a["metrics"]["input"], 120);assert_eq!(a["metrics"]["output"], 10);
+        assert!((usd(&a) - 0.03).abs() < 1e-10);
+        assert!((usd(&named(models, "pi · model-b")) - 0.04).abs() < 1e-10);
+        // A missing model is one unattributed row, not a model called "unknown" and not dropped.
+        let unknown = named(models, "pi · unknown");
+        assert!(unknown["model"].is_null());assert!((usd(&unknown) - 0.08).abs() < 1e-10);
+        // Model rows reconcile with the run totals without double counting.
+        assert!((sum(models) - usd(run)).abs() < 1e-10);
+        assert_eq!(models.as_array().unwrap().iter().map(|row| row["metrics"]["records"].as_u64().unwrap()).sum::<u64>(), run["metrics"]["records"].as_u64().unwrap());
+        assert_eq!(models.as_array().unwrap().iter().map(|row| row["metrics"]["total"].as_u64().unwrap()).sum::<u64>(), run["metrics"]["total"].as_u64().unwrap());
+
+        // Rows carry when the workflow was created and when a model or agent was first used.
+        let workflow = value["workflows"].as_array().unwrap().iter().find(|row| row["id"] == r.workflow.id.as_str()).unwrap();
+        assert_eq!(workflow["created"], 1_789_000_000);
+        assert_eq!(a["metrics"]["first_at"], 1790000000000i64);
+        assert_eq!(named(&value["models"], "pi · model-b")["metrics"]["first_at"], 1790000000000i64);
+
+        // Each agent keeps its workflow context and its own split by model.
+        let agents = value["agents"].as_array().unwrap();
+        let author = agents.iter().find(|row| row["label"] == "author").unwrap();
+        assert!(author["detail"].as_str().unwrap().ends_with(&r.workflow.id.chars().take(8).collect::<String>()));
+        assert_eq!(author["name"], format!("{} · author", author["detail"].as_str().unwrap()));
+        assert_eq!(author["models"].as_array().unwrap().len(), 2);
+        assert!((sum(&author["models"]) - usd(author)).abs() < 1e-10);
+        let reviewer = agents.iter().find(|row| row["label"] == "reviewer").unwrap();
+        assert_eq!(reviewer["models"].as_array().unwrap().len(), 1);assert!(reviewer["models"][0]["model"].is_null());
+        // The manager without a recorded model has a complete name and label.
+        let manager = agents.iter().find(|row| row["detail"] == "Manager · pi").unwrap();
+        assert_eq!(manager["name"], "Manager · pi · unknown");assert_eq!(manager["label"], "unknown");
+        assert!(manager["models"][0]["model"].is_null());
+        // Account-level model rows merge the same model across run and manager and match the total.
+        assert_eq!(value["models"].as_array().unwrap().len(), 3);
+        assert!((usd(&named(&value["models"], "pi · unknown")) - 0.09).abs() < 1e-10);
+        assert!((sum(&value["models"]) - value["summary"]["metrics"]["usd"].as_f64().unwrap()).abs() < 1e-10);
+        assert!((agents.iter().map(usd).sum::<f64>() - value["summary"]["metrics"]["usd"].as_f64().unwrap()).abs() < 1e-10);
     }
     #[test]
     fn manager_consumption_is_owned_deduplicated_and_separate_from_runs() {

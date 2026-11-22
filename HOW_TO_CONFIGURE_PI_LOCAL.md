@@ -87,13 +87,15 @@ For another account, change `1` to its ID and `20001` to 20000 + the ID.
 2. Set **Pi provider** to *OpenAI*.
 3. Set **Model** to the model `id`, for example `qwen3-coder:30b`.
 4. In **Personal API key** type any text, for example `local`. The local server ignores it;
-   it only marks Pi as configured.
+   it only marks Pi as configured. Pi keeps one personal key per provider, so this text is
+   saved as the *OpenAI* key and the keys of the other providers are not changed.
 5. Press **Save** and run a workflow with Pi.
 
 ## Good to know
 
 - **This replaces OpenAI for this account's Pi.** To use the real OpenAI again, delete
-  `models.json` from the account's Pi folder.
+  `models.json` from the account's Pi folder and replace the placeholder in **Personal API
+  key** with a real OpenAI key while *OpenAI* is selected.
 - **`web_search` does not work** with a local model, because it needs the real OpenAI service.
   `web_fetch` still works.
 - **Reasoning:** the **Reasoning** setting has an effect only if you add `"reasoning": true` to

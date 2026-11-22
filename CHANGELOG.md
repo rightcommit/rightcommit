@@ -3,6 +3,54 @@
 What changed in each version of rightcommit. Releases are also listed on
 [GitHub](https://github.com/rightcommit/rightcommit/releases).
 
+## [1.7.0] - 2026-11-22
+
+### Added
+
+- Pi keeps one personal API key for each provider. Switching the Pi provider in Personal
+  settings shows whether a key is saved for it and uses that key again, with no retyping. The
+  bin icon removes only the key of the selected provider. A key saved by an earlier version
+  belongs to the provider that was selected when you upgrade. Multi-provider mode is
+  unchanged: it ignores personal keys, and now keeps them for when you select a single
+  provider again (#18).
+- FinOps shows costs by model (#19):
+  - **Other** in the model breakdown and in the agent comparison opens the entries it groups.
+    Each grouped agent shows its split by runtime and model. A long list shows its first ten
+    agents and keeps the rest behind one row with their count and total.
+  - The detail of a run has a **Costs by model** table, with cache write and reasoning tokens.
+  - A usage record without a model appears as one unattributed row.
+- FinOps tables show relative dates such as "3 days ago", with the exact date on hover:
+  **Created** for workflows, **First used** for models and agents.
+- A notice when a newer rightcommit version is published: a red bell on the account avatar
+  and `vX.Y.Z available` in the account menu, linking to the release. You can dismiss it for
+  that version. The server asks GitHub at most every six hours and sends nothing about your
+  account or installation. Set `RIGHTCOMMIT_UPDATE_CHECK=0` in `.env` to turn the check off,
+  for example on a network without Internet access (#21).
+
+### Changed
+
+- **Verify connection** for Pi uses the key saved for the provider you selected, also right
+  after you leave Multi-provider mode.
+- Changing the Pi provider clears a key typed but not yet saved, so it cannot be stored for
+  the wrong provider.
+- A non-administrator inherits the administrator's Pi key only for the provider the
+  administrator currently has selected, not for keys saved for other providers.
+
+### Fixed
+
+- A personal key for the local Pi provider is used only with the server URL it was saved for.
+  Compacting or resuming a session created on another local URL no longer sends it the key of
+  the current one (#20). A `PI_LOCAL_API_KEY` set in the environment is not affected.
+- Activity logs hide a saved key in full when another, shorter saved key is its beginning.
+- In FinOps, the Manager row of a model that was not recorded reads `unknown` instead of
+  ending with a separator.
+
+### Security
+
+- The `url` crate is updated to 2.5.9, which fixes a stack overflow when reading the origin of
+  a deeply nested `blob:` URL
+  ([RUSTSEC-2026-0592](https://rustsec.org/advisories/RUSTSEC-2026-0592)).
+
 ## [1.6.1] - 2026-11-19
 
 ### Added

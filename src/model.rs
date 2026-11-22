@@ -174,6 +174,17 @@ pub struct AgentConfig {
     pub provider: String,
     /// Pi only: declare the built-in `codemode` tool in Task turns.
     pub codemode: bool,
+    /// Pi only: personal keys of the providers that are not selected. `api_key` belongs to `provider`.
+    /// Written only by settings validation; never published and never used for runs.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub provider_keys: BTreeMap<String, ProviderKey>,
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProviderKey {
+    pub api_key: String,
+    /// The endpoint the key was saved with: a `local` key is reused only for the same URL.
+    pub base_url: String,
 }
 impl Default for AgentConfig {
     fn default() -> Self {
@@ -185,7 +196,28 @@ impl Default for AgentConfig {
             api_key: String::new(),
             provider: "anthropic".into(),
             codemode: false,
+            provider_keys: BTreeMap::new(),
         }
+    }
+}
+impl AgentConfig {
+    /// The personal key saved for `provider`; a `local` key only for the endpoint it was saved with.
+    pub fn saved_key(&self, provider: &str, base_url: &str) -> String {
+        // A stored key keeps the endpoint resolved when it was put aside, so a later change of
+        // PI_LOCAL_BASE_URL cannot move it to another server.
+        let (key, bound) = if provider == self.provider {(&self.api_key, Self::key_endpoint(provider, &self.base_url))}
+            else if let Some(saved) = self.provider_keys.get(provider) {(&saved.api_key, saved.base_url.trim().trim_end_matches('/').to_string())}
+            else {return String::new()};
+        if provider != "local" || bound == Self::key_endpoint(provider, base_url) {key.clone()} else {String::new()}
+    }
+    /// The endpoint a key belongs to: an empty local URL means the server's `PI_LOCAL_BASE_URL`.
+    pub fn key_endpoint(provider: &str, base_url: &str) -> String {
+        let url = if provider == "local" && base_url.trim().is_empty() {std::env::var("PI_LOCAL_BASE_URL").unwrap_or_default()} else {base_url.to_string()};
+        url.trim().trim_end_matches('/').to_string()
+    }
+    /// Every stored personal key, selected provider or not, for redaction and credential checks.
+    pub fn secrets(&self) -> impl Iterator<Item = &String> {
+        std::iter::once(&self.api_key).chain(self.provider_keys.values().map(|saved| &saved.api_key)).filter(|key| !key.is_empty())
     }
 }
 /// Zero uses the native model/provider default, except Pi's explicit token budgets.

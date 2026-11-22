@@ -16,7 +16,9 @@ Read [Provider terms and permitted use](PROVIDER_TERMS.md).
 4. In **Model**, start typing to search, for example `claude` or `qwen`, and pick a model.
    IDs look like `vendor/model`. If the list does not load, type the ID by hand (copy it from
    the model page on openrouter.ai).
-5. Paste the key in **Personal API key** and press **Save**.
+5. Paste the key in **Personal API key** and press **Save**. The key is saved for OpenRouter
+   only: keys you saved for other Pi providers are kept, and selecting OpenRouter again later
+   reuses this key without retyping it. The bin icon removes only the OpenRouter key.
 
 Pick a model that supports **tool calling**: Pi needs tools to read and edit files.
 
@@ -26,7 +28,8 @@ Pick a model that supports **tool calling**: Pi needs tools to read and edit fil
   `docker compose up -d`) or in the shell before starting `rightcommit`. It is used by accounts
   without a personal key.
 - **Administrator key:** an OpenRouter key saved by the administrator in Pi settings is
-  used by users without a personal key for that same provider and endpoint.
+  used by users without a personal OpenRouter key, while the administrator has OpenRouter
+  selected in single-provider mode.
 
 ## Good to know
 
