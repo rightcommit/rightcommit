@@ -834,6 +834,10 @@ struct RunFilter {
 async fn active_workflow_count(State(a): State<App>, u: User) -> ApiResult<Json<Value>> {
     Ok(Json(json!({"count":a.store.active_workflow_count(u.id)?})))
 }
+/// A run shows the current name of its workflow; the name saved with the run only when the workflow was deleted.
+pub(crate) fn run_name<'a>(names: &'a BTreeMap<String, String>, run: &'a Run) -> &'a str {
+    names.get(&run.workflow.id).unwrap_or(&run.workflow.name)
+}
 async fn runs(
     State(a): State<App>,
     u: User,
@@ -843,9 +847,10 @@ async fn runs(
         Some(id) => a.store.workflow_runs(u.id, &id)?,
         None => a.store.runs(u.id)?,
     };
+    let names = a.store.workflow_names(u.id)?;
     let summaries = runs.iter().map(|r| -> anyhow::Result<Value> {
         let schedule_id = crate::schedules::run_schedule(&a, u.id, &r.id)?;
-        Ok(json!({"id":r.id,"name":r.workflow.name,"workflow_id":r.workflow.id,"status":r.status,"current":r.current,"created":r.created,"updated":r.updated,"parent":r.parent,"schedule_id":schedule_id,"execution":r.execution}))
+        Ok(json!({"id":r.id,"name":run_name(&names, r),"workflow_id":r.workflow.id,"status":r.status,"current":r.current,"created":r.created,"updated":r.updated,"parent":r.parent,"schedule_id":schedule_id,"execution":r.execution}))
     }).collect::<anyhow::Result<Vec<_>>>()?;
     Ok(Json(json!(summaries)))
 }
@@ -906,9 +911,10 @@ async fn run(State(a): State<App>, u: User, Path(id): Path<String>) -> ApiResult
         rusqlite::params![u.id,id],|row|row.get(0)).optional().map_err(anyhow::Error::from)?;
     let artifact_app=&a;
     let artifacts=a.store.artifacts(u.id,&id)?.iter().map(|a|json!({"id":a.id,"node":a.node,"path":a.path,"version":a.version,"hash":a.hash,"session":a.session,"turn":a.turn,"created":a.created,"file":crate::artifacts::file_info(artifact_app,u.id,&r,a)})).collect::<Vec<_>>();
+    let names = a.store.workflow_names(u.id)?;
     let children = r.children.iter().map(|call| {
         let child = a.store.run(u.id, &call.run)?;
-        Ok(json!({"id":child.id,"node":call.node,"attempt":call.attempt,"name":child.workflow.name,"status":child.status,"current":child.current,"created":child.created}))
+        Ok(json!({"id":child.id,"node":call.node,"attempt":call.attempt,"name":run_name(&names, &child),"status":child.status,"current":child.current,"created":child.created}))
     }).collect::<anyhow::Result<Vec<Value>>>()?;
     let mut attention = r.clone();
     for _ in 0..crate::subworkflows::MAX_DEPTH {
@@ -1294,6 +1300,48 @@ mod settings_isolation_tests {
         let before=serde_json::to_value(app.store.settings(1).unwrap()).unwrap();let revision=settings_revision(&app.store.settings(1).unwrap());
         assert!(patch_settings(State(app.clone()),user(),Json(json!({"revision":revision,"changes":{"agents":{"pi":{"provider":"local","base_url":"file:///tmp/server"}}}}))).await.is_err());
         assert_eq!(serde_json::to_value(app.store.settings(1).unwrap()).unwrap(),before);
+    }
+    #[tokio::test]
+    async fn runs_show_the_current_workflow_name_and_keep_their_own_after_deletion() {
+        let dir=tempfile::tempdir().unwrap();let app=crate::tests::app(dir.path());
+        let workflow=crate::presets::all().remove(0);let original=workflow.name.clone();
+        app.store.save_workflow(1,&workflow).unwrap();app.store.save_workflow(2,&workflow).unwrap();
+        let first=crate::engine::create(&app,1,workflow.clone(),"Input".into(),None).await.unwrap();
+        let other=crate::engine::create(&app,2,workflow.clone(),"Input".into(),None).await.unwrap();
+        let listed=|uid:i64|{let app=app.clone();async move{runs(State(app),User{id:uid,email:String::new()},Query(RunFilter{workflow_id:None})).await.unwrap().0}};
+        let name=|rows:&Value,id:&str|rows.as_array().unwrap().iter().find(|row|row["id"]==id).unwrap()["name"].clone();
+        assert_eq!(name(&listed(1).await,&first.id),original.as_str());
+        app.store.rename_workflow(1,&workflow.id,"Renamed workflow").unwrap();
+        // Run list, FinOps and the per-workflow filter show the new name; another user's workflow is unaffected.
+        assert_eq!(name(&listed(1).await,&first.id),"Renamed workflow");
+        assert_eq!(name(&runs(State(app.clone()),user(),Query(RunFilter{workflow_id:Some(workflow.id.clone())})).await.unwrap().0,&first.id),"Renamed workflow");
+        assert_eq!(name(&listed(2).await,&other.id),original.as_str());
+        let report=crate::finops::report(&app,1).unwrap();
+        assert_eq!(name(&report["runs"],&first.id),"Renamed workflow");assert_eq!(report["workflows"][0]["name"],"Renamed workflow");
+        // Storage labels and the child runs listed in a parent run follow the same rule.
+        let label=|app:&App|{let app=app.clone();let id=first.id.clone();async move{
+            let listing=crate::storage::list(State(app),User{id:1,email:String::new()},Query(serde_json::from_value(json!({"root":"workspaces"})).unwrap())).await.unwrap().0;
+            listing["entries"].as_array().unwrap().iter().find(|entry|entry["name"]==id.as_str()).unwrap()["label"].as_str().unwrap().to_string()}};
+        let short:String=first.id.chars().take(8).collect();
+        assert_eq!(label(&app).await,format!("Renamed workflow · {short}"));
+        let mut child_workflow=crate::presets::all().remove(1);child_workflow.name="Child before rename".into();
+        app.store.save_workflow(1,&child_workflow).unwrap();
+        let child=crate::engine::create(&app,1,child_workflow.clone(),"Input".into(),None).await.unwrap();
+        let mut parent=app.store.run(1,&first.id).unwrap();
+        parent.children.push(ChildRun{run:child.id.clone(),node:"call".into(),attempt:1});app.store.save_run(1,&parent).unwrap();
+        let children=|app:&App|{let app=app.clone();let id=first.id.clone();async move{run(State(app),User{id:1,email:String::new()},Path(id)).await.unwrap().0["children"].clone()}};
+        assert_eq!(children(&app).await[0]["name"],"Child before rename");
+        app.store.rename_workflow(1,&child_workflow.id,"Child after rename").unwrap();
+        assert_eq!(children(&app).await[0]["name"],"Child after rename");assert_eq!(children(&app).await[0]["id"],child.id.as_str());
+        // The copy saved with the run is the record of what ran: it is not rewritten.
+        assert_eq!(app.store.run(1,&first.id).unwrap().workflow.name,original);
+        // A deleted workflow leaves its runs with the name they were saved with.
+        app.store.db.lock().unwrap().execute("DELETE FROM workflows WHERE user_id=1 AND id=?",[&workflow.id]).unwrap();
+        assert_eq!(name(&listed(1).await,&first.id),original.as_str());
+        assert_eq!(name(&crate::finops::report(&app,1).unwrap()["runs"],&first.id),original.as_str());
+        assert_eq!(label(&app).await,format!("{original} · {short}"));
+        app.store.db.lock().unwrap().execute("DELETE FROM workflows WHERE user_id=1 AND id=?",[&child_workflow.id]).unwrap();
+        assert_eq!(children(&app).await[0]["name"],"Child before rename");
     }
     async fn patch_pi(app: &App, uid: i64, pi: Value) -> Value {
         let revision=settings_revision(&app.store.settings(uid).unwrap());

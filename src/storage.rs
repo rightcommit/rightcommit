@@ -278,7 +278,8 @@ pub async fn list(
     Query(q): Query<Location>,
 ) -> ApiResult<Json<Value>> {
     if q.root == "workspaces" && q.path.is_empty() {
-        let entries: Vec<_> = app.store.runs(u.id)?.iter().map(|r| json!({"name":r.id,"label":format!("{} · {}",r.workflow.name,r.id.chars().take(8).collect::<String>()),"directory":true,"size":0,"status":r.status,"source_mode":if r.context.contains_key("direct-primary") {"direct"} else {"copy"}})).collect();
+        let names = app.store.workflow_names(u.id)?;
+        let entries: Vec<_> = app.store.runs(u.id)?.iter().map(|r| json!({"name":r.id,"label":format!("{} · {}",crate::api::run_name(&names, r),r.id.chars().take(8).collect::<String>()),"directory":true,"size":0,"status":r.status,"source_mode":if r.context.contains_key("direct-primary") {"direct"} else {"copy"}})).collect();
         return Ok(Json(json!({"path":"","entries":entries})));
     }
     if q.root == "workspaces"

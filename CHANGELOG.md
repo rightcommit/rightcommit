@@ -3,6 +3,15 @@
 What changed in each version of rightcommit. Releases are also listed on
 [GitHub](https://github.com/rightcommit/rightcommit/releases).
 
+## [1.7.1] - 2026-11-22
+
+### Fixed
+
+- After a workflow is renamed, its runs show the new name. The run list, the history, the
+  activity log, FinOps, the Storage labels and the child runs of a parent run used to keep the
+  name the workflow had when the run started. The copy of the workflow saved with each run is
+  not changed, and the runs of a deleted workflow keep the name saved with them (#22).
+
 ## [1.7.0] - 2026-11-22
 
 ### Added

@@ -157,6 +157,17 @@ impl Store {
             params![uid],
         )
     }
+    /// Current names of the user's saved workflows, by id. A run stores a copy of its workflow,
+    /// so a list shows this name and falls back to the copy when the workflow was deleted.
+    pub fn workflow_names(&self, uid: i64) -> Result<std::collections::BTreeMap<String, String>> {
+        let db = self.db.lock().unwrap();
+        let mut q = db.prepare("SELECT id, json_extract(json,'$.name') FROM workflows WHERE user_id=?")?;
+        let names = q
+            .query_map(params![uid], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)))?
+            .filter_map(|row| row.map(|(id, name)| name.map(|name| (id, name))).transpose())
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(names)
+    }
     pub fn save_workflow(&self, uid: i64, w: &Workflow) -> Result<()> {
         let mut w = w.clone();
         w.created = now();
