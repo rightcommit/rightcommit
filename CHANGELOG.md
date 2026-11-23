@@ -3,6 +3,40 @@
 What changed in each version of rightcommit. Releases are also listed on
 [GitHub](https://github.com/rightcommit/rightcommit/releases).
 
+## [1.8.0] - 2026-11-23
+
+### Added
+
+- The artifact viewer and the Storage viewer preview more file types:
+  - Images (PNG, JPEG, GIF) are shown as images.
+  - HTML files are rendered as a page. The page runs in a sandbox with no network access, so
+    scripts and styles inside the file work, and resources loaded from a CDN do not.
+    **Open in a new tab** shows the page in its own browser tab.
+  - PDF files open in the browser's PDF viewer.
+  - Text files show line numbers.
+  - JSON is indented, and JSON, YAML and XML blocks can be collapsed and expanded.
+  - Text files saved as Windows-1252 or UTF-16, common for COBOL and Visual Basic sources,
+    are shown as text, with a note that they are not UTF-8. This changes only what the viewer
+    shows.
+- **Test connection** for Claude Code and Codex in Personal settings → Agents, as Pi already
+  had. It sends one short request with the model and key in the form, without saving them and
+  without running tools, and reports authentication, quota and model errors.
+
+### Changed
+
+- The artifact viewer keeps the version, the Preview/Source/Compare tabs and the full path in
+  place while the content scrolls. HTML and PDF previews fill the height of the dialog in both
+  viewers.
+- Storage downloads are named after what they hold: the file or folder name, or the workflow
+  name for a whole run. They used to be `sources.zip`.
+- Hidden files are shown by default in the Artifacts panel and in Storage, and each
+  **Show hidden** switch is remembered in the browser.
+
+### Fixed
+
+- The Artifacts panel scrolls when the window is short, and shrinks to its title when there is
+  no room for the list.
+
 ## [1.7.1] - 2026-11-22
 
 ### Fixed

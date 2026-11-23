@@ -344,10 +344,10 @@ jui-select{color-scheme:inherit}
 
 #graph-canvas.marquee-selecting{cursor:crosshair}
 
-[data-inspector-artifacts]{max-height:min(1280px,60vh);overflow-y:scroll;overscroll-behavior-y:contain;scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:var(--muted) var(--surface)}
-[data-inspector-artifacts]::-webkit-scrollbar{width:8px}
-[data-inspector-artifacts]::-webkit-scrollbar-track{background:var(--surface)}
-[data-inspector-artifacts]::-webkit-scrollbar-thumb{background:var(--muted);border:2px solid var(--surface);border-radius:8px}
+:is([data-inspector-artifacts],.artifacts-compact .artifact-content){overflow-y:auto;overscroll-behavior-y:contain;scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:var(--muted) var(--surface)}
+:is([data-inspector-artifacts],.artifacts-compact .artifact-content)::-webkit-scrollbar{width:8px}
+:is([data-inspector-artifacts],.artifacts-compact .artifact-content)::-webkit-scrollbar-track{background:var(--surface)}
+:is([data-inspector-artifacts],.artifacts-compact .artifact-content)::-webkit-scrollbar-thumb{background:var(--muted);border:2px solid var(--surface);border-radius:8px}
 .inspector-artifacts-heading{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}.inspector-artifacts-heading .storage-hidden-control{gap:5px;font-size:11px;color:var(--muted)}.artifact-hidden-toggle{width:26px;height:16px}.artifact-hidden-toggle span{width:10px;height:10px}.artifact-hidden-toggle[aria-checked="true"] span{transform:translateX(10px)}
 
 .source-path-picker{position:relative;min-width:0}.source-path-input{display:flex;align-items:center;border:1px solid var(--line);border-radius:7px;background:var(--surface)}.source-path-input:focus-within{outline:3px solid var(--accent);outline-offset:2px}.source-path-input input{width:100%;border:0;background:transparent;outline:none;font-size:14px}.source-path-input .icon-button{border:0;background:transparent;width:32px;height:32px;margin-right:4px;padding:7px;flex-shrink:0;color:var(--muted)}.source-path-input .icon{width:14px;height:14px}.source-folder-options{position:absolute;top:calc(100% + 5px);left:0;right:0;z-index:12;max-height:180px;overflow-y:auto;overscroll-behavior:contain;border:1px solid var(--line);border-radius:7px;background:var(--surface);box-shadow:var(--shadow);padding:4px}.source-folder-options [role=option]{display:flex;align-items:center;gap:8px;padding:8px;border-radius:4px;cursor:pointer;font-size:12px;color:var(--text);overflow-wrap:anywhere}.source-folder-options [role=option]:hover,.source-folder-options [aria-selected=true]{background:var(--accent-fill);color:var(--accent)}.source-folder-options .icon{width:15px;height:15px}.source-folder-options .note{padding:4px}
@@ -622,16 +622,16 @@ body.resizing-right-panel,body.resizing-right-panel *{cursor:col-resize!importan
 /* Shared accordion indicator, independent of browser and font markers. */
 details>summary{list-style:none}
 details>summary::-webkit-details-marker{display:none}
-details>summary::before,.finops-other-toggle::before{
+details>summary::before,.finops-other-toggle::before,.code-fold::before{
  content:"";display:inline-block;width:16px;height:16px;flex:0 0 16px;
  margin-inline-end:8px;vertical-align:-3px;background:currentColor;
  -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m9 6 6 6-6 6' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat;
  mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m9 6 6 6-6 6' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat;
  transform:rotate(0deg);transition:transform .16s ease;
 }
-details[open]>summary::before,.finops-other-toggle[aria-expanded=true]::before{transform:rotate(90deg)}
+details[open]>summary::before,.finops-other-toggle[aria-expanded=true]::before,.code-fold[aria-expanded=true]::before{transform:rotate(90deg)}
 .workflow-topic>summary::before,.child-calls>summary::before{margin-inline-end:0}
-@media(prefers-reduced-motion:reduce){details>summary::before,.finops-other-toggle::before{transition:none}}
+@media(prefers-reduced-motion:reduce){details>summary::before,.finops-other-toggle::before,.code-fold::before{transition:none}}
 /* A fixed prefix window keeps commit and the surrounding navigation still. */
 .brand[role=button]{cursor:pointer}
 .brand[role=button]:focus-visible{outline:3px solid var(--accent);outline-offset:4px;border-radius:3px}
@@ -688,15 +688,33 @@ dialog :focus-visible{outline:none}
 #inspector-stack[hidden]{display:none}
 #right-panels #inspector-stack #inspector{width:100%;flex:1 1 55%;height:auto;min-height:0;border-left:0;overflow-y:auto}
 #artifacts-panel{display:flex;flex-direction:column;flex:1 1 45%;min-height:60px;padding:20px;border-top:1px solid var(--line);overflow:hidden}
-#artifacts-panel>[data-inspector-artifacts]{flex:1;min-height:0;max-height:none}
-#artifacts-panel>.inspector-artifacts-heading,#artifacts-panel>.artifact-search,#artifacts-panel>.artifact-hidden-control{flex-shrink:0}
+.artifact-content{display:flex;flex:1;flex-direction:column;min-height:0}
+.artifact-content>[data-inspector-artifacts]{flex:1;min-height:0}
+.inspector-artifacts-heading,.artifact-content>.artifact-search,.artifact-content>.artifact-hidden-control{flex-shrink:0}
+#artifacts-panel.artifacts-compact{padding-block:8px}
+.artifacts-compact .artifact-content>[data-inspector-artifacts]{flex:none;overflow:visible}
 .artifacts-height-resizer{flex:0 0 6px;height:6px;cursor:row-resize;touch-action:none;background:var(--surface);position:relative;outline:none}
 .artifacts-height-resizer::after{content:"";position:absolute;inset:2px 0;background:var(--line)}
 .artifacts-height-resizer:hover::after,.artifacts-height-resizer:focus-visible::after{background:var(--accent)}
 body.resizing-artifacts-height,body.resizing-artifacts-height *{cursor:row-resize!important;user-select:none!important}
 
-#artifacts-panel.artifacts-title-only>.artifact-search,#artifacts-panel.artifacts-title-only>.artifact-hidden-control,#artifacts-panel.artifacts-title-only>[data-inspector-artifacts],#artifacts-panel.artifacts-title-only .inspector-artifacts-heading>.small{display:none}
+#artifacts-panel.artifacts-title-only>.artifact-content,#artifacts-panel.artifacts-title-only .inspector-artifacts-heading>.small{display:none}
 #artifacts-panel.artifacts-title-only>.inspector-artifacts-heading{margin-bottom:0}
+.file-view-image{display:block;max-width:100%;max-height:70vh;margin:12px auto 0;object-fit:contain;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+.file-view-frame{display:block;width:100%;height:65vh;margin-top:12px;border:1px solid var(--line);border-radius:8px;background:#fff;color-scheme:light}
+.file-view-open{display:flex;align-items:center;gap:6px;width:fit-content;margin:12px 0 0 auto;font-size:13px;color:var(--accent);text-decoration:none}.file-view-open:hover{text-decoration:underline}.file-view-open .icon{width:14px;height:14px}.file-view-open+.file-view-image,.file-view-open+.file-view-frame{margin-top:8px}
+/* The line-number column is a band painted on the block itself, so it also covers the padding and wrapped lines. */
+.code-view{--code-gutter:calc(var(--code-digits,2)*1ch + 34px);--code-band:calc(var(--code-gutter) - 22px);padding:12px 16px 12px 0;background-image:linear-gradient(90deg,color-mix(in srgb,var(--line) 55%,var(--canvas)) calc(var(--code-band) - 1px),var(--line) calc(var(--code-band) - 1px),var(--line) var(--code-band),transparent var(--code-band))}
+.code-line{display:inline-block;box-sizing:border-box;width:100%;position:relative;min-height:1.65em;padding-left:var(--code-gutter);vertical-align:top}
+.code-line[hidden]{display:none}
+.code-line::before{content:attr(data-n);position:absolute;left:0;width:calc(var(--code-gutter) - 29px);text-align:right;color:var(--muted);opacity:.75}
+.code-line.folded>.code-rest::after{content:" … " attr(data-close);color:var(--muted)}
+/* Inline, so that copying a folded file's text does not pick up extra line breaks. */
+.code-fold{display:inline-block;width:16px;height:16px;margin:0 4px 0 -20px;vertical-align:-3px;user-select:none;padding:0;border:0;border-radius:4px;background:none;color:var(--muted);cursor:pointer}
+.code-fold:hover{color:var(--text);background:var(--surface)}
+.code-fold::before{margin:0;vertical-align:top}
+.file-encoding-note{margin:12px 0 0}
+.file-view-source{margin-top:12px}.file-view-source>summary{cursor:pointer;font-size:13px;color:var(--muted)}
 
 #settings-form .servicenow-oauth{min-width:0;margin:16px 0;padding:16px;border:1px solid var(--line);border-radius:10px}#settings-form .servicenow-oauth legend{padding:0 8px;font-weight:600}#settings-form .servicenow-oauth .note{margin:0 0 14px}#settings-form .servicenow-oauth .note:last-child{margin:14px 0 0}#settings-form [data-sn-auth][hidden]{display:none}
 
@@ -868,3 +886,5 @@ body.resizing-activity-log,body.resizing-activity-log *{cursor:row-resize!import
 @media (prefers-reduced-motion: reduce) {
   .avatar.has-update::after, .account-update-link { animation: none; }
 }
+/* The artifact and Storage file viewers scroll only their content: the controls above stay in place, and HTML and PDF frames fill the dialog. */
+.modal-body:has(>.artifact-view){display:flex;flex-direction:column;overflow:hidden}.modal-body:has(>.artifact-view)>*{flex:none}.modal-body>.artifact-view{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain}.artifact-view>:first-child{margin-top:0}#dialog-content:has(.artifact-view>.file-view-frame){height:calc(88dvh - 2px)}.artifact-view:has(>.file-view-frame){display:flex;flex-direction:column}.artifact-view:has(>.file-view-frame)>*{flex-shrink:0}.artifact-view>.file-view-frame,.artifact-view>.file-view-open+.file-view-frame{flex:1 0 240px;height:auto}.artifact-view>:is(.storage-preview,.storage-markdown){max-height:none;overflow:visible}.artifact-view>.storage-markdown{margin-top:0}

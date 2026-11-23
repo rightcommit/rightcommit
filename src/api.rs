@@ -252,6 +252,8 @@ pub fn router(app: App) -> Router {
         )
         .route("/api/connections/atlassian/login", axum::routing::post(twg_login).get(twg_login_status))
         .route("/api/agents/pi/status", axum::routing::post(crate::pi_check::check))
+        .route("/api/agents/claude/status", axum::routing::post(crate::cli_check::claude))
+        .route("/api/agents/codex/status", axum::routing::post(crate::cli_check::codex))
         .route("/api/connections/servicenow/status", axum::routing::get(crate::servicenow::status).post(crate::servicenow::check_draft))
         .route("/api/capabilities", axum::routing::get(capabilities))
         .route("/api/environment", axum::routing::get(environment))
@@ -293,6 +295,8 @@ pub fn router(app: App) -> Router {
         .route("/api/runs/{id}/stream", axum::routing::get(stream))
         .route("/api/artifacts/{id}", axum::routing::get(artifact))
         .route("/api/artifacts/{id}/download", axum::routing::get(artifact_download))
+        .route("/api/artifacts/{id}/view", axum::routing::get(artifact_view))
+        .route("/api/storage/view", axum::routing::get(crate::storage::view))
         .layer(DefaultBodyLimit::max(2 * 1024 * 1024))
         .layer(middleware::from_fn(security))
         .with_state(app)
@@ -342,6 +346,10 @@ async fn security(req: Request, next: Next) -> axum::response::Response {
             "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
         ),
     ] {
+        // An inline file view sets its own, stricter policy; see `inline_view`.
+        if ["content-security-policy", "x-frame-options"].contains(&k) && r.headers().contains_key(k) {
+            continue;
+        }
         r.headers_mut().insert(
             axum::http::HeaderName::from_static(k),
             axum::http::HeaderValue::from_static(v),
@@ -1126,13 +1134,60 @@ async fn artifact(State(a): State<App>, u: User, Path(id): Path<String>) -> ApiR
     let run = a.store.run(u.id, &v.run)?;
     let settings=a.store.settings(u.id)?;
     let limit=settings.file_preview_limit_bytes()?;
-    let preview=crate::artifacts::text_preview(&a,u.id,&v,limit)?;
+    let decoded=crate::artifacts::text_view(&a,u.id,&v,limit)?;
+    let encoding=decoded.as_ref().and_then(|d|d.encoding);
+    let preview=decoded.map(|d|d.text);
     let mut info=crate::artifacts::file_info(&a,u.id,&run,&v);
     info.preview=preview.is_some();
-    let reason=if info.preview {None} else {Some(if info.size>limit {"size"} else {"format"})};
+    let view=inline_view(&v.path).map(|(kind,_)|kind).filter(|kind|info.size<=limit&&(*kind!="html"||info.preview));
+    let reason=if info.preview||view.is_some() {None} else {Some(if info.size>limit {"size"} else {"format"})};
     v.content=preview.unwrap_or_default();v.file=Some(info);
     let safe = render_markdown(&v.content);
-    Ok(Json(json!({"artifact":v,"html":safe,"preview_reason":reason,"preview_limit_mb":settings.file_preview_limit_mb})))
+    Ok(Json(json!({"artifact":v,"html":safe,"view":view,"encoding":encoding,"preview_reason":reason,"preview_limit_mb":settings.file_preview_limit_mb})))
+}
+/// Formats the file viewers render themselves, by extension: (kind, content type).
+pub(crate) fn inline_view(name:&str)->Option<(&'static str,&'static str)> {
+    match std::path::Path::new(name).extension()?.to_str()?.to_ascii_lowercase().as_str() {
+        "jpg"|"jpeg"|"jpe"=>Some(("image","image/jpeg")),
+        "png"=>Some(("image","image/png")),
+        "gif"=>Some(("image","image/gif")),
+        "html"|"htm"=>Some(("html","text/html; charset=utf-8")),
+        "pdf"=>Some(("pdf","application/pdf")),
+        _=>None,
+    }
+}
+/// Serves an agent-written file for display inside the app. The file is untrusted: the
+/// sandbox gives it an opaque origin, so its scripts cannot use the session or the API,
+/// and the policy allows no network access. Only inline scripts, styles and data: media run.
+/// A PDF is the exception: browsers refuse to open their PDF reader in a sandbox, so it is
+/// served unsandboxed with its exact type. The reader runs the document in its own
+/// isolation and gives it no access to the page that embeds it.
+pub(crate) fn inline_response(bytes:Vec<u8>,content_type:&'static str)->axum::response::Response {
+    let mut response=axum::body::Body::from(bytes).into_response();
+    for (name,value) in [
+        (header::CONTENT_TYPE,content_type),
+        (header::CONTENT_SECURITY_POLICY,if content_type=="application/pdf" {"default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"} else {"sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"}),
+        (header::X_FRAME_OPTIONS,"SAMEORIGIN"),
+    ] {
+        response.headers_mut().insert(name,axum::http::HeaderValue::from_static(value));
+    }
+    response
+}
+/// HTML is always sent as UTF-8, so a page saved in a legacy encoding keeps its accents.
+pub(crate) fn inline_bytes(bytes:Vec<u8>,content_type:&str)->Vec<u8> {
+    if !content_type.starts_with("text/html")||std::str::from_utf8(&bytes).is_ok() {return bytes}
+    match crate::artifacts::decode_text(bytes.clone()) {Some(decoded)=>decoded.text.into_bytes(),None=>bytes}
+}
+async fn artifact_view(State(app): State<App>, user: User, Path(id): Path<String>) -> ApiResult<axum::response::Response> {
+    let artifact=app.store.artifact(user.id,&id)?;
+    let (_,content_type)=inline_view(&artifact.path).ok_or_else(||bad("Anteprima non disponibile per questo formato"))?;
+    let limit=app.store.settings(user.id)?.file_preview_limit_bytes()?;
+    let bytes=if let Some(path)=crate::artifacts::download_path(&app,user.id,&artifact)? {
+        if tokio::fs::metadata(&path).await.map_err(|e|bad(e.to_string()))?.len()>limit {return Err(bad("Il file supera il limite di anteprima"))}
+        tokio::fs::read(path).await.map_err(|e|bad(e.to_string()))?
+    } else {artifact.content.into_bytes()};
+    if bytes.len() as u64>limit {return Err(bad("Il file supera il limite di anteprima"))}
+    Ok(inline_response(inline_bytes(bytes,content_type),content_type))
 }
 async fn artifact_download(State(app): State<App>, user: User, Path(id): Path<String>) -> ApiResult<axum::response::Response> {
     use tokio::io::AsyncReadExt;
@@ -1234,6 +1289,45 @@ mod artifact_download_tests {
         assert!(response.headers()[header::CONTENT_DISPOSITION].to_str().unwrap().contains("risultato%20%C3%A8.bin"));
         assert_eq!(&axum::body::to_bytes(response.into_body(),1024).await.unwrap()[..],bytes);
         assert!(artifact_download(State(app),User {id:2,email:String::new()},Path(artifact.id)).await.is_err());
+    }
+    #[tokio::test]
+    async fn artifact_view_serves_images_html_and_pdf_and_nothing_else() {
+        let dir=tempfile::tempdir().unwrap();
+        let app=crate::tests::app(dir.path());
+        let user=||User {id:1,email:String::new()};
+        let add=|name:&str,bytes:&[u8]|{
+            let hash=crate::store::hash(bytes);
+            let path=crate::artifacts::blob_path(&app,1,&hash).unwrap();
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();std::fs::write(&path,bytes).unwrap();
+            let artifact=Artifact {id:id(),run:"run".into(),node:"task".into(),path:name.into(),version:1,hash,content:String::new(),session:String::new(),turn:1,created:now(),file:Some(ArtifactFile {modified:now() as u64*1000,root:"/data".into(),location:format!("/data/{name}"),change:"created".into(),size:bytes.len() as u64,preview:false,blob:true})};
+            app.store.add_artifact(1,&artifact).unwrap();artifact.id
+        };
+        let png=b"\x89PNG\r\n\x1a\n\0pixels";
+        for (name,bytes,content_type) in [("out/Chart.PNG",&png[..],"image/png"),("photo.jpeg",&b"\xff\xd8\xff"[..],"image/jpeg"),("anim.gif",&b"GIF89a"[..],"image/gif"),("report.html",&b"<h1>Report</h1><script>parent.document</script>"[..],"text/html; charset=utf-8")] {
+            let response=artifact_view(State(app.clone()),user(),Path(add(name,bytes))).await.unwrap();
+            assert_eq!(response.headers()[header::CONTENT_TYPE],content_type);
+            let policy=response.headers()[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
+            assert!(policy.starts_with("sandbox allow-scripts;")&&!policy.contains("allow-same-origin")&&policy.contains("default-src 'none'")&&policy.contains("frame-ancestors 'self'"));
+            assert_eq!(response.headers()[header::X_FRAME_OPTIONS],"SAMEORIGIN");
+            assert_eq!(&axum::body::to_bytes(response.into_body(),1024).await.unwrap()[..],bytes);
+        }
+        let legacy=artifact_view(State(app.clone()),user(),Path(add("legacy.htm",b"<p>Attivit\xe0</p>"))).await.unwrap();
+        assert_eq!(&axum::body::to_bytes(legacy.into_body(),1024).await.unwrap()[..],"<p>Attività</p>".as_bytes());
+        // Other formats are never served inline, whatever their content.
+        let pdf=artifact_view(State(app.clone()),user(),Path(add("Manual.PDF",b"%PDF-1.7\n\0binary"))).await.unwrap();
+        assert_eq!(pdf.headers()[header::CONTENT_TYPE],"application/pdf");
+        let policy=pdf.headers()[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
+        assert!(!policy.contains("sandbox")&&!policy.contains("script-src")&&policy.starts_with("default-src 'none';")&&policy.contains("frame-ancestors 'self'"));
+        for name in ["script.js","drawing.svg","page.html.txt","page.pdf.html.bin","noextension"] {
+            assert!(artifact_view(State(app.clone()),user(),Path(add(name,b"<script>alert(1)</script>"))).await.is_err(),"{name}");
+        }
+        let image=add("mine.png",png);
+        assert!(artifact_view(State(app.clone()),User {id:2,email:String::new()},Path(image.clone())).await.is_err());
+        // Over the personal preview limit: no inline view.
+        let large=add("large.png",&vec![1u8;1_000_001]);
+        app.store.update_settings(1,|settings|{settings.file_preview_limit_mb=1;Ok(())}).unwrap();
+        assert!(artifact_view(State(app.clone()),user(),Path(large)).await.is_err());
+        assert!(artifact_view(State(app),user(),Path(image)).await.is_ok());
     }
 }
 

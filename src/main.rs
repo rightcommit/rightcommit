@@ -15,6 +15,7 @@ mod servicenow_oauth;
 mod itsm_batch;
 mod servicenow_config;
 mod servicenow_request;
+mod cli_check;
 mod pi_check;
 mod pi_local;
 mod pi_providers;

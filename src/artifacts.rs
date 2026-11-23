@@ -784,7 +784,58 @@ pub fn cleanup(app: &App, uid: i64) -> Result<()> {
 
 /// The saved bytes are immutable. Read previews on demand so a personal limit
 /// change also applies to files acquired before that preference existed.
-pub(crate) fn read_text_preview(path: &Path, limit: u64) -> Result<Option<String>> {
+/// Text shown by the file viewers. `encoding` is set only when the file is not UTF-8.
+pub(crate) struct Decoded {
+    pub text: String,
+    pub encoding: Option<&'static str>,
+}
+/// Windows-1252 code points for bytes 0x80..=0x9F; 0 marks the five bytes it leaves undefined.
+const WINDOWS_1252_HIGH: [u16; 32] = [
+    0x20AC, 0, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160, 0x2039,
+    0x0152, 0, 0x017D, 0, 0, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, 0x02DC,
+    0x2122, 0x0161, 0x203A, 0x0153, 0, 0x017E, 0x0178,
+];
+/// UTF-8 first; then UTF-16 with a byte order mark; then Windows-1252 (which includes
+/// printable Latin-1), as legacy sources often use it. Display only: the stored bytes and
+/// the download never change. Any byte sequence decodes as a single-byte encoding, so
+/// control bytes other than tab, line breaks, form feed and the DOS end-of-file mark
+/// make the file binary.
+pub(crate) fn decode_text(bytes: Vec<u8>) -> Option<Decoded> {
+    let bytes = match String::from_utf8(bytes) {
+        Ok(text) => return (!text.contains('\0')).then_some(Decoded { text, encoding: None }),
+        Err(error) => error.into_bytes(),
+    };
+    if let Some(little_endian) = match bytes.get(..2) {
+        Some([0xFF, 0xFE]) => Some(true),
+        Some([0xFE, 0xFF]) => Some(false),
+        _ => None,
+    } {
+        let units: Vec<u16> = bytes[2..]
+            .chunks(2)
+            .map(|pair| match pair {
+                [a, b] if little_endian => Some(u16::from_le_bytes([*a, *b])),
+                [a, b] => Some(u16::from_be_bytes([*a, *b])),
+                _ => None,
+            })
+            .collect::<Option<_>>()?;
+        let text = String::from_utf16(&units).ok()?;
+        return (!text.contains('\0')).then_some(Decoded { text, encoding: Some("UTF-16") });
+    }
+    let mut text = String::with_capacity(bytes.len() + bytes.len() / 8);
+    for byte in bytes {
+        text.push(match byte {
+            b'\t' | b'\n' | 0x0C | b'\r' | 0x1A | 0x20..=0x7E => byte as char,
+            0x80..=0x9F => match WINDOWS_1252_HIGH[usize::from(byte - 0x80)] {
+                0 => return None,
+                code => char::from_u32(u32::from(code))?,
+            },
+            0xA0..=0xFF => byte as char,
+            _ => return None,
+        });
+    }
+    Some(Decoded { text, encoding: Some("Windows-1252") })
+}
+pub(crate) fn read_text(path: &Path, limit: u64) -> Result<Option<Decoded>> {
     let file = File::open(path)?;
     if file.metadata()?.len() > limit {
         return Ok(None);
@@ -794,22 +845,29 @@ pub(crate) fn read_text_preview(path: &Path, limit: u64) -> Result<Option<String
     if bytes.len() as u64 > limit {
         return Ok(None);
     }
-    Ok(String::from_utf8(bytes)
-        .ok()
-        .filter(|text| !text.contains('\0')))
+    Ok(decode_text(bytes))
 }
+#[cfg(test)]
 pub(crate) fn text_preview(
     app: &App,
     uid: i64,
     artifact: &Artifact,
     limit: u64,
 ) -> Result<Option<String>> {
+    Ok(text_view(app, uid, artifact, limit)?.map(|decoded| decoded.text))
+}
+pub(crate) fn text_view(
+    app: &App,
+    uid: i64,
+    artifact: &Artifact,
+    limit: u64,
+) -> Result<Option<Decoded>> {
     if let Some(path) = download_path(app, uid, artifact)? {
-        return read_text_preview(&path, limit);
+        return read_text(&path, limit);
     }
     Ok(
         (artifact.content.len() as u64 <= limit && !artifact.content.contains('\0'))
-            .then(|| artifact.content.clone()),
+            .then(|| Decoded { text: artifact.content.clone(), encoding: None }),
     )
 }
 
@@ -1026,6 +1084,30 @@ pub fn recover_legacy_runs(app: &App) -> Result<(usize, usize)> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn viewers_decode_legacy_text_and_still_reject_binary_files() {
+        let decode = |bytes: &[u8]| super::decode_text(bytes.to_vec()).map(|d| (d.text, d.encoding));
+        assert_eq!(decode("però €".as_bytes()), Some(("però €".into(), None)));
+        // Windows-1252 COBOL with accents, typographic quotes, the euro sign and a DOS end-of-file mark.
+        assert_eq!(
+            decode(b"      * Attivit\xe0 gi\xe0 chiusa: \x93s\xec\x94 \x80 10\r\n\tMOVE A TO B.\x0c\x1a"),
+            Some(("      * Attività già chiusa: “sì” € 10\r\n\tMOVE A TO B.\u{c}\u{1a}".into(), Some("Windows-1252")))
+        );
+        let utf16 = |bom: [u8; 2], le: bool| {
+            let mut bytes = bom.to_vec();
+            for unit in "Dim più As String\n".encode_utf16() {
+                bytes.extend(if le { unit.to_le_bytes() } else { unit.to_be_bytes() });
+            }
+            bytes
+        };
+        for bytes in [utf16([0xFF, 0xFE], true), utf16([0xFE, 0xFF], false)] {
+            assert_eq!(decode(&bytes), Some(("Dim più As String\n".into(), Some("UTF-16"))));
+        }
+        // Binary: NUL in UTF-8, control bytes, bytes Windows-1252 leaves undefined, broken UTF-16.
+        for bytes in [&b"text\0more"[..], b"\x89PNG\r\n\x1a\n\0\0", b"%PDF-1.7\n\xe2\xe3\xcf\xd3\x01", b"caf\xe9\x07", b"caf\xe9\x81", b"\xff\xfeA", b"\xff\xfe\x00\xd8"] {
+            assert_eq!(decode(bytes), None, "{bytes:?}");
+        }
+    }
     use super::*;
     use crate::model::*;
 

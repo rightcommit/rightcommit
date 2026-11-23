@@ -292,9 +292,13 @@ pub async fn list(
         let size = p.metadata()?.len();
         let settings=app.store.settings(u.id)?;
         let limit=settings.file_preview_limit_bytes()?;
-        let preview=crate::artifacts::read_text_preview(&p,limit)?;
+        let decoded=crate::artifacts::read_text(&p,limit)?;
+        let encoding=decoded.as_ref().and_then(|d|d.encoding);
+        let preview=decoded.map(|d|d.text);
         let reason=if preview.is_some(){None}else{Some(if size>limit {"size"}else{"format"})};
-        return Ok(Json(json!({"path":q.path,"file":true,"html":if q.path.ends_with(".md") { preview.as_ref().map(|text|crate::api::render_markdown(text)) } else { None },"preview":preview,"size":size,"preview_reason":reason,"preview_limit_mb":settings.file_preview_limit_mb})));
+        let view=crate::api::inline_view(&q.path).map(|(kind,_)|kind).filter(|kind|size<=limit&&(*kind!="html"||preview.is_some()));
+        let reason=if view.is_some(){None}else{reason};
+        return Ok(Json(json!({"path":q.path,"file":true,"html":if q.path.ends_with(".md") { preview.as_ref().map(|text|crate::api::render_markdown(text)) } else { None },"preview":preview,"view":view,"encoding":encoding,"size":size,"preview_reason":reason,"preview_limit_mb":settings.file_preview_limit_mb})));
     }
     let mut entries = Vec::new();
     for e in std::fs::read_dir(p)?.take(10001) {
@@ -339,6 +343,26 @@ pub async fn list(
         )
     });
     Ok(Json(json!({"path":q.path,"entries":entries})))
+}
+/// A Storage image or HTML file for the in-app viewer; see `api::inline_response`.
+pub async fn view(
+    State(app): State<App>,
+    u: User,
+    Query(q): Query<Location>,
+) -> ApiResult<axum::response::Response> {
+    let (_, content_type) = crate::api::inline_view(&q.path)
+        .ok_or_else(|| bad("Anteprima non disponibile per questo formato"))?;
+    let path = storage_path(&app, u.id, &q)?;
+    let limit = app.store.settings(u.id)?.file_preview_limit_bytes()?;
+    let meta = path.symlink_metadata()?;
+    if !meta.is_file() {
+        return Err(bad("File non trovato"));
+    }
+    if meta.len() > limit {
+        return Err(bad("Il file supera il limite di anteprima"));
+    }
+    let bytes = tokio::fs::read(path).await.map_err(|e| bad(e.to_string()))?;
+    Ok(crate::api::inline_response(crate::api::inline_bytes(bytes, content_type), content_type))
 }
 pub async fn upload(
     State(app): State<App>,
@@ -469,20 +493,37 @@ sys.stdout.buffer.write(out.getvalue())
  }).await.map_err(|_|bad("Download interrotto"))??;
     Ok((
         [
-            (header::CONTENT_TYPE, "application/zip"),
-            (
-                header::CONTENT_DISPOSITION,
-                if q.root == "workspaces" {
-                    "attachment; filename=\"result.zip\""
-                } else if q.root == "examples" {
-                    "attachment; filename=\"examples.zip\""
-                } else {
-                    "attachment; filename=\"sources.zip\""
-                },
-            ),
+            (header::CONTENT_TYPE, "application/zip".to_string()),
+            (header::CONTENT_DISPOSITION, attachment(&download_name(&app, u.id, &q))),
         ],
         bytes,
     ))
+}
+/// The ZIP is named after the file or folder it holds. A whole root keeps the root's name,
+/// and a whole run is named after its workflow and short id instead of its folder id.
+fn download_name(app: &App, uid: i64, q: &Location) -> String {
+    let parts: Vec<&str> = q.path.split('/').filter(|part| !part.is_empty()).collect();
+    let name = match parts.as_slice() {
+        [] => q.root.clone(),
+        [id] if q.root == "workspaces" => match (app.store.run(uid, id), app.store.workflow_names(uid)) {
+            (Ok(run), Ok(names)) => format!("{} {}", crate::api::run_name(&names, &run), id.chars().take(8).collect::<String>()),
+            _ => "result".into(),
+        },
+        [.., last] => (*last).to_string(),
+    };
+    format!("{name}.zip")
+}
+/// `Content-Disposition` for a download: an ASCII name for old clients and the exact UTF-8 name.
+fn attachment(name: &str) -> String {
+    let ascii: String = name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || "-_. ".contains(c) { c } else { '_' })
+        .collect();
+    let encoded: String = name
+        .bytes()
+        .map(|b| if b.is_ascii_alphanumeric() || b"-_.".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") })
+        .collect();
+    format!("attachment; filename=\"{ascii}\"; filename*=UTF-8''{encoded}")
 }
 impl From<std::io::Error> for crate::auth::ApiError {
     fn from(e: std::io::Error) -> Self {
@@ -544,6 +585,29 @@ mod tests {
         assert!(workspace_path(&app, 1, "").is_err());
         std::os::unix::fs::symlink("/etc", Path::new(&run.workspace).join("escape")).unwrap();
         assert!(workspace_path(&app, 1, &format!("{}/escape/passwd", run.id)).is_err());
+    }
+    #[tokio::test]
+    async fn downloads_are_named_after_the_file_folder_or_run() {
+        let d = tempfile::tempdir().unwrap();
+        let app = crate::tests::app(d.path());
+        let run = crate::engine::create(&app, 1, crate::presets::all().remove(0), "storage test".into(), None)
+            .await
+            .unwrap();
+        let name = |root: &str, path: &str| download_name(&app, 1, &Location { path: path.into(), directory: false, root: root.into() });
+        assert_eq!(name("sources", "project/src"), "src.zip");
+        assert_eq!(name("sources", "project/Relazione finale.md"), "Relazione finale.md.zip");
+        assert_eq!(name("examples", "demo/"), "demo.zip");
+        // A whole root keeps its name; a whole run uses its workflow name, not its folder id.
+        assert_eq!(name("sources", ""), "sources.zip");
+        assert_eq!(name("examples", ""), "examples.zip");
+        let short: String = run.id.chars().take(8).collect();
+        assert_eq!(name("workspaces", &run.id), format!("{} {short}.zip", run.workflow.name));
+        assert_eq!(name("workspaces", &format!("{}/src", run.id)), "src.zip");
+        assert_eq!(name("workspaces", "unknown-run"), "result.zip");
+        assert_eq!(
+            attachment("Attività \"2026\".zip"),
+            "attachment; filename=\"Attivit_ _2026_.zip\"; filename*=UTF-8''Attivit%C3%A0%20%222026%22.zip"
+        );
     }
     #[tokio::test]
     async fn reports_support_current_and_legacy_namespaces() {
