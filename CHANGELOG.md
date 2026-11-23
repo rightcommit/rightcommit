@@ -3,6 +3,38 @@
 What changed in each version of rightcommit. Releases are also listed on
 [GitHub](https://github.com/rightcommit/rightcommit/releases).
 
+## [1.9.0] - 2026-11-23
+
+### Added
+
+- A rework edge can open a correction branch: steps that run only after a Review or Gate
+  rejects, and that lead back to the Review or Gate, or to a later step. The branch can be
+  given to a different Agent through a Memory node, which carries the finding to the Task
+  after it. A rework edge can now end on a Memory node.
+- A double click on a node that has a prompt opens **Set Prompt**. A single click still opens
+  the side panel.
+- **Cmd+S** or **Ctrl+S** saves the workflow, as the **Save workflow** button does.
+- **Edit and continue** shows that you are working on a run: nodes keep the marks of the run
+  you continue from, the canvas has a thin red edge, and the workspace label is red.
+
+### Changed
+
+- Workflow validation errors name the node by its title, say what is missing and what to do,
+  in English and Italian. For example, a Memory with no source Task used to report
+  "Node does not exist:" with nothing after it; it now reports that the Memory is not
+  configured and asks for the source Task. The same applies to a Task, Gate or Review with no
+  Agent, a Fork with no Join, a workflow with no entry node, and to RAG, MCP, A2A, Workflow,
+  Fork, Join and link errors.
+- Node titles in these messages are shown as you wrote them, also when the interface is in
+  English.
+- The Project Manager receives the same validation result the editor shows, so it can see why
+  a draft does not run before changing it, and it knows the rules for correction branches.
+
+### Fixed
+
+- **Undo** in the Project Manager restores the draft from before its last change also after
+  you edited the draft. It used to answer that automatic undo was unavailable.
+
 ## [1.8.0] - 2026-11-23
 
 ### Added

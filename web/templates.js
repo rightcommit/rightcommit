@@ -21,12 +21,13 @@ function tmMessage(error){
  let match;
  if((match=message.match(/^Localizzazione (it|en) mancante$/)))return tmFormat('Localizzazione {locale} mancante',{locale:match[1].toUpperCase()});
  for(const suffix of ['percorso personale da sostituire','dipendenza privata da configurare','possibile credenziale incorporata'])if(message.endsWith(': '+suffix))return tmFormat('{node}: '+suffix,{node:message.slice(0,-suffix.length-2)});
- for(const prefix of ['Tipo nodo non disponibile','Collegamento non valido','Porte incompatibili','Nodo non raggiungibile','Nodo senza collegamenti','Nodo inesistente','Più rami per lo stesso esito'])if(message.startsWith(prefix+': '))return tmFormat(prefix+': {detail}',{detail:message.slice(prefix.length+2)});
- if((match=message.match(/^Il nodo (.+) richiede un Agent$/)))return tmFormat('Il nodo {node} richiede un Agent',{node:match[1]});
+ for(const prefix of ['Tipo nodo non disponibile','Nodo non raggiungibile','Nodo senza collegamenti','Nodo inesistente'])if(message.startsWith(prefix+': '))return tmFormat(prefix+': {detail}',{detail:message.slice(prefix.length+2)});
  if((match=message.match(/^Gate (.+) senza ramo (.+)$/)))return tmFormat('Gate {node} senza ramo {outcome}',{node:match[1],outcome:match[2]});
  if((match=message.match(/^(.+) non è collegato al percorso eseguibile$/)))return tmFormat('{node} non è collegato al percorso eseguibile',{node:match[1]});
  if((match=message.match(/^(.+): cambio Agent senza Memory corretto$/)))return tmFormat('{nodes}: cambio Agent senza Memory corretto',{nodes:match[1]});
  if((match=message.match(/^CLI (claude|codex|pi) non disponibile$/)))return tmFormat('L’agente {runtime} non è disponibile. Verifica la configurazione.',{runtime:match[1]});
+ // Server messages that name a node, such as the workflow validation errors.
+ if(window.uiHasTemplate(message))return uiText(message);
  if(/Failed to fetch|fetch failed|NetworkError|Load failed/i.test(message))return uiText('Impossibile contattare il server. Controlla la connessione e riprova.');
  return uiText(error.tmFallback||'Operazione sui template non riuscita. Riprova.');
 }

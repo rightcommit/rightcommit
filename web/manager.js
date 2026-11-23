@@ -167,7 +167,8 @@
    resolveProposal(state);
    renderChat();
   });
-  $('#manager-undo')?.addEventListener('click',()=>{if(!app.run&&JSON.stringify(app.wf)===state.undo.after){app.wf=state.undo.before;state.undo=null;state.notice='';state.warning=null;dirty();render();renderChat()}else{state.error=uiText('La bozza è cambiata: annullamento automatico non disponibile.');renderChat()}});
+  // Undo always restores the draft from before the manager's change, even when it was edited afterwards.
+  $('#manager-undo')?.addEventListener('click',()=>{if(app.run)return;app.wf=state.undo.before;state.undo=null;state.notice='';state.warning=null;state.error='';app.selected=null;app.selectedEdge=null;app.selectedNodes=[];dirty();render();renderChat()});
   $('#manager-messages').scrollTop=$('#manager-messages').scrollHeight;
  }
  function updateContextLabel(){if($('#manager-context'))$('#manager-context').textContent=`${currentWorkflow()?.name||''}${app.run?' · '+app.run.id.slice(0,8)+' · '+(states[app.run.status]||app.run.status):' · '+uiText('Bozza')}`}

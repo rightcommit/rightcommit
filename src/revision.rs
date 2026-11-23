@@ -997,7 +997,7 @@ runtime: "codex".into(),
             preview(&app, 1, &r.id, &w, None)
                 .unwrap_err()
                 .to_string()
-                .contains("Più rami per lo stesso esito")
+                .contains("più collegamenti in uscita")
         );
     }
     #[tokio::test]

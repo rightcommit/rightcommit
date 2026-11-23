@@ -1790,5 +1790,5 @@ fn agent_chosen_in_a_review_field_needs_no_edge() {
     engine::validate(&w).unwrap();
     w.nodes.iter_mut().find(|n| n.id == review_id).unwrap().agent = "author".into();
     let error = engine::validate(&w).unwrap_err().to_string();
-    assert!(error.contains("reviewer → ") && error.contains("(context)"), "{error}");
+    assert!(error.contains("è collegato all’Agent Reviewer ma ne ha assegnato un altro"), "{error}");
 }

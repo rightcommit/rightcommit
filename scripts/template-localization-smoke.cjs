@@ -51,7 +51,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
    ['Localizzazione en mancante','Localizzazione EN mancante','Missing EN localization'],
    ['source: possibile credenziale incorporata','source: possibile credenziale incorporata','source: possible embedded credential'],
    ['Nodo inesistente: Salva','Nodo inesistente: Salva','Node does not exist: Salva'],
-   ['Il nodo Salva richiede un Agent','Il nodo Salva richiede un Agent','Node Salva requires an Agent'],
+   ['Task Salva non è configurato: scegli l’Agent che lo esegue','Task Salva non è configurato: scegli l’Agent che lo esegue','Task Salva is not configured: choose the Agent that runs it'],
    ['Gate Verifica senza ramo pass','Gate Verifica senza ramo pass','Gate Verifica has no pass branch'],
    ['CLI claude non disponibile','L’agente claude non è disponibile. Verifica la configurazione.','The claude agent is unavailable. Check its configuration.'],
    ['File troppo grande','File troppo grande','File too large']

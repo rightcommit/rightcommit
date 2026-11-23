@@ -27,7 +27,7 @@ pub fn edge_allowed(a: &Node, b: &Node, kind: &str, outcome: &str) -> bool {
         }
         "rework" => {
             (a.kind == "Gate" || a.kind == "Review")
-                && ["Task", "Workflow"].contains(&b.kind.as_str())
+                && ["Task", "Workflow", "Memory"].contains(&b.kind.as_str())
                 && outcome == "rework"
         }
         _ => false,
@@ -35,38 +35,26 @@ pub fn edge_allowed(a: &Node, b: &Node, kind: &str, outcome: &str) -> bool {
 }
 // Parallel regions are deliberately structured: disjoint Task chains and one barrier.
 fn parallel_branches(w: &Workflow, fork: &Node) -> Result<Vec<Vec<Node>>> {
-    ensure!(
-        w.node(&fork.target)?.kind == "Join",
-        "Fork richiede un Join destinatario"
-    );
+    let join = fork_join(w, fork)?;
     let starts: Vec<_> = w
         .edges
         .iter()
         .filter(|e| e.from == fork.id && e.kind == "control")
         .collect();
-    ensure!(starts.len() >= 2, "Fork richiede almeno due rami");
+    ensure!(starts.len() >= 2, "Fork {} non è configurato correttamente: servono almeno due rami, collega almeno due Task in uscita", label(fork));
     let mut seen = HashSet::new();
     let mut bindings = std::collections::HashMap::new();
     let mut branches = Vec::new();
     for (index, edge) in starts.iter().enumerate() {
-        ensure!(edge.outcome.is_empty(), "I rami Fork non hanno esiti");
+        ensure!(edge.outcome.is_empty(), "Fork {}: i collegamenti in uscita non possono avere un esito, rimuovi l’esito {}", label(fork), edge.outcome);
         let mut current = edge.to.clone();
         let mut branch = Vec::new();
         while current != fork.target {
-            ensure!(
-                seen.insert(current.clone()),
-                "Rami paralleli sovrapposti o ciclici"
-            );
             let node = w.node(&current)?;
-            ensure!(
-                node.kind == "Task",
-                "I rami paralleli supportano sequenze di Task"
-            );
+            ensure!(seen.insert(current.clone()), "Fork {}: il nodo {} appartiene a più rami o forma un ciclo, ogni ramo deve avere i propri Task fino al Join", label(fork), label(node));
+            ensure!(node.kind == "Task", "Fork {}: il ramo contiene il nodo {} di tipo {}, i rami paralleli possono contenere solo Task", label(fork), label(node), node.kind);
             if let Some(owner) = bindings.insert(node.agent.clone(), index) {
-                ensure!(
-                    owner == index,
-                    "Ogni ramo parallelo richiede Agent distinti"
-                );
+                ensure!(owner == index, "Fork {}: il Task {} usa un Agent già impegnato in un altro ramo, assegna un Agent diverso a ogni ramo", label(fork), label(node));
             }
             ensure!(
                 w.edges
@@ -74,7 +62,7 @@ fn parallel_branches(w: &Workflow, fork: &Node) -> Result<Vec<Vec<Node>>> {
                     .filter(|e| e.to == current && e.kind != "context")
                     .count()
                     == 1,
-                "Ingresso esterno in un ramo parallelo"
+                "Fork {}: il Task {} riceve un collegamento da fuori dal suo ramo, rimuovilo", label(fork), label(node)
             );
             let next: Vec<_> = w
                 .edges
@@ -83,12 +71,12 @@ fn parallel_branches(w: &Workflow, fork: &Node) -> Result<Vec<Vec<Node>>> {
                 .collect();
             ensure!(
                 next.len() == 1 && next[0].kind == "control" && next[0].outcome.is_empty(),
-                "Ogni Task parallelo deve proseguire fino al Join"
+                "Fork {}: il Task {} deve avere un solo collegamento in uscita, senza esito, che prosegue fino al Join", label(fork), label(node)
             );
             branch.push(node.clone());
             current = next[0].to.clone();
         }
-        ensure!(!branch.is_empty(), "Ramo parallelo vuoto");
+        ensure!(!branch.is_empty(), "Fork {}: un ramo arriva al Join senza alcun Task, inserisci almeno un Task", label(fork));
         branches.push(branch);
     }
     ensure!(
@@ -96,31 +84,32 @@ fn parallel_branches(w: &Workflow, fork: &Node) -> Result<Vec<Vec<Node>>> {
             .iter()
             .filter(|e| e.to == fork.target && e.kind != "context")
             .all(|e| seen.contains(&e.from)),
-        "Join con ingressi estranei al Fork"
+        "Join {}: riceve un collegamento che non arriva dai rami del Fork {}, rimuovilo", label(join), label(fork)
     );
     Ok(branches)
+}
+// The Join a Fork names in its field, with an error that says what to set when it is missing.
+fn fork_join<'a>(w: &'a Workflow, fork: &Node) -> Result<&'a Node> {
+    ensure!(!fork.target.is_empty(), "Fork {} non è configurato: scegli il Nodo di ricongiungimento, cioè il Join in cui si riuniscono i rami", label(fork));
+    w.nodes.iter().find(|j| j.id == fork.target && j.kind == "Join").with_context(|| format!("Fork {} non è configurato correttamente: il Nodo di ricongiungimento non esiste più, scegli di nuovo il Join", label(fork)))
 }
 fn validate_parallel(w: &Workflow) -> Result<()> {
     let mut joins = HashSet::new();
     for fork in w.nodes.iter().filter(|n| n.kind == "Fork") {
-        ensure!(
-            joins.insert(fork.target.clone()),
-            "Un Join può appartenere a un solo Fork"
-        );
+        let join = fork_join(w, fork)?;
+        ensure!(joins.insert(fork.target.clone()), "Fork {}: il Join {} è già usato da un altro Fork, scegli un Join diverso", label(fork), label(join));
         parallel_branches(w, fork)?;
     }
     for join in w.nodes.iter().filter(|n| n.kind == "Join") {
-        ensure!(
-            joins.contains(&join.id) && w.entry != join.id,
-            "Join senza Fork"
-        );
+        ensure!(joins.contains(&join.id), "Join {} non è configurato correttamente: nessun Fork lo usa, sceglilo come Nodo di ricongiungimento nel Fork che apre i rami", label(join));
+        ensure!(w.entry != join.id, "Il nodo {} non può essere il nodo di ingresso: usa come ingresso un nodo eseguibile, per esempio un Task", label(join));
         ensure!(
             w.edges
                 .iter()
                 .filter(|e| e.from == join.id && e.kind == "control")
                 .count()
                 <= 1,
-            "Join con più continuazioni"
+            "Join {}: ha più collegamenti in uscita, lasciane uno solo", label(join)
         );
     }
     Ok(())
@@ -174,34 +163,33 @@ pub fn validate_draft(w: &Workflow) -> Result<()> {
             );
         }
         if !n.agent.is_empty() && ["Task", "Gate", "Review"].contains(&n.kind.as_str()) {
-            ensure!(
-                w.node(&n.agent)?.kind == "Agent",
-                "Associazione Agent non valida"
-            );
+            ensure!(w.nodes.iter().any(|a| a.id == n.agent && a.kind == "Agent"), "{} {} non è configurato correttamente: l’Agent assegnato non esiste più, sceglilo di nuovo", n.kind, label(n));
         }
     }
     if !w.entry.is_empty() {
-        ensure!(
-            !["Source", "Agent", "MCP", "RAG", "Comment"]
-                .contains(&w.node(&w.entry)?.kind.as_str()),
-            "Ingresso non eseguibile"
-        );
+        entry(w)?;
     }
     let mut edges = HashSet::new();
     for e in &w.edges {
         let a = w.node(&e.from)?;
         let b = w.node(&e.to)?;
-        ensure!(
-            a.id != b.id
-                && edges.insert((&e.from, &e.to, &e.kind, &e.outcome))
-                && edge_allowed(a, b, &e.kind, &e.outcome),
-            "Collegamento non valido: {} → {} ({})",
-            e.from,
-            e.to,
-            e.kind
-        );
+        ensure!(a.id != b.id, "Il nodo {} è collegato a sé stesso: rimuovi il collegamento", label(a));
+        ensure!(edges.insert((&e.from, &e.to, &e.kind, &e.outcome)), "Collegamento duplicato da {} a {}: rimuovine uno", label(a), label(b));
+        ensure!(!(a.kind == "Agent" && e.kind == "context" && ["Task", "Review", "Gate"].contains(&b.kind.as_str()) && b.agent != a.id), "Il nodo {} è collegato all’Agent {} ma ne ha assegnato un altro: rimuovi il collegamento oppure scegli {} come Agent del nodo", label(b), label(a), label(a));
+        ensure!(edge_allowed(a, b, &e.kind, &e.outcome), "Collegamento non valido da {} a {}: un collegamento {} non può unire un nodo {} a un nodo {}, rimuovilo", label(a), label(b), e.kind, a.kind, b.kind);
     }
     Ok(())
+}
+// The entry node, with an error that says what to do when it is unset, gone or not a step.
+fn entry(w: &Workflow) -> Result<&Node> {
+    ensure!(!w.entry.is_empty(), "Il workflow non ha un nodo di ingresso: seleziona il primo nodo da eseguire e scegli Usa come ingresso");
+    let n = w.nodes.iter().find(|n| n.id == w.entry).context("Il nodo di ingresso del workflow non esiste più: seleziona il primo nodo da eseguire e scegli Usa come ingresso")?;
+    ensure!(!["Agent", "Source", "MCP", "RAG", "Comment"].contains(&n.kind.as_str()), "Il nodo {} non può essere il nodo di ingresso: usa come ingresso un nodo eseguibile, per esempio un Task", label(n));
+    Ok(n)
+}
+// How an error names a node to the user: its title, or its id when it has none.
+fn label(n: &Node) -> &str {
+    if n.title.trim().is_empty() { &n.id } else { &n.title }
 }
 pub fn validate(w: &Workflow) -> Result<()> {
     validate_draft(w)?;
@@ -245,56 +233,37 @@ pub fn validate(w: &Workflow) -> Result<()> {
             );
         }
         if n.kind == "Agent" {
-            ensure!(
-                n.runtime.is_empty() || ["codex", "claude", "pi"].contains(&n.runtime.as_str()),
-                "Runtime non supportato"
-            );
+            ensure!(n.runtime.is_empty() || ["codex", "claude", "pi"].contains(&n.runtime.as_str()), "L’Agent {} non è configurato correttamente: il runtime {} non è supportato, scegli Codex, Claude Code o Pi", label(n), n.runtime);
         }
         if ["Task", "Gate"].contains(&n.kind.as_str()) || n.kind == "Review" && n.mode != "human" {
-            ensure!(
-                w.node(&n.agent)?.kind == "Agent",
-                "Il nodo {} richiede un Agent",
-                n.title
-            );
+            ensure!(!n.agent.is_empty(), "{} {} non è configurato: scegli l’Agent che lo esegue", n.kind, label(n));
+            ensure!(w.nodes.iter().any(|a| a.id == n.agent && a.kind == "Agent"), "{} {} non è configurato correttamente: l’Agent assegnato non esiste più, sceglilo di nuovo", n.kind, label(n));
         }
         if n.kind == "A2A" {
-            ensure!(!n.a2a_id.is_empty(), "Seleziona una connessione A2A");
+            ensure!(!n.a2a_id.is_empty(), "A2A {} non è configurato: scegli l’Agente remoto", label(n));
         }
         if n.kind == "RAG" {
-            ensure!(
-                !n.rag_index.is_empty()
-                    && (n.rag_mode.is_empty()
-                        || ["keyword", "semantic", "hybrid"].contains(&n.rag_mode.as_str()))
-                    && n.rag_top_k <= 30,
-                "Seleziona un indice RAG e al massimo 30 risultati"
-            );
+            ensure!(!n.rag_index.is_empty(), "RAG {} non è configurato: scegli la Cartella indicizzata", label(n));
+            ensure!((n.rag_mode.is_empty() || ["keyword", "semantic", "hybrid"].contains(&n.rag_mode.as_str())) && n.rag_top_k <= 30, "RAG {} non è configurato correttamente: scegli una Modalità di ricerca valida e al massimo 30 risultati", label(n));
         }
         if n.kind == "MCP" {
-            ensure!(
-                !n.mcp_id.is_empty()
-                    && n.mcp_tools.len() <= 500
-                    && n.mcp_tools.iter().all(|t| t.len() <= 256),
-                "Seleziona un server MCP personale e al massimo 500 tool"
-            );
+            ensure!(!n.mcp_id.is_empty(), "MCP {} non è configurato: scegli il Server MCP personale", label(n));
+            ensure!(n.mcp_tools.len() <= 500 && n.mcp_tools.iter().all(|t| t.len() <= 256), "MCP {} non è configurato correttamente: seleziona al massimo 500 tool", label(n));
         }
         if n.kind == "Workflow" {
-            ensure!(
-                !n.workflow_id.is_empty() && n.workflow_id != w.id,
-                "Seleziona un workflow diverso dal chiamante"
-            );
+            ensure!(!n.workflow_id.is_empty(), "Workflow {} non è configurato: scegli il Workflow da richiamare", label(n));
+            ensure!(n.workflow_id != w.id, "Workflow {} non è configurato correttamente: non può richiamare il workflow che lo contiene, scegline un altro", label(n));
         }
         if n.kind == "Task" && !n.skip {
-            ensure!(!n.prompt.trim().is_empty(), "Task senza prompt");
+            ensure!(!n.prompt.trim().is_empty(), "Task {} non è configurato: scrivi il prompt con Imposta prompt oppure attiva Salta task", label(n));
         }
         if n.kind == "Gate" {
-            ensure!(
-                !n.outcomes.is_empty() && n.outcomes.len() < 12,
-                "Gate senza esiti"
-            );
+            ensure!(!n.outcomes.is_empty(), "Gate {} non è configurato: aggiungi almeno un esito", label(n));
+            ensure!(n.outcomes.len() < 12, "Gate {} non è configurato correttamente: ha troppi esiti, il massimo è 11", label(n));
             for o in &n.outcomes {
                 ensure!(
                     o.len() < 60 && o.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'),
-                    "Esito gate non valido"
+                    "Gate {} non è configurato correttamente: l’esito {} non è valido, usa meno di 60 caratteri tra lettere senza accenti, cifre e _", label(n), o.chars().take(60).collect::<String>()
                 );
                 if o != "needs_info" && o != "blocked" {
                     ensure!(
@@ -307,18 +276,15 @@ pub fn validate(w: &Workflow) -> Result<()> {
             }
         }
         if n.kind == "Memory" {
-            ensure!(
-                w.node(&n.agent)?.kind == "Task" && w.node(&n.target)?.kind == "Agent",
-                "Memory richiede Task sorgente e Agent destinatario"
-            );
-            ensure!(!w.node(&n.agent)?.skip, "Memory richiede l’output del task {}: disattiva Salta task o modifica il collegamento", n.agent);
+            // Name the Memory and the missing field: a bare "Nodo inesistente:" for an empty reference says nothing.
+            ensure!(!n.agent.is_empty(), "Memory {} non è configurato: scegli il Task sorgente, cioè il Task di cui passare il risultato", label(n));
+            ensure!(!n.target.is_empty(), "Memory {} non è configurato: scegli l’Agent destinatario, cioè l’Agent del Task che riceve il risultato", label(n));
+            ensure!(w.nodes.iter().any(|t| t.id == n.agent && t.kind == "Task"), "Memory {} non è configurato correttamente: il Task sorgente non esiste più, sceglilo di nuovo", label(n));
+            ensure!(w.nodes.iter().any(|a| a.id == n.target && a.kind == "Agent"), "Memory {} non è configurato correttamente: l’Agent destinatario non esiste più, sceglilo di nuovo", label(n));
+            ensure!(!w.node(&n.agent)?.skip, "Memory {} non è configurato correttamente: serve il risultato del Task {}, disattiva Salta task o scegli un altro Task sorgente", label(n), label(w.node(&n.agent)?));
         }
     }
-    ensure!(
-        !["Agent", "Source", "MCP", "RAG", "Comment"].contains(&w.node(&w.entry)?.kind.as_str()),
-        "Ingresso non eseguibile"
-    );
-    let mut unique = HashSet::new();
+    entry(w)?;
     for e in &w.edges {
         let a = w.node(&e.from)?;
         let b = w.node(&e.to)?;
@@ -326,48 +292,40 @@ pub fn validate(w: &Workflow) -> Result<()> {
             a.kind != "Comment" && b.kind != "Comment",
             "I commenti non hanno collegamenti"
         );
-        ensure!(
-            a.id != b.id && unique.insert((&e.from, &e.to, &e.kind, &e.outcome)),
-            "Arco duplicato o self loop"
-        );
-        let allowed = edge_allowed(a, b, &e.kind, &e.outcome);
-        ensure!(
-            allowed,
-            "Porte incompatibili: {} → {} ({})",
-            a.kind,
-            b.kind,
-            e.kind
-        );
     }
     fn cycle(
         w: &Workflow,
         id: &str,
         vis: &mut HashSet<String>,
         done: &mut HashSet<String>,
-    ) -> bool {
+    ) -> Option<String> {
         if done.contains(id) {
-            return false;
+            return None;
         }
         if !vis.insert(id.into()) {
-            return true;
+            return Some(id.into());
         }
         for e in w
             .edges
             .iter()
             .filter(|e| e.from == id && e.kind == "control")
         {
-            if cycle(w, &e.to, vis, done) {
-                return true;
+            if let Some(found) = cycle(w, &e.to, vis, done) {
+                return Some(found);
             }
         }
         vis.remove(id);
         done.insert(id.into());
-        false
+        None
     }
-    ensure!(
-        !cycle(w, &w.entry, &mut HashSet::new(), &mut HashSet::new()),
-        "Ciclo in avanti: usa un arco rework con limite"
-    );
+    // A correction branch starts at a rework edge: its steps are checked like the main path.
+    let mut done = HashSet::new();
+    for start in std::iter::once(&w.entry).chain(w.edges.iter().filter(|e| e.kind == "rework").map(|e| &e.to)) {
+        if let Some(found) = cycle(w, start, &mut HashSet::new(), &mut done) {
+            bail!("Ciclo nel percorso: dal nodo {} i collegamenti control tornano allo stesso nodo. Per ripetere un passo usa un collegamento rework con limite", label(w.node(&found)?));
+        }
+    }
+    let main = main_path(w);
     let mut live = HashSet::new();
     let mut stack = vec![w.entry.clone()];
     while let Some(x) = stack.pop() {
@@ -377,7 +335,7 @@ pub fn validate(w: &Workflow) -> Result<()> {
         for e in w
             .edges
             .iter()
-            .filter(|e| e.from == x && e.kind == "control")
+            .filter(|e| e.from == x && (e.kind == "control" || e.kind == "rework"))
         {
             stack.push(e.to.clone())
         }
@@ -441,12 +399,11 @@ pub fn validate(w: &Workflow) -> Result<()> {
         .iter()
         .filter(|e| e.kind == "control" || e.kind == "rework")
     {
-        ensure!(
-            w.node(&e.from)?.kind == "Fork" || routes.insert((&e.from, &e.outcome)),
-            "Più rami per lo stesso esito: {} / {}",
-            e.from,
-            e.outcome
-        );
+        let from = w.node(&e.from)?;
+        if from.kind != "Fork" && !routes.insert((&e.from, &e.outcome)) {
+            if e.outcome.is_empty() { bail!("Il nodo {} ha più collegamenti in uscita: lasciane uno solo", label(from)); }
+            bail!("Il nodo {} ha più collegamenti in uscita per l’esito {}: lasciane uno solo", label(from), e.outcome);
+        }
     }
     // Fork/Join perform explicit automatic handoffs. Other binding changes still need Memory.
     for t in w.nodes.iter().filter(|n| n.kind == "Task") {
@@ -456,11 +413,7 @@ pub fn validate(w: &Workflow) -> Result<()> {
             if !seen.insert((x.clone(), binding.clone())) {
                 continue;
             }
-            for e in w
-                .edges
-                .iter()
-                .filter(|e| e.from == x && e.kind == "control")
-            {
+            for e in w.edges.iter().filter(|e| e.from == x && follows(e, &main)) {
                 let n = w.node(&e.to)?;
                 if n.kind == "Task" {
                     ensure!(
@@ -474,10 +427,7 @@ pub fn validate(w: &Workflow) -> Result<()> {
                     // binding across fan-out or across the result barrier.
                     continue;
                 } else if n.kind == "Memory" {
-                    ensure!(
-                        reachable(w, &n.agent, &n.id),
-                        "Memory: Task sorgente fuori percorso"
-                    );
+                    ensure!(reachable(w, &n.agent, &n.id), "Memory {} non è configurato correttamente: il Task sorgente {} non viene eseguito prima di questo Memory, scegli un Task che lo precede", label(n), label(w.node(&n.agent)?));
                     q.push((n.id.clone(), n.target.clone()));
                 } else {
                     q.push((n.id.clone(), binding.clone()));
@@ -487,7 +437,25 @@ pub fn validate(w: &Workflow) -> Result<()> {
     }
     Ok(())
 }
+/// The nodes reached from the entry through control edges alone.
+fn main_path(w: &Workflow) -> HashSet<String> {
+    let mut main = HashSet::new();
+    let mut stack = vec![w.entry.clone()];
+    while let Some(x) = stack.pop() {
+        if !main.insert(x.clone()) {
+            continue;
+        }
+        stack.extend(w.edges.iter().filter(|e| e.from == x && e.kind == "control").map(|e| e.to.clone()));
+    }
+    main
+}
+/// A rework edge back to the main path repeats a step whose Agent already has the context.
+/// One that leaves the main path opens a correction branch: its steps follow on like control.
+fn follows(e: &crate::model::Edge, main: &HashSet<String>) -> bool {
+    e.kind == "control" || e.kind == "rework" && !main.contains(&e.to)
+}
 fn reachable(w: &Workflow, a: &str, b: &str) -> bool {
+    let main = main_path(w);
     let mut seen = HashSet::new();
     let mut s = vec![a.to_string()];
     while let Some(x) = s.pop() {
@@ -497,11 +465,7 @@ fn reachable(w: &Workflow, a: &str, b: &str) -> bool {
         if !seen.insert(x.clone()) {
             continue;
         }
-        for e in w
-            .edges
-            .iter()
-            .filter(|e| e.from == x && e.kind == "control")
-        {
+        for e in w.edges.iter().filter(|e| e.from == x && follows(e, &main)) {
             s.push(e.to.clone());
         }
     }
@@ -986,7 +950,15 @@ fn route_state(r: &mut Run, outcome: &str) -> Result<()> {
                         .and_then(|o| serde_json::to_string(o).ok())
                 })
                 .unwrap_or_else(|| "Review rifiutata: riesamina gli artefatti correnti.".into());
-            r.context.insert(format!("feedback:{}", e.to), feedback);
+            // A correction branch may open with a Memory: the finding is for the Task after it.
+            let mut receiver = e.to.clone();
+            let mut hops = 0;
+            while r.workflow.node(&receiver)?.kind == "Memory" && hops < 200 {
+                let Some(next) = r.workflow.next(&receiver, "") else { break };
+                receiver = next.to.clone();
+                hops += 1;
+            }
+            r.context.insert(format!("feedback:{receiver}"), feedback);
             // Invalidate every reachable downstream result/approval but keep sessions and artifact versions.
             let mut seen = HashSet::new();
             let mut q = vec![e.to.clone()];
@@ -2002,7 +1974,7 @@ mod parallel_tests {
         w.edges.push(Edge {from:"a".into(),to:"review".into(),kind:"control".into(),outcome:String::new()});
         // A normal Task still needs a prompt; bypassed Tasks do not.
         w.nodes.iter_mut().find(|n| n.id == "a").unwrap().skip = false;
-        assert!(validate(&w).unwrap_err().to_string().contains("Task senza prompt"));
+        assert!(validate(&w).unwrap_err().to_string().contains("scrivi il prompt"));
         w.nodes.iter_mut().find(|n| n.id == "a").unwrap().skip = true;
         validate(&w).unwrap();
         let mut dependent = w.clone();
@@ -2053,6 +2025,70 @@ mod parallel_tests {
             summary: summary.into(),
             ..Default::default()
         }
+    }
+    #[test]
+    fn rework_opens_a_correction_branch_that_changes_agent_only_through_memory() {
+        let graph = |fixer: &str, memory: bool| -> Workflow {
+            let mut w: Workflow = serde_json::from_value(serde_json::json!({
+                "id":"w","name":"Correction branch","description":"","entry":"write",
+                "nodes":[
+                    {"id":"author","kind":"Agent","runtime":"pi"},
+                    {"id":"fixer","kind":"Agent","runtime":"claude"},
+                    {"id":"write","kind":"Task","agent":"author","prompt":"Write the post"},
+                    {"id":"review","kind":"Review","agent":"author","mode":"human","prompt":"Approve the post"},
+                    {"id":"fix","kind":"Task","agent":fixer,"prompt":"Correct the post"}
+                ],
+                "edges":[
+                    {"from":"write","to":"review","kind":"control","outcome":""},
+                    {"from":"fix","to":"review","kind":"control","outcome":""}
+                ]
+            })).unwrap();
+            let rework = |to: &str| Edge {from: "review".into(), to: to.into(), kind: "rework".into(), outcome: "rework".into()};
+            if memory {
+                w.nodes.push(serde_json::from_value(serde_json::json!({"id":"handoff","kind":"Memory","agent":"write","target":fixer})).unwrap());
+                w.edges.push(rework("handoff"));
+                w.edges.push(Edge {from: "handoff".into(), to: "fix".into(), kind: "control".into(), outcome: String::new()});
+            } else {
+                w.edges.push(rework("fix"));
+            }
+            if fixer == "author" {
+                w.nodes.retain(|n| n.id != "fixer");
+            }
+            w
+        };
+        // The branch is reached only through the rework edge and still counts as reachable.
+        validate(&graph("author", false)).unwrap();
+        validate(&graph("fixer", true)).unwrap();
+        // Another Agent takes over only through a Memory, as on the main path.
+        assert!(validate(&graph("fixer", false)).unwrap_err().to_string().contains("cambio Agent senza Memory"));
+        // A Memory left unconfigured is named, with the field to fill in.
+        let mut unset = graph("fixer", true);
+        unset.nodes.iter_mut().find(|n| n.id == "handoff").unwrap().target.clear();
+        assert_eq!(validate(&unset).unwrap_err().to_string(), "Memory handoff non è configurato: scegli l’Agent destinatario, cioè l’Agent del Task che riceve il risultato");
+        unset.nodes.iter_mut().find(|n| n.id == "handoff").unwrap().agent.clear();
+        assert_eq!(validate(&unset).unwrap_err().to_string(), "Memory handoff non è configurato: scegli il Task sorgente, cioè il Task di cui passare il risultato");
+        // A step that no edge reaches is still rejected, and so is a cycle inside the branch.
+        let mut orphan = graph("fixer", true);
+        orphan.edges.retain(|e| e.kind != "rework");
+        assert!(validate(&orphan).unwrap_err().to_string().contains("non raggiungibile"));
+        let mut cyclic = graph("author", false);
+        cyclic.nodes.push(serde_json::from_value(serde_json::json!({"id":"again","kind":"Task","agent":"author","prompt":"Again"})).unwrap());
+        for (from, to) in [("fix", "again"), ("again", "fix")] {
+            cyclic.edges.push(Edge {from: from.into(), to: to.into(), kind: "control".into(), outcome: String::new()});
+        }
+        cyclic.edges.retain(|e| !(e.from == "fix" && e.to == "review"));
+        assert!(validate(&cyclic).unwrap_err().to_string().contains("Ciclo nel percorso"));
+        // The source Task is told to prepare the handoff, and the finding reaches the Task after the Memory.
+        let w = graph("fixer", true);
+        assert!(memory_source_instructions(&w, w.node("write").unwrap()).contains("Memory"));
+        let mut run = crate::manager::runtime_run("run", &w, std::env::temp_dir());
+        run.current = "review".into();
+        run.context.insert("review-feedback".into(), "Tone is too formal".into());
+        route_state(&mut run, "rework").unwrap();
+        assert_eq!(run.current, "handoff");
+        assert_eq!(run.context["feedback:fix"], "Tone is too formal");
+        assert!(!run.context.contains_key("feedback:handoff"));
+        assert_eq!(run.states["fix"], "queued");
     }
     #[test]
     fn accepts_coordinator_fanout_and_synthesis_but_rejects_sequential_binding_changes() {
@@ -2213,7 +2249,7 @@ mod parallel_tests {
             validate_parallel(&w)
                 .unwrap_err()
                 .to_string()
-                .contains("distinti")
+                .contains("Agent diverso")
         );
         let mut w = graph();
         w.edges.pop();

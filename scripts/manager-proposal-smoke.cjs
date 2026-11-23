@@ -33,7 +33,9 @@ const BASE=process.env.NODO_TEST_URL||'http://127.0.0.1:18082';
   assert.equal(await page.evaluate(()=>app.wf.nodes.length),3);
   assert(await page.locator('#manager-undo').isVisible());
   const persisted=(await call('/workflows')).find(v=>v.id===w.id);assert.equal(persisted.nodes.length,2,'Manager must edit the draft, not silently save');
-  await page.locator('#manager-undo').click();assert.equal(await page.evaluate(()=>app.wf.nodes.length),2);
+  // Undo is always available: it restores the draft from before the manager's change even when the draft was edited afterwards.
+  const titleBefore=await page.evaluate(()=>{const title=app.wf.nodes[0].title;app.wf.nodes[0].title='Edited after the manager';app.wf.nodes[0].x+=40;return title});
+  await page.locator('#manager-undo').click();assert.equal(await page.evaluate(()=>app.wf.nodes.length),2);assert.equal(await page.evaluate(()=>app.wf.nodes[0].title),titleBefore);assert.equal(await page.locator('.manager-error').count(),0);
   assert.equal(await page.locator('.manager-proposal,#manager-undo').count(),0);
   assert.equal((await call('/manager/chat?workflow_id='+w.id)).proposal,null);
   await page.locator('#manager-toggle').click();
