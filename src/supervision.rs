@@ -170,8 +170,10 @@ pub async fn resolve(app: &App, uid: i64, rid: &str) -> Result<bool> {
                 .get(BINDING)
                 .context("Sessione supervisore mancante")?,
         )?;
+        // The local commit does not leave the machine: the supervisor may recommend it.
         ensure!(
-            p.kind != "effect" || proposed.action != "approve" || r.execution.allow_external_writes,
+            p.kind != "effect" || proposed.action != "approve" || r.execution.allow_external_writes
+                || r.workflow.node(&p.node).is_ok_and(crate::connectors::confirms_commit),
             "Il supervisore non può autorizzare operazioni esterne con questa policy"
         );
         p.proposal = Some(proposed.clone());
@@ -261,6 +263,7 @@ runtime: "codex".into(),
             node: r.current.clone(),
             questions: vec!["Inspect criteria".into()],
             resume_task: None,
+            commit: None,
             proposal: Some(SupervisorProposal {
                 action: if kind == "question" {
                     "answer"
@@ -298,6 +301,7 @@ runtime: "codex".into(),
             node: "task".into(),
             questions: vec![],
             resume_task: None,
+            commit: None,
             proposal: None,
         };
         let proposal = proposal(out.clone(), &p, &NativeSession::default()).unwrap();

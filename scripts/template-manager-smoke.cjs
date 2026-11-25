@@ -15,14 +15,20 @@ print(json.dumps({'type':'result','result':'<nodo_result>'+json.dumps(result)+'<
  const base='http://127.0.0.1:18239';const server=spawn(path.resolve('target/debug/rightcommit'),[],{env:{...process.env,PATH:bin+':'+process.env.PATH,NODO_DATA:data,NODO_LISTEN:'127.0.0.1:18239',NODO_SOURCES:path.resolve('sources')}});let log='';server.stderr.on('data',b=>log+=b);let browser;
  try{
   for(let i=0;i<100;i++){try{if((await fetch(base+'/healthz')).ok)break}catch{}await new Promise(r=>setTimeout(r,100));if(i===99)throw Error(log)}
-  browser=await chromium.launch({channel:'chrome',headless:true});const ctx=await browser.newContext({viewport:{width:1500,height:1100}}),page=await ctx.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
+  browser=await chromium.launch({channel:'chrome',headless:true});const ctx=await browser.newContext({viewport:{width:1500,height:1100}});
+  // No agent is configured in these browsers; keep the startup notice out of the way.
+  // English is the default since 1.1.0 and the administrator part searches Italian labels, so it starts in Italian.
+  await ctx.addInitScript(()=>{localStorage.setItem('rightcommit.hideAgentSetupNotice','true');if(!localStorage.getItem('nodo.language'))localStorage.setItem('nodo.language','it')});
+  const page=await ctx.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
   for(const f of ['templates.js','app.js','app.css','i18n.js'])await page.route('**/'+f,r=>r.fulfill({path:path.resolve('web',f),contentType:f.endsWith('css')?'text/css':'text/javascript'}));
   async function call(route,body,method='POST',status=200,client=ctx.request){const res=await client.fetch(base+'/api'+route,{method:body===undefined?'GET':method,headers:{'X-Nodo-Request':'1'},...(body===undefined?{}:{data:body})});const json=await res.json();assert.equal(res.status(),status,JSON.stringify(json));return json}
   await call('/auth/register',{email:'templates-admin@test.local',password:'template-admin-test-password'});await page.goto(base);await page.locator('#app').waitFor();
   async function pick(selector,value){const field=page.locator(selector);const index=typeof value==='number'?value:await field.evaluate((el,value)=>el.options.findIndex(o=>o.getAttribute('value')===value),value);assert(index>=0,selector);await field.getByRole('combobox').click();await field.locator(`.option[data-index="${index}"]`).click();}
   const original=await call('/admin/templates');const originalCount=original.templates.length;assert(originalCount>=15);await call('/admin/templates/validate',original);const invalid=structuredClone(original);invalid.sections[0].id='invalid section id';await call('/admin/templates/validate',invalid,'POST',400);
   await call('/users',{email:'templates-user@test.local',password:'template-user-test-password'});
-  const userCtx=await browser.newContext();await call('/auth/login',{email:'templates-user@test.local',password:'template-user-test-password'},'POST',200,userCtx.request);
+  const userCtx=await browser.newContext();
+  await userCtx.addInitScript(()=>localStorage.setItem('rightcommit.hideAgentSetupNotice','true'));
+  await call('/auth/login',{email:'templates-user@test.local',password:'template-user-test-password'},'POST',200,userCtx.request);
   await call('/admin/templates',undefined,'GET',403,userCtx.request);await call('/admin/templates',{catalog:original},'PUT',403,userCtx.request);await call('/admin/templates/assist',{template:original.templates[0],instruction:'translate'},'POST',403,userCtx.request);await call('/admin/templates/history',undefined,'GET',403,userCtx.request);
   const userPage=await userCtx.newPage();await userPage.goto(base);await userPage.locator('#app').waitFor();await userPage.locator('#account').click();assert.equal(await userPage.locator('[data-action=manage-templates]').count(),0);
   await page.locator('#account').click();await page.locator('[data-action=manage-templates]').click();await page.locator('#template-manager').waitFor();await page.locator('[data-tm-template]').first().click();
@@ -50,7 +56,8 @@ print(json.dumps({'type':'result','result':'<nodo_result>'+json.dumps(result)+'<
   await page.locator('[data-tm-field=title][data-lang=it]').fill('Non salvato');await page.locator('[data-tm=close]').click();await page.locator('.tm-overlay [data-cancel]').click();assert.equal(await page.locator('[data-tm-field=title][data-lang=it]').inputValue(),'Non salvato');await page.locator('[data-tm=save]').click();await page.waitForFunction(()=>!tmDirty());
   await page.locator('[data-tm=close]').click();await page.locator('#new-workflow').click();await page.locator('.template-card').first().waitFor();assert.equal(await page.locator('.template-card').count(),originalCount);
   // Explicit localized content survives the UI dictionary and changes with language.
-  await page.evaluate(()=>{localStorage.setItem('nodo.language','en');window.dispatchEvent(new StorageEvent('storage',{key:'nodo.language',newValue:'en'}))});await page.waitForFunction(()=>document.querySelector('.template-card strong').textContent==='Private draft title');
+  await page.evaluate(()=>{localStorage.setItem('nodo.language','en');window.dispatchEvent(new StorageEvent('storage',{key:'nodo.language',newValue:'en'}))});// The Get started section now comes first (8fa721b), so read the card of the edited template.
+  const editedId=(await call('/template-catalog')).templates[0].id;await page.waitForFunction(id=>document.querySelector(`[data-template-id="${id}"] strong`)?.textContent==='Private draft title',editedId);
   await page.keyboard.press('Escape');await page.evaluate(()=>manageTemplates());await page.locator('[data-tm-template]').first().click();await page.screenshot({path:'/tmp/jui-manage-templates.png'});
   await page.setViewportSize({width:390,height:844});assert(await page.locator('#template-manager').evaluate(el=>el.scrollWidth<=el.clientWidth+2));
   await page.locator('[data-tm-template=as-is-sdd]').click();await page.locator('[data-tm=up]').click();await page.locator('[data-tm=publish]').click();await page.waitForFunction(()=>!tmDirty());assert.equal((await call('/template-catalog')).templates[0].id,'as-is-sdd');

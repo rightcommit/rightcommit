@@ -12,14 +12,15 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
    eval(appSource.slice(appSource.indexOf('let toastTimer;'),appSource.indexOf('\n',appSource.indexOf('let toastTimer;')))+';window.notify=toast;');
    $('#dialog').showModal();notify('Visible above dialog');
    window.app={editBase:{id:'old-run'},wf:{nodes:[{id:'source',kind:'Source',source_type:'folder',source_mode:'direct',location:'original'}]}};
-   window.dirty=window.render=window.fit=window.renderChat=()=>{};window.uiText=s=>s;
-   eval(managerSource.slice(managerSource.indexOf('function applyWorkflow('),managerSource.indexOf(' async function applyPending('))+';window.applyCorrection=applyWorkflow;');
+   window.dirty=window.render=window.fit=window.renderChat=()=>{};window.uiText=s=>s;window.resolved=[];window.api=(path,body)=>{window.resolved.push(path);return Promise.resolve({})};
+   // Applying a proposal also marks it resolved on the server (33a6feb), so take resolveProposal with applyWorkflow.
+   eval(managerSource.slice(managerSource.indexOf('function resolveProposal('),managerSource.indexOf(' async function applyPending('))+';window.applyCorrection=applyWorkflow;');
   },{appSource,managerSource});
   assert(await page.locator('#toast').evaluate(el=>el.matches(':popover-open')));
   await page.screenshot({path:'/tmp/revision-toast-modal.png'});
   assert(await page.locator('#toast').isVisible());
   await page.evaluate(()=>{notify('Second error');applyCorrection({nodes:[{id:'source',kind:'Source',source_type:'example',source_mode:'copy',location:'wrong'},{id:'task',kind:'Task'}]},{});});
-  const source=await page.evaluate(()=>app.wf.nodes[0]);assert.equal(source.location,'original');assert.equal(source.source_mode,'direct');assert.equal(source.source_type,'folder');
+  assert.deepEqual(await page.evaluate(()=>window.resolved),['/manager/chat/proposal/resolve']);const source=await page.evaluate(()=>app.wf.nodes[0]);assert.equal(source.location,'original');assert.equal(source.source_mode,'direct');assert.equal(source.source_type,'folder');
   assert(await page.evaluate(()=>{try{applyCorrection({nodes:[]},{});return false}catch{return true}}));
   console.log('PASS: toast above modal, repeated toast, manager preserves revision Sources and rejects source replacement');
  }finally{await browser.close()}

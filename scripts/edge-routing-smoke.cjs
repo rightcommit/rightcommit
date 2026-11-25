@@ -3,6 +3,8 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
 (async()=>{const root=process.cwd(),dir=fs.mkdtempSync(path.join(os.tmpdir(),'nodo-returns-')),base='http://127.0.0.1:18109';const server=spawn(path.join(root,'target/debug/rightcommit'),[],{env:{...process.env,NODO_DATA:dir,NODO_LISTEN:'127.0.0.1:18109',NODO_SOURCES:path.join(root,'sources')},stdio:'ignore'});let browser;try{
 for(let i=0;i<100;i++){try{if((await fetch(base+'/healthz')).ok)break}catch{}await new Promise(r=>setTimeout(r,100))}
 browser=await chromium.launch({channel:'chrome',headless:true});const page=await browser.newPage({viewport:{width:1440,height:950}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
+ // No agent is configured on this disposable server; keep the startup notice out of the way.
+ await page.addInitScript(()=>localStorage.setItem('rightcommit.hideAgentSetupNotice','true'));
 await page.route('**/app.js',r=>r.fulfill({path:path.join(root,'web/app.js'),contentType:'text/javascript'}));
 await page.route('**/app.css',r=>r.fulfill({path:path.join(root,'web/app.css'),contentType:'text/css'}));
 const call=async(url,body)=>{const r=await page.request.fetch(base+'/api'+url,{method:body?'POST':'GET',headers:{'X-Nodo-Request':'1'},data:body});assert.equal(r.status(),200,await r.text());return r.json()};
@@ -10,10 +12,10 @@ await call('/auth/register',{email:'returns@test.local',password:'temporary-retu
 await page.route(base+'/',r=>r.fulfill({path:path.join(root,'web/index.html'),contentType:'text/html'}));
 await page.goto(base);await page.locator('#app').waitFor({state:'visible'});
 const templates=await call('/workflow-templates');
-const baseline=templates.find(t=>t.workflow.nodes.some(n=>n.title==='Pacchetto per Spec Kit')&&t.workflow.id==='as-is-sdd').workflow;
+const baseline=templates.find(t=>t.workflow.nodes.some(n=>n.title==='Spec Kit handoff')&&t.workflow.id==='as-is-sdd').workflow;
 await page.evaluate(w=>{app.run=null;app.wf=w;render();fit()},baseline);
 const betweenRows=await page.evaluate(()=>{
- const w=app.wf,target=w.nodes.find(n=>n.title==='Pacchetto per Spec Kit'),edge=w.edges.find(e=>e.to===target.id&&e.kind==='control'),source=w.nodes.find(n=>n.id===edge.from);
+ const w=app.wf,target=w.nodes.find(n=>n.title==='Spec Kit handoff'),edge=w.edges.find(e=>e.to===target.id&&e.kind==='control'),source=w.nodes.find(n=>n.id===edge.from);
  const check=()=>{
   const geometry=edgeGeometry(w,edge),path=[...document.querySelectorAll('#edges .edge.control')].find(p=>p.dataset.from===source.id&&p.dataset.to===target.id),box=path.getBBox();
   let collisions=0;
@@ -41,8 +43,25 @@ await page.evaluate(()=>{app.wf.nodes=[{id:'task',kind:'Task',title:'Prima anali
 const compact=await page.evaluate(()=>[...document.querySelectorAll('#edges .edge:not(.signal)')].slice(2).map(p=>{const box=p.getBBox();let collisions=0;for(let d=12;d<p.getTotalLength()-12;d+=2){const pt=p.getPointAtLength(d);for(const n of app.wf.nodes){if(pt.x>n.x+14&&pt.x<n.x+102&&pt.y>n.y&&pt.y<n.y+88)collisions++}}return {y:box.y,height:box.height,collisions}}));
 assert(compact.slice(1).every(p=>p.y>250&&p.y<340));assert(compact[0].y>=100);assert(compact.every(p=>p.collisions===0));assert.equal(new Set(compact.map(p=>p.y)).size,3);
 await page.screenshot({path:'/tmp/nodo-return-compact.png'});
-await page.evaluate(()=>{app.wf.nodes.push({id:'comment',kind:'Comment',title:'Comment',text:'Corridoio occupato',x:100,y:255,width:1100,height:85});render();fit()});
+// A comment cannot be shorter than its 160px minimum: the resize observer would grow a smaller one after the
+// route is drawn and make this check timing-dependent. Lower the second row so a full-height comment fills the gap.
+await page.evaluate(()=>{for(const n of app.wf.nodes)if(n.y===350)n.y=450;app.wf.nodes.push({id:'comment',kind:'Comment',title:'Comment',text:'Corridoio occupato',x:100,y:270,width:1100,height:160});render();fit()});
+await page.waitForTimeout(100);assert.equal(await page.evaluate(()=>app.wf.nodes.find(n=>n.id==='comment').height),160);
 const blocked=await page.evaluate(()=>{const p=document.querySelector('#edges .edge.rework'),rect=p.getBBox();let collisions=0;for(let d=12;d<p.getTotalLength()-12;d+=2){const pt=p.getPointAtLength(d);for(const n of app.wf.nodes){const left=n.kind==='Comment'?n.x:n.x+14,right=n.kind==='Comment'?n.x+n.width:n.x+102,bottom=n.y+(n.kind==='Comment'?n.height:88);if(pt.x>left&&pt.x<right&&pt.y>n.y&&pt.y<bottom)collisions++}}return {collisions,height:rect.height}});assert.equal(blocked.collisions,0);assert(blocked.height>100);
+// When a comment changes size after render (it grows to its 160px minimum, or the user resizes it), the
+// edges are redrawn around its new box. Wait for the resize to reach the model, then for the next frame.
+const settledRoutes=async()=>{await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));return page.evaluate(()=>{const p=document.querySelector('#edges .edge.rework'),e=app.wf.edges.find(e=>e.kind==='rework');let collisions=0;for(let d=12;d<p.getTotalLength()-12;d+=2){const pt=p.getPointAtLength(d);for(const n of app.wf.nodes){const left=n.kind==='Comment'?n.x:n.x+14,right=n.kind==='Comment'?n.x+n.width:n.x+102,bottom=n.y+(n.kind==='Comment'?n.height:88);if(pt.x>left&&pt.x<right&&pt.y>n.y&&pt.y<bottom)collisions++}}return {drawn:p.getAttribute('d'),expected:edgeGeometry(app.wf,e).d,collisions}})};
+// A 85px comment below the first row leaves a corridor under it; grown to its 160px minimum it reaches the
+// second row and the return edge must take the outer route instead of crossing it.
+await page.evaluate(()=>{const c=app.wf.nodes.find(n=>n.id==='comment');Object.assign(c,{x:300,y:280,width:600,height:85});render();fit()});
+await page.waitForFunction(()=>app.wf.nodes.find(n=>n.id==='comment').height===160);
+const grown=await settledRoutes();assert.equal(grown.drawn,grown.expected);assert.equal(grown.collisions,0);
+// With the second row lower, a corridor runs under the 160px comment; resizing the comment closes it.
+await page.evaluate(()=>{for(const n of app.wf.nodes)if(n.y===450)n.y=540;render();fit()});
+const open=await settledRoutes();assert.equal(open.drawn,open.expected);assert.equal(open.collisions,0);
+await page.evaluate(()=>{document.querySelector('#nodes .comment-node[data-id="comment"]').style.height='260px'});
+await page.waitForFunction(()=>app.wf.nodes.find(n=>n.id==='comment').height===260);
+const resized=await settledRoutes();assert.equal(resized.drawn,resized.expected);assert.equal(resized.collisions,0);assert.notEqual(resized.drawn,open.drawn);
 const localOnly=await page.evaluate(()=>{
  const geometry=()=>app.wf.edges.map(e=>edgeGeometry(app.wf,e).d);
  const before=geometry();
@@ -53,5 +72,5 @@ const localOnly=await page.evaluate(()=>{
  app.wf.nodes.find(n=>n.id==='far-right').y=-6000;
  render();return {before,after,moved:geometry()};
 });assert.deepEqual(localOnly.after,localOnly.before);assert.deepEqual(localOnly.moved,localOnly.before);
-assert.deepEqual(errors,[]);console.log('PASS: Spec Kit row-gap routing at 200/220/260px, curved return routes, separate lanes, labels, unchanged forward route, keyboard selection, hover highlights both endpoints and clears on leave, mixed rows, remote comments leave routes unchanged, no browser errors');
+assert.deepEqual(errors,[]);console.log('PASS: Spec Kit row-gap routing at 200/220/260px, curved return routes, separate lanes, labels, unchanged forward route, keyboard selection, hover highlights both endpoints and clears on leave, mixed rows, remote comments leave routes unchanged, edges follow a comment that grows to its minimum or is resized, no browser errors');
 }finally{await browser?.close();server.kill();fs.rmSync(dir,{recursive:true,force:true})}})().catch(e=>{console.error(e);process.exitCode=1});

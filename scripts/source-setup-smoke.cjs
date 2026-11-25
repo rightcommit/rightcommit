@@ -11,6 +11,8 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   const page=await browser.newPage({viewport:{width:1440,height:1050}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
   for(const f of ['controls.js','app.js','app.css','i18n.js'])await page.route('**/'+f,r=>r.fulfill({path:path.resolve('web/'+f)}));
   await page.request.post(base+'/api/auth/register',{headers,data:{email:'tests@test.local',password:'temporary-test-password'}});
+  // Start checks agent credentials first (7cb128c); a dummy Codex key lets the validation errors below show.
+  const settings=await(await page.request.get(base+'/api/settings')).json();const keyed=await page.request.patch(base+'/api/settings',{headers,data:{revision:settings._revision,changes:{agents:{codex:{api_key:'dummy-source-setup-key'}}}}});assert(keyed.ok(),await keyed.text());
   const workflow={id:'own',name:'Own project',description:'',entry:'task',nodes:[
    {id:'src',kind:'Source',title:'Own project',source_type:'example',x:0,y:0},
    {id:'author',kind:'Agent',title:'Author',x:200,y:0},

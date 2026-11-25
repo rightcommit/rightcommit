@@ -5,6 +5,9 @@ Pi can use a model that runs on your own computer, with [Ollama](https://ollama.
 no cloud inference charges for this local setup, but you need a capable machine: agents send long prompts and need **tool
 calling**.
 
+**What you need:** a model server running on your computer or network. No API key or
+subscription is required, unless your server asks for a key.
+
 The idea: a small `models.json` file points Pi's *OpenAI* provider to your local server, and
 in the app you select *OpenAI* with the local model's name. The example uses Ollama and
 `qwen3-coder:30b`.

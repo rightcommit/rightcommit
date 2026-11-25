@@ -25,7 +25,8 @@ If several makefiles exist, rightcommit reads the first one in the order make us
 
 The command runs without a shell, so pipes, redirects and `&&` don't work: put several steps
 in a script in your repository and call it. The Activity Log shows the command and whether it
-was set on the node or detected.
+was set on the node or detected. When the tests pass it also shows the last lines of their
+output; when they fail, the error shows the output. The step's report keeps the full output.
 
 ## Tools
 
@@ -35,5 +36,7 @@ with npm, Python 3 and make. The
 
 ## Try it
 
-The [Local CI example](../examples/local-ci/README.md) imports a workflow so you can inspect a
-passing run and an intentional test failure.
+Press **+** and choose **Local CI example** under **Get started**. It runs a bundled Python
+test with no agent and no API key, only Python 3. The
+[Local CI example](../examples/local-ci/README.md) shows a passing run and an intentional test
+failure.

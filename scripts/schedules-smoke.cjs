@@ -14,6 +14,8 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   console.log('registered');await page.goto(base);await page.locator('#app').waitFor({state:'visible'});await page.evaluate(()=>{if(document.querySelector('[data-agent-setup-notice]'))closeModal()});
   console.log('booted');const workflow={id:'schedule-ui-test',name:'Scheduled review',description:'',entry:'review',nodes:[{id:'source',kind:'Source',source_type:'folder',location:'material',source_mode:'copy'},{id:'agent',kind:'Agent'},{id:'task',kind:'Task',agent:'agent',title:'Task',prompt:'Test task'},{id:'review',kind:'Review',mode:'human',title:'Review',prompt:'Check'}],edges:[{from:'source',to:'agent',kind:'context',outcome:''},{from:'agent',to:'task',kind:'context',outcome:''},{from:'review',to:'task',kind:'control',outcome:''}]};
   r=await page.request.post(base+'/api/workflows',{headers,data:workflow});assert(r.ok(),await r.text());
+  // A run starts only when its agents have credentials (7cb128c): give the default agent a dummy key. The run stops at the human Review first.
+  const settings=await(await page.request.get(base+'/api/settings')).json();r=await page.request.patch(base+'/api/settings',{headers,data:{revision:settings._revision,changes:{agents:{[settings.default_runtime]:{api_key:'dummy-schedule-key'}}}}});assert(r.ok(),await r.text());
   await page.evaluate(async()=>{app.workflows=await api('/workflows');selectWorkflow('schedule-ui-test')});
   console.log('workflow ready');await page.locator('#execute').click();assert.equal(await page.locator('#schedule-run-menu [role=menuitem]').count(),2);
   await page.keyboard.press('Escape');assert.equal(await page.locator('#execute').getAttribute('aria-expanded'),'false');

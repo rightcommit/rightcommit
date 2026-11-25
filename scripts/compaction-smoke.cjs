@@ -51,6 +51,8 @@ for(const rt of ['claude','codex','pi'])fs.writeFileSync(path.join(bin,rt),fixtu
 const server=spawn(path.resolve('target/debug/rightcommit'),[],{env:{...process.env,NODO_DATA:dir,NODO_LISTEN:'127.0.0.1:18109',NODO_SOURCES:path.resolve('sources'),PATH:bin+':'+process.env.PATH,CLAUDE_CODE_AUTO_COMPACT_WINDOW:'100000',CLAUDE_AUTOCOMPACT_PCT_OVERRIDE:'37',ANTHROPIC_AUTH_TOKEN:'compact-secret-sentinel',OPENAI_API_KEY:'compact-openai-secret'},stdio:'ignore'});let browser;
 try{for(let i=0;i<100;i++){try{if((await fetch(base+'/healthz')).ok)break}catch{}await new Promise(r=>setTimeout(r,100))}
 browser=await chromium.launch({channel:'chrome',headless:true});const page=await browser.newPage({viewport:{width:1440,height:1050}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
+ // Keep the startup notice out of the way. English is the default since 1.1.0 and this test checks the Italian texts, so start in Italian.
+ await page.addInitScript(()=>{localStorage.setItem('rightcommit.hideAgentSetupNotice','true');if(!localStorage.getItem('nodo.language'))localStorage.setItem('nodo.language','it')});
 const request=async(p,b,method)=>page.request.fetch(base+'/api'+p,{method:method||(b?'POST':'GET'),headers:{'X-Nodo-Request':'1'},data:b});
 const api=async(p,b,method)=>{const r=await request(p,b,method);assert(r.ok(),await r.text());return r.json()};
 await api('/auth/register',{email:'compact@test.local',password:'temporary-compact-password'});
@@ -58,6 +60,8 @@ let settings=await api('/settings');assert.equal(settings.workflow_parallelism,5
 settings.workflow_parallelism=0;assert.equal((await request('/settings',settings,'PUT')).status(),400);settings.workflow_parallelism=6;
 settings.compaction.claude={...settings.compaction.claude,context_window_tokens:200000,trigger_percent:70};settings.compaction.codex={...settings.compaction.codex,context_window_tokens:200000,threshold_tokens:160000};settings.compaction.pi.reserve_tokens=32000;
 settings=await api('/settings',settings,'PUT');assert.equal(settings.workflow_parallelism,6);assert.equal(settings.compaction.claude.context_window_tokens,0);
+// Runs start only when their agents have credentials (7cb128c): Pi uses the OpenAI key of the server environment and needs a model.
+settings=await api('/settings',{revision:settings._revision,changes:{agents:{pi:{provider:'openai',model:'compact-fixture-model'}}}},'PATCH');assert(settings.agents.pi.configured);
 const runs={};for(const rt of ['claude','codex','pi']){const wf={id:'compact-'+rt,name:'Compact '+rt,description:'Offline compaction fixture',entry:'task',nodes:[{id:'source',kind:'Source',title:'Source',source_type:'example'},{id:'agent',kind:'Agent',title:rt,runtime:rt},{id:'task',kind:'Task',title:'Work',agent:'agent',prompt:'Offline compact test'}],edges:[{from:'source',to:'agent',kind:'context'},{from:'agent',to:'task',kind:'context'}]};await api('/workflows',wf);const created=await api('/runs',{workflow_id:wf.id});let run;
 for(let i=0;i<200;i++){run=(await api('/runs/'+created.id)).run;assert.notEqual(run.status,'failed',run.error);if(run.status==='completed')break;await new Promise(r=>setTimeout(r,50))}assert.equal(run.status,'completed');runs[rt]=run;
 const before=JSON.stringify(run.sessions),response=await api('/runs/'+run.id+'/compact',{binding:'agent'});assert.equal((await request('/runs/'+run.id+'/compact',{binding:'agent'})).status(),400);assert.equal((await request('/runs/'+run.id+'/start',{acknowledge:true})).status(),400);

@@ -272,6 +272,7 @@ fn preset(incident: bool) -> Workflow {
     );
     commit.provider = "local".into();
     commit.operation = "commit".into();
+    commit.confirm_commit = true;
     nodes.push(commit);
     chain.push("commit".into());
     for pair in chain.windows(2) {
@@ -355,7 +356,7 @@ mod catalog_tests {
     #[test]
     fn templates_are_valid_and_independent_from_seeded_workflows() {
         let templates = super::catalog();
-        assert_eq!(templates.len(), 23);
+        assert_eq!(templates.len(), 24);
         let mut ids = std::collections::HashSet::new();
         for t in templates {
             assert!(ids.insert(t.id.clone()));

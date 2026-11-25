@@ -6,6 +6,8 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
  try{
   for(let i=0;i<100;i++){try{if((await fetch(base+'/healthz')).ok)break}catch{}await new Promise(r=>setTimeout(r,100))}
   browser=await chromium.launch({channel:'chrome',headless:true});const page=await browser.newPage({viewport:{width:1600,height:1100}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
+  // No agent is configured on this disposable server; keep the startup notice out of the way.
+  await page.addInitScript(()=>localStorage.setItem('rightcommit.hideAgentSetupNotice','true'));
   const call=async(url,body)=>{const r=await page.request.fetch(base+'/api'+url,{method:body?'POST':'GET',headers:{'X-Nodo-Request':'1'},data:body});assert.equal(r.status(),200,await r.text());return r.json()};
   await call('/auth/register',{email:'selection@test.local',password:'temporary-selection-password'});
   const w={id:'selection',name:'Selection',description:'',entry:'task1',nodes:[{id:'source',kind:'Source',title:'Source',source_type:'example',x:80,y:80},{id:'agent',kind:'Agent',title:'Author',x:270,y:80},{id:'task1',kind:'Task',title:'First task',agent:'agent',x:460,y:80},{id:'task2',kind:'Task',title:'Second task',agent:'agent',x:650,y:80},{id:'note',kind:'Comment',title:'Note',text:'Keep this note',width:300,height:180,x:80,y:330}],edges:[{from:'source',to:'agent',kind:'context'},{from:'agent',to:'task1',kind:'context'},{from:'task1',to:'task2',kind:'control'}]};await call('/workflows',w);

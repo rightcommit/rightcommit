@@ -8,6 +8,11 @@ pub fn is_write(n: &Node) -> bool {
         || n.provider == "atlassian"
         || (n.provider != "local" && ["create_pr", "update_ticket", "apply_ticket_plan", "apply_ticket_batch", "create_incident", "order_catalog", "resolve_ticket"].contains(&n.operation.as_str()))
 }
+/// The local commit step with its confirmation on: it pauses for approval like a write
+/// above, but it stays on this machine, so the external-write policy does not apply to it.
+pub fn confirms_commit(n: &Node) -> bool {
+    n.kind == "Connection" && n.provider == "local" && n.operation == "commit" && n.confirm_commit
+}
 pub fn effect_digest(n: &Node, r: &Run, s: &Settings) -> String {
     // Supervising a request must not invalidate the exact effect being approved.
     let sessions: std::collections::BTreeMap<_, _> = r
@@ -82,35 +87,12 @@ pub async fn execute(app: &App, uid: i64, r: &Run, n: &Node) -> Result<AgentResu
                 let line = format!("Comando di test: {} ({})", command.display(), command.origin_text());
                 // The Activity Log shows what ran; the report keeps only the tool output.
                 agents::emit(app, uid, &r.id, "output", &n.id, &line);
-                agents::project_tool(app, uid, cwd, &command.argv, 600).await?
+                let output = agents::project_tool(app, uid, cwd, &command.argv, 600).await?;
+                // A failure shows its output in the error; a passing run shows its last lines here.
+                agents::emit(app, uid, &r.id, "output", &n.id, &crate::test_command::passing_summary(&output));
+                output
             }
-            "commit" => {
-                let status =
-                    agents::tool(app, uid, cwd, "git", &["status", "--porcelain"], 30).await?;
-                if !status.trim().is_empty() {
-                    agents::tool(app, uid, cwd, "git", &["add", "--all"], 30).await?;
-                    agents::tool(
-                        app,
-                        uid,
-                        cwd,
-                        "git",
-                        &[
-                            "-c",
-                            "core.hooksPath=/dev/null",
-                            "commit",
-                            "-m",
-                            "SDD: verified workflow delivery",
-                        ],
-                        30,
-                    )
-                    .await?;
-                }
-                let head = agents::tool(app, uid, cwd, "git", &["rev-parse", "HEAD"], 30).await?;
-                format!(
-                    "Commit locale verificato: {}. Nessun push, merge o deploy eseguito.",
-                    head.trim()
-                )
-            }
+            "commit" => crate::local_commit::commit(app, uid, r, None).await?.context("Commit locale non eseguito")?,
             _ => bail!("Operazione locale sconosciuta"),
         };
         return Ok(AgentResult {

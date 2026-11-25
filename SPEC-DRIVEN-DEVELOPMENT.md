@@ -37,7 +37,7 @@ deduplication service. It needs no external service: only one configured agent.
    | Approval | Design review, **Ready for code** gate | An agent review looks for inconsistencies across spec, plan and tasks, then a person approves. The gate lets the run continue only if no blocking gap remains |
    | Delivery | Implement, Converge, **Convergence verified** gate | The agent implements the tasks, then checks the code against the spec. The gate sends the work back if tasks are not really closed |
    | Verification | Local CI · tests, Code review, **Quality gate** | The server runs `cargo test`. The review reads the code and the real test results. The gate passes only with passing tests |
-   | Commit | Verified commit | A local commit. This node does not push, merge or deploy |
+   | Commit | Verified commit | The run stops and shows what the commit will contain: the files, the diff, the edits left out and the test output. After you approve, it creates a local commit. This node does not push, merge or deploy |
 
 3. Open the run to read the spec, plan and tasks the agent wrote, the diffs of each file, and
    the test output.
@@ -46,7 +46,9 @@ A failed gate routes the work back: **Ready for code** to Plan, the other two to
 this template each step can be reworked up to two times.
 
 To run the same workflow on your own project, change the **Source** node to your folder or Git
-repository and describe the feature when you start the run. The template has
+repository, and rewrite the prompts of **Specify**, **Clarify** and **Checklist**: they describe
+the Northstar feature, so with only a new Source the agent would specify the wrong feature. Give
+goals and constraints when you start the run. The template has
 **Add Spec Kit if missing** turned on, so a project without a `.specify` folder gets Spec Kit
 in the run workspace. See [ADD-A-FRAMEWORK.md](ADD-A-FRAMEWORK.md).
 
@@ -86,7 +88,16 @@ gate on the canvas.
 
 ## Limits
 
-- The commit node creates a local commit. To push or open a pull request, add a Connection.
+- The commit node creates a local commit with only the files the run changed. Edits that were
+  already in the project folder when the run started stay out of it, staged or not. If the run
+  changed one of those files again, the commit stops and names the files to review. To push or
+  open a pull request, add a Connection.
+- With **Confirm before commit** on (the default for new commit nodes and in the templates), the
+  commit waits for your approval and is created only if the files are still the ones shown. If
+  they changed, the run asks again with the new content. Rejecting stops the run without a
+  commit. Long diffs are cut: the preview shows up to 400 lines or 48 KiB per file and 128 KiB
+  in total, and says where it cut. An unattended run commits without asking and says so in the
+  step report. Workflows saved before this option commit without asking, as before.
 - The Local CI step needs the project's test tools installed where rightcommit runs. See
   [Tools for your project's tests](INSTALL.md#tools-for-your-projects-tests).
 - A gate can require closed tasks or fresh passing tests, as in this template. The rest of its

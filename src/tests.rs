@@ -440,6 +440,7 @@ async fn rejected_review_passes_findings_to_the_same_author_session() {
         node: "code-review".into(),
         questions: vec![],
         resume_task: None,
+        commit: None,
     });
     r.outputs.insert(
         "code-review".into(),
@@ -500,6 +501,7 @@ async fn gate_answer_resumes_the_gate_without_replaying_the_author() {
         node: "converged".into(),
         questions: vec!["Approve checklist?".into()],
         resume_task: Some("converge".into()),
+        commit: None,
     });
     r.sessions.insert(
         "author".into(),

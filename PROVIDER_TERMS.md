@@ -23,6 +23,11 @@ An internal deployment is distinct from offering Claude Code to external users; 
 latter has additional credential, direct-billing and non-intermediation conditions.
 Follow the [Usage Policy](https://www.anthropic.com/legal/aup) and any cloud-provider agreement.
 
+Claude subscriptions: the app has no Claude sign-in and its key fields take only API keys. The
+administrator can use their own subscription for their own runs, with a token created by Claude
+Code; it must not be shared with other users. See
+[Your own Claude subscription](HOW_TO_CONFIGURE_CLAUDECODE.md#4-your-own-claude-subscription-administrator-only).
+
 ## OpenAI and Codex
 
 OpenAI's [Services Agreement](https://openai.com/policies/services-agreement/), sections 2.2

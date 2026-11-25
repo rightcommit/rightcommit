@@ -4,6 +4,17 @@ rightcommit runs the official, unmodified Codex CLI. Supported configuration use
 or authorized provider configuration for individual or internal organizational use.
 Read [Provider terms](PROVIDER_TERMS.md) and [Intended use](INTENDED_USE.md).
 
+## What you need
+
+An **OpenAI API key** from the OpenAI platform, with API usage billed by OpenAI, or a
+compatible provider configured by the administrator.
+
+**ChatGPT subscription:** it cannot be entered in the app. rightcommit has no ChatGPT
+sign-in, and the API key field expects an OpenAI platform API key. OpenAI recommends API key
+authentication for programmatic Codex CLI workflows; with an API key, Codex uses standard API
+pricing instead of the credits included in a ChatGPT plan. See the
+[official authentication documentation](https://learn.chatgpt.com/docs/auth?surface=cli).
+
 ## Original vendor CLI
 
 rightcommit uses Codex CLI as supplied by OpenAI, installed from the official

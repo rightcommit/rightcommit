@@ -17,35 +17,42 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   const page=await browser.newPage({viewport:{width:1440,height:1080}}),errors=[];
   page.setDefaultTimeout(15000);
   page.on('pageerror',e=>errors.push(e.message));
+  // No agents are configured on this disposable server; keep the startup notice out of the way.
+  await page.addInitScript(()=>localStorage.setItem('rightcommit.hideAgentSetupNotice','true'));
+  // The catalog carries explicit locales; cards and copies use them, with the source locale as fallback.
+  const localeText=(t,lang)=>{const selected=t.locales?.[lang]||{},fallback=t.locales?.[t.source_locale||'en']||{};return field=>selected[field]||fallback[field]||''};
+  const localizedNodes=(t,lang)=>{const nodes=structuredClone(t.workflow.nodes),translated=t.locales?.[lang]?.nodes||{};for(const node of nodes)for(const field of ['title','prompt','text'])if(typeof translated[node.id]?.[field]==='string')node[field]=translated[node.id][field];return nodes};
   const call=async(url,body)=>{const r=await page.request.fetch(base+'/api'+url,{method:body?'POST':'GET',headers:{'X-Nodo-Request':'1'},data:body});assert.equal(r.status(),200,await r.text());return r.json()};
   const unauthorized=await page.request.get(base+'/api/workflow-templates');assert.equal(unauthorized.status(),401);
   await call('/auth/register',{email:'catalog-qa@nodo.local',password:'temporary-catalog-qa-password'});
   await page.goto(base);await page.locator('#app').waitFor({state:'visible'});
   const originals=await call('/workflows');assert.equal(originals.length,2);
-  const templates=await call('/workflow-templates');assert.equal(templates.length,13);
-  assert.deepEqual(templates.slice(0,2).map(t=>t.id),['as-is-sdd-adversarial','as-is-sdd']);
+  const templates=await call('/workflow-templates');assert.equal(templates.length,24);
+  assert.deepEqual(templates.slice(0,2).map(t=>t.id),['as-is-sdd-adversarial','local-ci-example']);
   await page.locator('#new-workflow').click();await page.locator('.workflow-catalog').waitFor();
-  assert.equal(await page.locator('.catalog-section').count(),3);assert.equal(await page.locator('.template-card').count(),13);
+  assert.equal(await page.locator('.catalog-section').count(),5);assert.equal(await page.locator('.template-card').count(),24);
+  assert.equal(await page.locator('.catalog-section h3').first().textContent(),'Get started');assert.deepEqual(await page.locator('.catalog-section').first().locator('.template-card').evaluateAll(cards=>cards.map(c=>c.dataset.templateId)),['local-ci-example']);
   assert.equal(await page.locator('.template-grid').first().evaluate(e=>getComputedStyle(e).gridTemplateColumns.split(' ').length),3);
   for(const lang of ['en','it','en','it']){
    await page.evaluate(lang=>{localStorage.setItem('nodo.language',lang);window.dispatchEvent(new StorageEvent('storage',{key:'nodo.language',newValue:lang}))},lang);
    for(const t of templates){
     const card=page.locator(`[data-template-id="${t.id}"]`);
-    const localized=await page.evaluate(t=>[uiLocalizedText(t.workflow.name),uiLocalizedText(t.workflow.description),uiLocalizedText(t.setup)],t);
+    const text=localeText(t,lang),localized=[text('title'),text('description'),text('setup')];
     await page.waitForFunction(({id,expected})=>document.querySelector(`[data-template-id="${id}"] .template-description`).textContent===expected,{id:t.id,expected:localized[1]},{timeout:5000});
     assert.equal(await card.locator('strong').textContent(),localized[0]);
     assert.equal(await card.locator('.template-setup').textContent(),localized[2]);
-    if(lang==='en')assert.deepEqual(localized,[t.workflow.name,t.workflow.description,t.setup]);
-    else {assert.notEqual(localized[1],t.workflow.description);assert.notEqual(localized[2],t.setup)}
+    // English cards show the English catalog texts; the bundled workflow keeps its own description (Local CI example matches examples/local-ci).
+    if(lang==='en'){assert.equal(localized[0],t.workflow.name);assert.deepEqual(localized,[t.locales.en.title,t.locales.en.description,t.locales.en.setup])}
+    else {assert.notEqual(localized[1],t.locales.en.description);assert.notEqual(localized[2],t.locales.en.setup)}
    }
   }
-  assert.equal(await page.locator('.template-card').first().getAttribute('data-template-id'),'as-is-sdd-adversarial');
+  assert.equal(await page.locator('.template-card').first().getAttribute('data-template-id'),'local-ci-example');
   await page.screenshot({path:'/tmp/nodo-workflow-catalog-desktop.png'});
   const initialId=await page.evaluate(()=>app.wf.id);
   await page.locator('.template-card').first().click();
   await page.locator('#template-workflow-form').waitFor();
   assert.equal((await call('/workflows')).length,2,'opening confirmation does not create a workflow');
-  assert.match(await page.locator('[name=workflow_name]').inputValue(),/^QUADRO_APPLICATIVO_EVIDENZE_E_CATALOGO_FUNZIONALE_/);
+  assert.match(await page.locator('[name=workflow_name]').inputValue(),/^ESEMPIO_DI_CI_LOCALE_/);
   assert.equal(await page.locator('[data-action=template-back]').textContent(),'Indietro');
   await page.locator('[name=workflow_name]').fill('');await page.locator('[data-action=save-template]').click();
   assert(await page.locator('#template-workflow-form').isVisible());assert.equal((await call('/workflows')).length,2);
@@ -62,7 +69,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   for(const [index,t] of templates.entries()){
    const lang=index%2?'en':'it';
    await page.evaluate(lang=>{localStorage.setItem('nodo.language',lang);window.dispatchEvent(new StorageEvent('storage',{key:'nodo.language',newValue:lang}))},lang);
-   const expectedName=await page.evaluate(t=>templateWorkflowName(uiLocalizedText(t.workflow.name)).replace(/_[0-9]{12}$/,''),t);
+   const expectedName=await page.evaluate(title=>templateWorkflowName(title).replace(/_[0-9]{12}$/,''),localeText(t,lang)('title'));
    await page.locator('#new-workflow').click();await page.locator('.workflow-catalog').waitFor();
    await page.locator(`[data-template-id="${t.id}"]`).click();await page.locator('#template-workflow-form').waitFor();
    assert.equal(await page.locator('[data-action=template-back]').textContent(),lang==='en'?'Back':'Indietro');
@@ -72,7 +79,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
    if(index===0){await page.locator('[name=workflow_name]').fill('Application overview QA');await page.locator('[name=workflow_name]').press('Enter')}
    else await page.locator('[data-action=save-template]').click();
    await page.waitForFunction(()=>!document.querySelector('#dialog').open);
-   const w=await page.evaluate(()=>app.wf);assert.notEqual(w.id,t.workflow.id);if(index===0)assert.equal(w.name,'Application overview QA');else assert.match(w.name,/_[0-9]{12}$/);assert.equal(w.nodes.length,t.workflow.nodes.length);assert.deepEqual(w.nodes,t.workflow.nodes);assert.equal(w.description,t.locales[lang].description);if(index!==0)assert.equal(w.name.replace(/_[0-9]{12}$/ ,''),expectedName);
+   const w=await page.evaluate(()=>app.wf);assert.notEqual(w.id,t.workflow.id);if(index===0)assert.equal(w.name,'Application overview QA');else assert.match(w.name,/_[0-9]{12}$/);assert.equal(w.nodes.length,t.workflow.nodes.length);assert.deepEqual(w.nodes,localizedNodes(t,lang));assert.equal(w.description,t.locales[lang].description);if(index!==0)assert.equal(w.name.replace(/_[0-9]{12}$/ ,''),expectedName);
    await call('/workflows/validate',w);
   }
   const before=await page.evaluate(()=>app.wf.id);
@@ -84,9 +91,11 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   assert.equal((await call('/workflows')).find(w=>w.id===before).description,'unsaved');
   await page.locator('#new-workflow').click();await page.locator('.workflow-catalog').waitFor();
   await page.locator('.template-card').first().click();await page.locator('[data-action=save-template]').dblclick();await page.waitForFunction(()=>!document.querySelector('#dialog').open);
-  assert.equal((await call('/workflows')).length,16,'double click creates one copy');
-  assert.equal(new Set((await call('/workflows')).map(w=>w.name)).size,16);
-  await page.reload();await page.locator('#app').waitFor({state:'visible'});assert.equal(await page.evaluate(()=>app.workflows.length),16);
+  // Originals, the empty workflow, one copy per template, the copy after unsaved edits and one copy from the double click.
+  const total=originals.length+1+templates.length+2;
+  assert.equal((await call('/workflows')).length,total,'double click creates one copy');
+  assert.equal(new Set((await call('/workflows')).map(w=>w.name)).size,total);
+  await page.reload();await page.locator('#app').waitFor({state:'visible'});assert.equal(await page.evaluate(()=>app.workflows.length),total);
   await page.locator('#new-workflow').click();await page.locator('.workflow-catalog').waitFor();
   await page.setViewportSize({width:390,height:844});
   assert.equal(await page.locator('.template-grid').first().evaluate(e=>getComputedStyle(e).gridTemplateColumns.split(' ').length),1);
@@ -97,6 +106,6 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   await page.screenshot({path:'/tmp/nodo-template-confirm-mobile.png'});
   await page.keyboard.press('Escape');assert.equal(await page.locator('#dialog').evaluate(e=>e.open),false);
   assert.deepEqual(errors,[]);
-  console.log(JSON.stringify({pass:true,templates:13,checks:['authenticated catalog','three sections','maximum three columns','original blank dialog','all templates create independent persisted valid graphs','localized confirmation footer','Back, Close and Escape create nothing','required names','editable suggested names','Enter submits','automatic names','unsaved changes persist','double click protection','reload persistence','mobile single column without overflow','Escape closes dialog']}));
+  console.log(JSON.stringify({pass:true,templates:templates.length,checks:['authenticated catalog','five sections with Get started first','maximum three columns','original blank dialog','all templates create independent persisted valid graphs','localized confirmation footer','Back, Close and Escape create nothing','required names','editable suggested names','Enter submits','automatic names','unsaved changes persist','double click protection','reload persistence','mobile single column without overflow','Escape closes dialog']}));
  }finally{await browser?.close();server.kill('SIGINT');await new Promise(resolve=>server.exitCode!==null||server.signalCode!==null?resolve():server.once('exit',resolve));fs.rmSync(data,{recursive:true,force:true})}
 })().catch(e=>{console.error(e);process.exit(1)});

@@ -395,6 +395,9 @@ pub async fn rpc(
                 ensure!(msg["contextId"].is_null(),"Per continuare un task usa taskId");
                 let previous:Option<(String,String)>=a.store.db.lock().unwrap().query_row("SELECT id,run FROM a2a_tasks WHERE user_id=? AND workflow=? AND message=?",params![uid,wid,mid],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
                 let (tid,rid)=if let Some(pair)=previous {ensure!(!pair.1.is_empty(),"Invio precedente interrotto: verificare le run locali");pair} else {
+                    let published=p.workflow.as_ref().context("Workflow non pubblicato")?;
+                    engine::validate_start(&a,uid,published)?;
+                    crate::agent_auth::ensure_agents_configured(&a,uid,published).await?;
                     let tid=id();
                     a.store.db.lock().unwrap().execute("INSERT INTO a2a_tasks(id,user_id,workflow,run,message,outputs) VALUES(?,?,?,?,?,?)",params![tid,uid,wid,"",mid,serde_json::to_string(&p.outputs)?])?;
                     let r=engine::create(&a,uid,p.workflow.clone().context("Workflow non pubblicato")?,input,None).await?;
@@ -717,6 +720,30 @@ mod tests {
             .0;
         assert!(result.get("error").is_some());
     }
+    // A published workflow that no longer validates (here its MCP server was removed) reports that
+    // first, as Start does; the credentials refusal is only for a workflow that could otherwise start.
+    #[tokio::test]
+    async fn invalid_published_workflow_is_reported_before_missing_credentials() {
+        let (_dir, a, _) = fixture();
+        // User 2 receives no provider credentials from the server environment; the Agent is Codex.
+        let mut w = crate::presets::all().remove(0);
+        w.nodes.push(Node {id: "tools".into(), kind: "MCP".into(), title: "Tools".into(), mcp_id: "srv".into(), ..Default::default()});
+        w.edges.push(Edge {from: "tools".into(), to: "author".into(), kind: "context".into(), outcome: String::new()});
+        a.store.save_workflow(2, &w).unwrap();
+        let mut settings = a.store.settings(2).unwrap();
+        settings.mcp_servers.insert("srv".into(), McpConfig {name: "srv".into(), url: "http://127.0.0.1:9/mcp".into(), ..Default::default()});
+        a.store.save_settings(2, &settings).unwrap();
+        let owner = || User {id: 2, email: "owner".into()};
+        let token = publish(State(a.clone()), owner(), Path(w.id.clone()), Json(json!({"enabled":true,"name":"Agent","base_url":"http://localhost:8080","outputs":[]}))).await.unwrap().0["token"].as_str().unwrap().to_string();
+        let send = |mid: &str| json!({"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"messageId":mid,"role":"ROLE_USER","parts":[{"text":"go"}]},"configuration":{"returnImmediately":true}}});
+        let valid = rpc(State(a.clone()), Path((2, w.id.clone())), headers(&token), Json(send("first"))).await.unwrap().0;
+        assert!(valid["error"]["message"].as_str().unwrap().starts_with("Il workflow usa agenti senza credenziali"), "{valid}");
+        settings.mcp_servers.clear();
+        a.store.save_settings(2, &settings).unwrap();
+        let invalid = rpc(State(a.clone()), Path((2, w.id.clone())), headers(&token), Json(send("second"))).await.unwrap().0;
+        assert_eq!(invalid["error"]["message"], "Server MCP personale non trovato: Tools", "{invalid}");
+        assert!(a.store.runs(2).unwrap().is_empty());
+    }
     #[tokio::test]
     async fn real_http_client_calls_published_workflow() {
         let (_dir, a, w) = fixture();
@@ -847,6 +874,7 @@ mod tests {
             node: "read".into(),
             questions: vec!["Approve?".into()],
             resume_task: None,
+            commit: None,
         });
         r.status = "waiting_review".into();
         a.store.save_run(1, &r).unwrap();

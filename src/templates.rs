@@ -250,7 +250,17 @@ fn public(c: Catalog) -> Value {
         .filter(|t| sections.iter().any(|s| s.id == t.section))
         .collect();
     templates.sort_by(|a, b| a.order.total_cmp(&b.order));
+    let templates: Vec<_> = templates.into_iter().map(|t| {let agents = agents(&t.workflow);let mut v = json!(t);v["agents"] = json!(agents);v}).collect();
     json!({"revision":c.revision,"default_locale":c.default_locale,"sections":sections,"templates":templates})
+}
+/// The runtimes a template's Agent nodes name. The card lists them beside the services, derived from
+/// the workflow so a hand-written tag can never hide a required agent. An Agent with no runtime uses
+/// the user's default agent and adds nothing.
+fn agents(w: &Workflow) -> Vec<String> {
+    let mut runtimes: Vec<_> = w.nodes.iter().filter(|n| n.kind == "Agent" && !n.runtime.is_empty()).map(|n| n.runtime.clone()).collect();
+    runtimes.sort();
+    runtimes.dedup();
+    runtimes
 }
 pub async fn read(State(a): State<App>, _u: User) -> ApiResult<Json<Value>> {
     let _g = LOCK.lock().await;
@@ -615,7 +625,7 @@ mod tests {
     fn seed_is_bilingual_valid_and_portable() {
         let c = seed();
         validate(&c).unwrap();
-        assert_eq!(c.templates.len(), 23);
+        assert_eq!(c.templates.len(), 24);
         for s in &c.sections {
             texts(&s.content.locales, false).unwrap();
         }
@@ -623,6 +633,66 @@ mod tests {
             texts(&t.content.locales, true).unwrap();
             ensure_publish(&t.content, &c.sections).unwrap();
         }
+    }
+    #[test]
+    fn feature_card_says_to_rewrite_the_prompts_written_for_the_example() {
+        let c = seed();
+        let t = c.templates.iter().find(|t| t.content.id == "feature-sdd").unwrap().published.as_ref().unwrap();
+        // The Specify prompt names the bundled feature, so the card cannot promise that a new Source is enough.
+        assert!(t.workflow.node("spec").unwrap().prompt.contains("README.md: deterministic ticket deduplication"));
+        for lang in ["it", "en"] {
+            assert!(t.locales[lang].setup.contains("Specify, Clarify") && t.locales[lang].setup.contains("Checklist"), "{lang}");
+        }
+    }
+    #[test]
+    fn cards_list_the_agent_runtimes_their_workflow_names() {
+        let listed = public(seed());
+        let agents = |id: &str| listed["templates"].as_array().unwrap().iter().find(|t| t["id"] == id).unwrap()["agents"].clone();
+        // The incident template's services are empty ("Local") but its triage Agent runs on Codex.
+        assert_eq!(agents("incident-sdd"), json!(["codex"]));
+        assert_eq!(agents("as-is-sdd-adversarial"), json!(["claude", "codex"]));
+        assert_eq!(agents("itsm-generic"), json!(["pi"]));
+        // Agents with no runtime use the user's default agent; a workflow with no Agent needs none.
+        assert_eq!(agents("feature-sdd"), json!([]));
+        assert_eq!(agents("local-ci-example"), json!([]));
+        for t in listed["templates"].as_array().unwrap() {
+            assert!(t["agents"].as_array().unwrap().iter().all(|rt| ["claude", "codex", "pi"].contains(&rt.as_str().unwrap())), "{}", t["id"]);
+        }
+    }
+    #[tokio::test]
+    async fn local_ci_example_is_offered_first_and_runs_without_an_agent() {
+        let catalog = seed();
+        let listed = public(catalog.clone());
+        assert_eq!(listed["sections"][0]["id"], "start");
+        assert!(listed["templates"].as_array().unwrap().iter().any(|t| t["id"] == "local-ci-example" && t["section"] == "start"));
+        let t = catalog.templates.iter().find(|t| t.content.id == "local-ci-example").unwrap().published.as_ref().unwrap();
+        // The catalog keeps its own copy of the bundled example; the project files are not copied.
+        let example: Workflow = serde_json::from_str(include_str!("../examples/local-ci/workflow.json")).unwrap();
+        assert_eq!(serde_json::to_value(&t.workflow).unwrap(), serde_json::to_value(example).unwrap());
+        assert!(t.workflow.nodes.iter().all(|n| n.kind != "Agent"));
+        for lang in ["it", "en"] {
+            assert!(t.locales[lang].setup.contains("Python 3") && t.locales[lang].setup.contains("API key"), "{lang}");
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let app = crate::tests::app(dir.path());
+        assert!(app.store.settings(1).unwrap().agents.values().all(|a| a.api_key.is_empty()));
+        let run = crate::engine::create(&app, 1, localized_workflow(t, "it").unwrap(), String::new(), None).await.unwrap();
+        crate::engine::launch(app.clone(), 1, run.id.clone()).unwrap();
+        let done = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+            loop {
+                let current = app.store.run(1, &run.id).unwrap();
+                if ["completed", "failed", "interrupted"].contains(&current.status.as_str()) || current.pending.is_some() {
+                    return current;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+        }).await.unwrap();
+        assert_eq!(done.states["tests"], "completed", "{} {:?} {:?}", done.status, done.error, done.pending);
+        assert_eq!(done.status, "completed");
+        assert!(done.outputs["tests"].summary.contains("OK"));
+        // A passing test step shows its last output lines in the Activity log too.
+        let events = app.store.events(1, &run.id, 0).unwrap();
+        assert!(events.iter().any(|e| e.node == "tests" && e.kind == "output" && e.text.starts_with("Test superati.") && e.text.contains("Ran 1 test") && e.text.ends_with("OK")));
     }
     #[test]
     fn servicenow_templates_publish_the_example_graphs_without_private_bindings() {
@@ -676,7 +746,7 @@ mod tests {
             title
         );
         c.templates[0].content.status = "archived".into();
-        assert_eq!(public(c.clone())["templates"].as_array().unwrap().len(), 22);
+        assert_eq!(public(c.clone())["templates"].as_array().unwrap().len(), 23);
         c.sections[0].content.status = "archived".into();
         assert!(
             public(c)["templates"]

@@ -484,7 +484,8 @@ pub async fn create(
     let dest = PathBuf::from(&old.workspace);
     let result: Result<Run> = async {
         let mut context: BTreeMap<String,String> = old.context.iter()
-            .filter(|(k,_)| k.starts_with("direct-source:") || k.starts_with("source-path:") || k.as_str()=="direct-primary")
+            // The continued run delivers the same project, so it keeps the state its first run started from.
+            .filter(|(k,_)| k.starts_with("direct-source:") || k.starts_with("source-path:") || k.as_str()=="direct-primary" || k.as_str()==crate::local_commit::START)
             .map(|(k,v)|(k.clone(),v.clone())).collect();
         for (source, root) in source_roots(&old) {
             if !context.contains_key(&format!("direct-source:{source}")) {
@@ -730,6 +731,7 @@ mod tests {
             node: "review".into(),
             questions: vec![],
             resume_task: None,
+            commit: None,
         });
         r.states.insert("review".into(), "waiting_review".into());
         r.outputs.remove("review");
@@ -1099,11 +1101,14 @@ runtime: "codex".into(),
         r.context
             .insert("direct-source:source".into(), r.workspace.clone());
         r.context.insert("direct-primary".into(), "source".into());
+        r.context.insert(crate::local_commit::START.into(), r#"{"75736572":"untracked|absent"}"#.into());
         app.store.save_run(1, &r).unwrap();
         let w = insert(&r);
         let p = preview(&app, 1, &r.id, &w, None).unwrap();
         let (fork, _) = create(&app, 1, &r.id, w, None, &p.token).await.unwrap();
         assert_eq!(fork.workflow.nodes[0].source_mode, "direct");
+        // Edits from before the first run stay out of the continued run's commit too.
+        assert_eq!(fork.context.get(crate::local_commit::START), r.context.get(crate::local_commit::START));
         assert_eq!(crate::source_access::paths(&fork.context), vec![std::fs::canonicalize(&root).unwrap()]);
         crate::source_access::validate_bindings(&app, &fork).unwrap();
         assert_eq!(

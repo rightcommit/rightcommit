@@ -3,8 +3,9 @@ name: rightcommit
 services:
   rightcommit:
     container_name: rightcommit
-    build: .
-    image: rightcommit:local
+    # Prebuilt image of this version (RIGHTCOMMIT_VERSION in .env picks another, or latest).
+    # To build from source instead: docker compose -f compose.yaml -f compose.build.yaml up -d --build
+    image: ghcr.io/rightcommit/rightcommit:${RIGHTCOMMIT_VERSION:-1.10.0}
     ports:
       - "127.0.0.1:${RIGHTCOMMIT_PORT:-8080}:8080"
     volumes:

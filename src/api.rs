@@ -525,18 +525,10 @@ fn public_settings(a: &App, u: &User, s: &Settings) -> Value {
                 .collect::<BTreeMap<_, _>>());
         }
         let inherited = agents::effective_agent_config(a, u.id, rt, cfg).unwrap_or_else(|_|cfg.clone());
-        let provider_env = agents::provider_environment_in_home(rt, &inherited, &home, u.id);
         v["agents"][rt]["uses_admin_api_key"] = json!(u.id != 1 && !inherited.api_key.is_empty() && (cfg.api_key.is_empty() || (rt == "pi" && cfg.multi_provider)));
-        let cloud = agents::uses_cloud_provider(&provider_env);
-        v["agents"][rt]["configured"] = json!(if rt=="pi" {
-            if cfg.multi_provider {crate::pi_providers::any_available_for_user(a,u.id,s,&home)}
-            else {crate::pi_providers::available(&inherited,&home) && (cfg.provider!="local" || !cfg.model.trim().is_empty())}
-        } else {
-            agents::has_provider_credentials(&provider_env) || (!cloud && match rt.as_str() {
-                "codex"=>home.join(".codex/auth.json").is_file() || (home.join(".codex/config.toml").is_file()&&home.join(".aws/credentials").is_file()),
-                "claude"=>home.join(".claude/.credentials.json").is_file(), _=>false,
-            })
-        });
+        // A local Pi model has no default: the settings screen also asks for it.
+        v["agents"][rt]["configured"] = json!(crate::agent_auth::has_credentials(a, u.id, rt, s, &home)
+            && (rt != "pi" || cfg.multi_provider || cfg.provider != "local" || !cfg.model.trim().is_empty()));
     }
     for (p, cfg) in &s.connections {
         v["connections"][p]["token"] = json!("");
@@ -891,6 +883,8 @@ pub(crate) async fn prepare_run(a: &App, uid: i64, b: StartRun, reserved_id: Opt
         w.execution = policy;
     }
     crate::templates::resolve_report_language(&mut w, b.locale.as_deref())?;
+    engine::validate_start(a, uid, &w)?;
+    crate::agent_auth::ensure_agents_configured(a, uid, &w).await?;
     let copy_limit = a.store.settings(uid)?.source_copy_limit_bytes()?;
     for (i, n) in w.nodes.iter().filter(|n| n.kind == "Source").enumerate() {
         if n.source_type == "folder"

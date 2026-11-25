@@ -30,7 +30,10 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   assert.equal(await page.locator('.node-tool-label').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(35, 61, 48)');
   await page.emulateMedia({colorScheme:'light'});
   await page.evaluate(()=>modal('Example','', '<button>Cancel</button><button class="primary">Save</button>'));
-  assert.equal(await page.locator('.modal-actions').evaluate(el=>getComputedStyle(el).justifyContent),'flex-end');
+  // Chrome 158 serializes the computed flex-end value as flow-end; both mean right-aligned here.
+  assert.match(await page.locator('.modal-actions').evaluate(el=>getComputedStyle(el).justifyContent),/^(flex|flow)-end$/);
+  const footer=await page.locator('.modal-actions').evaluate(el=>{const box=el.getBoundingClientRect(),last=el.lastElementChild.getBoundingClientRect();return {gap:box.right-parseFloat(getComputedStyle(el).paddingRight)-last.right}});
+  assert(Math.abs(footer.gap)<1,'footer actions are right-aligned: '+JSON.stringify(footer));
   await page.addScriptTag({content:fs.readFileSync('web/rag.js','utf8')});
   // Use keyword mode to verify navigation without starting indexing or downloading models.
   await page.evaluate(()=>openRag('examples','nested/folder'));

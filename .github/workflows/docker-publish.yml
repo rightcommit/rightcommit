@@ -1,0 +1,139 @@
+name: Publish Docker image
+on:
+  # Every release tag publishes ghcr.io/rightcommit/rightcommit:X.Y.Z, the image compose.yaml pulls.
+  push:
+    tags: ["v*"]
+  # Builds the image of an existing tag by hand, for example one released before this workflow.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag, for example v1.9.0
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/rightcommit/rightcommit
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+      latest: ${{ steps.version.outputs.latest }}
+    steps:
+      - name: Version and latest tag
+        id: version
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          [[ $TAG =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "::error::$TAG is not a release tag such as v1.9.0"; exit 1; }
+          tags=$(git ls-remote --tags --refs "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" 'v*' | sed 's#.*refs/tags/##')
+          grep -qxF "$TAG" <<<"$tags" || { echo "::error::Tag $TAG does not exist"; exit 1; }
+          # Only the newest plain X.Y.Z release moves latest, so rebuilding an older tag or a pre-release leaves it alone.
+          newest=$(grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' <<<"$tags" | sort -V | tail -n 1 || true)
+          if [[ $TAG == "$newest" ]]; then latest=true; else latest=false; fi
+          printf 'tag=%s\nversion=%s\nlatest=%s\n' "$TAG" "${TAG#v}" "$latest" >> "$GITHUB_OUTPUT"
+          printf 'Image %s:%s (latest: %s)\n' "$IMAGE" "${TAG#v}" "$latest"
+
+  # One native runner per platform: compiling rightcommit under QEMU emulation would take hours.
+  build:
+    needs: version
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            # Reuses the compiled dependencies that docker-check.yml caches on main.
+            cache-from: type=gha
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            cache-from: ""
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: refs/tags/${{ needs.version.outputs.tag }}
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # Pushed by digest only: the version and latest tags are set once both platforms pass.
+      - name: Build and push the image
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          # The checked-out tag, not the Git context of the event (main for a manual run).
+          context: .
+          platforms: linux/${{ matrix.arch }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ needs.version.outputs.version }}
+            org.opencontainers.image.licenses=Apache-2.0
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: ${{ matrix.cache-from }}
+      - name: Start the image and check the agents
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          docker run --detach --name rightcommit-check --publish 127.0.0.1:8080:8080 "$IMAGE@$DIGEST"
+          curl --fail --silent --show-error --retry 30 --retry-all-errors --retry-delay 2 http://127.0.0.1:8080/healthz
+          docker exec rightcommit-check sh -c 'uname -m && node --version && codex --version && claude --version && pi --version && cargo --version'
+      - name: Container log
+        if: always()
+        run: docker logs rightcommit-check || true
+      - name: Export the digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: mkdir -p "$RUNNER_TEMP/digests" && touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: digests-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: [version, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Tag the multi-platform image
+        working-directory: ${{ runner.temp }}/digests
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          LATEST: ${{ needs.version.outputs.latest }}
+          SOURCE: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          tags=(--tag "$IMAGE:$VERSION")
+          if [[ $LATEST == true ]]; then tags+=(--tag "$IMAGE:latest"); fi
+          images=()
+          for digest in *; do images+=("$IMAGE@sha256:$digest"); done
+          [[ ${#images[@]} == 2 ]] || { echo "::error::Expected 2 platform images, found ${#images[@]}"; exit 1; }
+          docker buildx imagetools create "${tags[@]}" \
+            --annotation "index:org.opencontainers.image.source=$SOURCE" \
+            --annotation "index:org.opencontainers.image.version=$VERSION" \
+            --annotation "index:org.opencontainers.image.description=rightcommit $VERSION, the image used by compose.yaml" \
+            "${images[@]}"
+          docker buildx imagetools inspect "$IMAGE:$VERSION"

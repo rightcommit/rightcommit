@@ -3,6 +3,117 @@
 What changed in each version of rightcommit. Releases are also listed on
 [GitHub](https://github.com/rightcommit/rightcommit/releases).
 
+## [1.10.0] - 2026-11-25
+
+### Added
+
+- Each release publishes a ready-made Docker image, `ghcr.io/rightcommit/rightcommit`, for
+  64-bit Intel, AMD and ARM computers, tagged with the version and `latest`.
+- `compose.build.yaml` builds the image from source instead:
+  `docker compose -f compose.yaml -f compose.build.yaml up -d --build`.
+- `RIGHTCOMMIT_VERSION` in `.env` picks the image version, or `latest`.
+- `rightcommit resetdb` returns an installation to the state of a first install: accounts,
+  settings and saved credentials, workflows, runs, schedules and each user's files are
+  deleted, the workflow template catalog returns to the built-in one, and the next visitor
+  creates the administrator account. The agents installed by `rightcommit setup` and the
+  folders in `sources` are kept. It lists what it will delete, asks you to type `resetdb` to
+  confirm (`--yes` for scripts), refuses while the app is running on the same data, and saves
+  a copy of the database in `data/system/backups` unless you pass `--no-backup`. With Docker:
+  `docker compose stop`, `docker compose run --rm rightcommit resetdb`, `docker compose up -d`.
+- [HOW_TO_RESET_RESTORE_RIGHTCOMMIT.md](https://github.com/rightcommit/rightcommit/blob/main/HOW_TO_RESET_RESTORE_RIGHTCOMMIT.md):
+  what `rightcommit resetdb` deletes and keeps, where its backup is and what it contains, how
+  to restore it on a native install and with Docker or Podman, and how to delete old backups.
+- The **Local CI example** is in the New workflow list, under **Get started**: a first run with
+  no agent and no API key, only Python 3, without importing a file.
+- **Confirm before commit**: a run stops at the local commit step and shows what the commit
+  will contain: each file with its line-by-line diff (new, modified and deleted files; binary
+  files named only), the edits that were already in the folder and stay out, and the command
+  and output of the run's local tests. The commit is created only after you approve, and only
+  if the files are still the ones shown; if they changed, the run asks again with the new
+  content. Rejecting stops the run without a commit. Building the preview does not change the
+  repository.
+
+### Changed
+
+- The Docker and Podman quick start downloads the image of your version instead of building it:
+  `docker compose up -d` takes a few minutes, depending on your connection, where the first
+  build took 10–30 minutes.
+- To update, get the new version, then run `docker compose pull` and `docker compose up -d`.
+  Your data stays in the `rightcommit-data` volume. An image you built before, `rightcommit:local`,
+  is no longer used and can be removed with `docker image rm rightcommit:local`. If your
+  `Dockerfile.tools` starts from it, see
+  [Tools for your project's tests](https://github.com/rightcommit/rightcommit/blob/main/INSTALL.md#tools-for-your-projects-tests).
+- The install guides give the same times: a few minutes for the download, 10–30 minutes for a
+  first build from source.
+- The README and the install guides no longer call Docker the fastest way to start. On a Mac
+  they point to Homebrew first, ready in a few seconds on Apple Silicon with macOS 15 or later;
+  Docker and Podman are the option for Windows, Linux or any system, and for a separate system
+  user for each account. INSTALL.md has a new "Which install to choose" section.
+- The configuration guides for Claude Code, Codex and Pi say up front what each agent needs: an
+  API key or provider configuration, or a local model for Pi. The Claude Code guide has a new
+  section on the administrator's own Claude subscription: a token created with
+  `claude setup-token` and set as `CLAUDE_CODE_OAUTH_TOKEN` in `.env`, used only for the
+  administrator's runs. It also explains why signing in to Claude Code on the computer is not
+  enough. Other users need an API key, and the app has no ChatGPT sign-in for Codex. The README
+  lists this for every agent.
+- Agent settings note that the Claude Code field takes a Claude Console API key, not a
+  subscription token, and that the administrator can use their own subscription through
+  `CLAUDE_CODE_OAUTH_TOKEN` in `.env`; the Codex field takes an OpenAI platform API key.
+  Errors about Claude subscription tokens are now also shown in English.
+- With a native install (Homebrew, crates.io or source), the footer reads "Native install ·
+  accounts share your system user" instead of "Development mode · File isolation disabled".
+- The README and the install guides now say what to run first: the Local CI example, which
+  needs no API key, then **Feature → SDD → Delivery** with one agent on the bundled Northstar
+  Helpdesk project, with where to find each result. They say which templates need GitHub,
+  Jira, Bitbucket, Confluence or ServiceNow, and how to use your own code from the `sources`
+  folder. The Local CI example says where to find the passing output: its last lines in the
+  Activity log, all of it in the step's report.
+
+- Starting a workflow whose agents have no credentials is refused before the run starts, with
+  the Agents to configure in Personal settings → Agents. Workflows that call no agent, skipped
+  Tasks and human-only Reviews need none.
+- A passing local test step shows the last lines of its output in the Activity log; the step's
+  report keeps the full output.
+- New commit nodes and the commit steps in the bundled workflows have **Confirm before commit**
+  on. Workflows saved earlier commit without asking, as before: turn the option on in the node
+  panel. On an existing installation the saved template catalog is not updated, so templates
+  already in your catalog keep committing without asking until you turn it on. Unattended runs
+  commit without waiting and say so in the step report.
+- A commit that cannot be split safely (a file changed both before and during the run,
+  submodules, nested repositories, conflicts) stops before the approval is asked.
+
+### Fixed
+
+- The local commit step commits only the changes made by the run. Edits that were already in
+  the project folder when the run started, whether staged, unstaged or untracked, stay out of
+  the commit and keep their state. If the run changed one of those files again, changed a
+  submodule or created a nested Git repository, the step stops before committing and lists the
+  files to review. When the Source is a subfolder of a larger repository, only that folder is
+  committed. Runs on a project folder used directly that were started before this update stop
+  at the commit step and ask you to commit manually.
+- Workflow template cards list the agents the workflow's Agent nodes require, so
+  **Incident → Living spec → Delivery** shows Codex.
+- Activity log events written by the server, such as the run's creation, stops, resumes and
+  server restarts, are shown in English in the English interface.
+- The local commit step's report is shown in the interface language, in the run's artifacts,
+  in Storage and in Edit and continue: the commit hash, the files committed, the edits left
+  out, that nothing was pushed, and the note that an Unattended run committed without asking.
+  The report now puts each of these on its own line. Reports saved by version 1.9.0 are shown
+  in English too.
+- The **Feature → SDD → Delivery** card says that another project also needs new Specify,
+  Clarify and Checklist prompts, not only a new Source.
+- Starting a workflow that has errors to fix, such as no start node, a node left unconfigured or
+  no Source, reports those errors first, also through A2A. The message about agents without
+  credentials now appears only for a workflow that could otherwise start.
+- Edges are redrawn when a comment changes size, whether you resize it or it grows to its
+  minimum height, so return routes no longer cross the comment.
+- The icon guide describes every icon the interface shows, including Import workflow, Stop,
+  Sign out, Workflow start, Skipped task, Restore, Open in a new tab, Expand folder, No agents
+  configured, and Move, Clear selection and Reorder topic in the workflow list.
+- Copying a file from the numbered file viewer, in run artifacts and in Storage, gives back
+  the file exactly: no newline is added to a file that does not end with one, a file that ends
+  with one keeps it, and line numbers stay out.
+
 ## [1.9.0] - 2026-11-23
 
 ### Added

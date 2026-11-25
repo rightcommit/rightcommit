@@ -4,10 +4,17 @@ rightcommit supports one or more users with separate settings and agent homes. P
 and Claude Code are available to every user. Before connecting an agent, read
 [Provider terms and permitted use](PROVIDER_TERMS.md).
 
-This guide installs rightcommit directly on your Mac, without Docker.
-For the quickest start with Docker, see [INSTALL.md](INSTALL.md); with Podman, see [INSTALL_PODMAN.md](INSTALL_PODMAN.md).
+This guide installs rightcommit directly on your Mac, without Docker. On a Mac, start with
+Homebrew: on Apple Silicon Macs with macOS 15 or later it installs rightcommit in a few seconds
+(see [step 2](#step-2--install-rightcommit)), and you don't need Docker Desktop.
+To run rightcommit in a container instead, the same way as on Windows and Linux and with a
+separate system user for each account, see [INSTALL.md](INSTALL.md) for Docker or
+[INSTALL_PODMAN.md](INSTALL_PODMAN.md) for Podman.
 
-**You need:** a Mac, an Internet connection and about 20 minutes.
+**You need:** a Mac, an Internet connection and about 20 minutes in all. That covers installing
+Homebrew if you don't have it, installing rightcommit, `rightcommit setup`, which downloads the
+agents, and creating your account. Installing rightcommit itself takes a few seconds on Apple
+Silicon Macs with macOS 15 or later, and several minutes on other Macs, where Homebrew compiles it.
 
 There are two ways:
 
@@ -75,8 +82,9 @@ The app keeps your data in this folder.
 rightcommit setup
 ```
 
-This downloads the AI agents (Codex, Claude Code, Pi). When it finishes you see
-**Configurazione completata** ("setup complete").
+This downloads the AI agents (Codex, Claude Code, Pi) with npm, at the versions pinned by
+this release, and the extensions Pi uses; how long it takes depends on your connection.
+When it finishes you see **Configurazione completata** ("setup complete").
 
 ### Step 5 — Start the app
 
@@ -130,10 +138,22 @@ directory to `~/rightcommit` too.
   cd ~/rightcommit
   rightcommit setup
   ```
+- **Start over with empty data:** stop the app (**Ctrl + C**), then run
 
-- **Your own project folders:** to work on folders from your computer, use a **Source** node
-  of type **Folder in /sources**. rightcommit creates `~/rightcommit/sources` at its first
-  start: put your projects there.
+  ```sh
+  cd ~/rightcommit
+  rightcommit resetdb
+  ```
+
+  It lists what it will delete and asks you to type `resetdb` to confirm. Accounts, settings
+  and saved credentials, workflows, runs and each user's files (agent sign-ins, run
+  workspaces) are deleted; the agents installed by `rightcommit setup` and your projects in
+  `sources` are kept. A copy of the database is saved in `data/system/backups` (skip it with
+  `--no-backup`). Every reset adds a new copy there (the database and its encryption key, in a
+  folder named `resetdb-` with the date and time); delete old copies yourself when you no longer
+  need them. At the next start, the first account you create becomes the administrator.
+  To restore the backup a reset leaves, or to delete old backups, see
+  [Reset and restore](HOW_TO_RESET_RESTORE_RIGHTCOMMIT.md).
 
 ## Open the app
 
@@ -142,7 +162,21 @@ directory to `~/rightcommit` too.
 3. Open **Agents and connections**, paste the API key of the agent you want to use
    (Codex, Claude Code or Pi) and save.
 
-Done: you can create your first workflow.
+Next: [your first run](INSTALL.md#your-first-run), on the two examples bundled with rightcommit.
+On a Mac without Docker:
+
+- The Local CI example's test needs Python 3: check that `python3 --version` works in
+  Terminal.
+- The test step of **Feature → SDD → Delivery** runs `cargo test`. If `cargo --version` doesn't
+  work in Terminal, install Rust from [rustup.rs](https://rustup.rs), then start rightcommit
+  again from a new Terminal window.
+
+## Your own project folders
+
+To work on folders from your computer, use a **Source** node of type **Folder in /sources**.
+rightcommit creates `~/rightcommit/sources` at its first start: put your projects there, for
+example with `git clone https://github.com/your-name/your-project.git ~/rightcommit/sources/your-project`.
+The steps in the app are in [Your own project folders](INSTALL.md#your-own-project-folders).
 
 ## Troubleshooting
 

@@ -4,10 +4,13 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'preview-settings-')),base='http://127.0.0.1:18163',sources=path.join(dir,'sources');fs.mkdirSync(sources);
  fs.writeFileSync(path.join(sources,'catalogo.md'),'# Catalogo leggibile\n'+'contenuto\n'.repeat(33000));
  fs.writeFileSync(path.join(sources,'large.txt'),'x'.repeat(1_500_000));
+ fs.writeFileSync(path.join(sources,'final-newline.txt'),'alpha\n\nbeta\n');
  const server=spawn(path.resolve('target/debug/rightcommit'),[],{env:{...process.env,NODO_DATA:dir,NODO_LISTEN:'127.0.0.1:18163',NODO_SOURCES:sources},stdio:'ignore'});let browser;
  try{
   for(let i=0;i<100;i++){try{if((await fetch(base+'/healthz')).ok)break}catch{}await new Promise(r=>setTimeout(r,100))}
   browser=await chromium.launch({channel:'chrome',headless:true});const page=await browser.newPage({viewport:{width:1440,height:1050}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
+  // English is the default since 1.1.0: start in Italian as this test checks both, and keep the no-agent startup notice out of the way.
+  await page.addInitScript(()=>{localStorage.setItem('rightcommit.hideAgentSetupNotice','true');if(!localStorage.getItem('nodo.language'))localStorage.setItem('nodo.language','it')});
   for(const file of ['app.js','i18n.js'])await page.route('**/'+file,r=>r.fulfill({path:path.resolve('web/'+file)}));
   const request=async(p,data,method=data?'POST':'GET')=>{const r=await page.request.fetch(base+'/api'+p,{method,headers:{'X-Nodo-Request':'1'},data});assert(r.ok(),await r.text());return r.json()};
   await request('/auth/register',{email:'previews@test.local',password:'temporary-previews-password'});assert.equal((await request('/settings')).file_preview_limit_mb,5);
@@ -20,7 +23,14 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   await page.evaluate(()=>openStorage('large.txt','sources'));assert((await page.locator('#dialog .modal-body').innerText()).includes('1 MB'));assert((await page.locator('#dialog .modal-body').innerText()).includes('Configurazioni personali'));
   assert.equal(await page.locator('#dialog .source-view').count(),0);await page.locator('#dialog .modal-head [data-action=close-dialog]').click();
   await settings();assert.equal(await page.locator('[name=file_preview_limit_mb]').inputValue(),'1');await page.locator('[name=file_preview_limit_mb]').fill('2');await page.locator('[data-action=save-settings]').click();await page.waitForFunction(()=>app.settings.file_preview_limit_mb===2);
-  await page.locator('#dialog .modal-head [data-action=close-dialog]').click();await page.evaluate(()=>openStorage('large.txt','sources'));await page.locator('#dialog .source-view').waitFor({state:'visible'});assert.equal((await page.locator('#dialog .source-view').innerText()).length,1_500_000);
+  await page.locator('#dialog .modal-head [data-action=close-dialog]').click();await page.evaluate(()=>openStorage('large.txt','sources'));await page.locator('#dialog .source-view').waitFor({state:'visible'});
+  // The numbered viewer gives back the file exactly, as text and when copied: no final newline is added
+  // to a file without one, a file that ends with one keeps it, and line numbers are left out.
+  await page.context().grantPermissions(['clipboard-read','clipboard-write'],{origin:base});
+  const copied=async()=>{await page.locator('#dialog .code-view').evaluate(view=>{const range=document.createRange();range.selectNodeContents(view);getSelection().removeAllRanges();getSelection().addRange(range)});await page.evaluate(()=>navigator.clipboard.writeText(''));await page.keyboard.press('ControlOrMeta+C');return page.evaluate(()=>navigator.clipboard.readText())};
+  assert.equal(await page.locator('#dialog .code-view').innerText(),'x'.repeat(1_500_000));assert.equal(await copied(),'x'.repeat(1_500_000));
+  await page.locator('#dialog .modal-head [data-action=close-dialog]').click();await page.evaluate(()=>openStorage('final-newline.txt','sources'));await page.locator('#dialog .code-view').waitFor({state:'visible'});
+  assert.equal(await page.locator('#dialog .code-view').innerText(),'alpha\n\nbeta\n');assert.equal(await copied(),'alpha\n\nbeta\n');
   const prefs=await request('/settings');const invalid=await page.request.put(base+'/api/settings',{headers:{'X-Nodo-Request':'1'},data:{...prefs,file_preview_limit_mb:0}});assert.equal(invalid.status(),400);assert.equal((await request('/settings')).file_preview_limit_mb,2);
   await page.reload();await page.locator('#app').waitFor({state:'visible'});await settings();assert.equal(await page.locator('[name=file_preview_limit_mb]').inputValue(),'2');
   await page.evaluate(()=>{const language=document.querySelector('[data-language]');language.value='en';language.dispatchEvent(new Event('change',{bubbles:true}))});

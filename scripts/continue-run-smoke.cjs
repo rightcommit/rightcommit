@@ -7,6 +7,8 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
  try{
   for(let i=0;i<100;i++){try{if((await fetch(base+'/healthz')).ok)break}catch{}await new Promise(r=>setTimeout(r,100))}
   browser=await chromium.launch({channel:'chrome',headless:true});const page=await browser.newPage({viewport:{width:1440,height:1050}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
+  // No agent is configured on this disposable server; keep the startup notice out of the way.
+  await page.addInitScript(()=>localStorage.setItem('rightcommit.hideAgentSetupNotice','true'));
   const call=async(url,body,status=200)=>{const r=await page.request.fetch(base+'/api'+url,{method:body?'POST':'GET',headers:{'X-Nodo-Request':'1'},data:body});assert.equal(r.status(),status,await r.text());return r.json()};
   await call('/auth/register',{email:'continue@test.local',password:'temporary-continue-password'});
   const w={id:'continue-test',name:'Continue test',description:'',entry:'first',nodes:[{id:'source',kind:'Source',title:'Source',source_type:'example',x:80,y:100},...['first','second','third'].map((id,i)=>({id,kind:'Connection',title:id,provider:'local',operation:'read_ticket',location:'README.md',x:300+i*200,y:100}))],edges:[{from:'source',to:'first',kind:'context'},{from:'first',to:'second',kind:'control'},{from:'second',to:'third',kind:'control'}]};

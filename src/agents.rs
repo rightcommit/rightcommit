@@ -616,6 +616,59 @@ pub async fn tool(
     let child = c.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
     finish(app, uid, bin, child, timeout, &s).await
 }
+/// Git with raw arguments and raw standard output, for paths that are not valid UTF-8
+/// or that the text cleanup of `tool` could alter. Errors carry the redacted stderr.
+pub async fn git_bytes(app: &App, uid: i64, cwd: &Path, args: &[&std::ffi::OsStr], timeout: u64) -> Result<Vec<u8>> {
+    let s = app.store.settings(uid)?;
+    let mut c = base_command(app, uid, "git", cwd)?;
+    c.args(args);
+    let child = c.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+    let _group = ProcessGroup(child.id().context("PID non disponibile")?);
+    let out = tokio::time::timeout(std::time::Duration::from_secs(timeout), child.wait_with_output())
+        .await
+        .context("Tempo massimo comando superato")??;
+    ensure!(
+        out.status.success(),
+        "git: {}",
+        redact_for_user(app, uid, &String::from_utf8_lossy(&out.stderr), &s).chars().take(4000).collect::<String>()
+    );
+    Ok(out.stdout)
+}
+/// Like `git_bytes`, with extra environment and at most `cap` bytes of output: a preview
+/// of a large diff stops reading and ends git instead of holding all of it in memory.
+/// Returns the output and whether it was cut.
+pub(crate) async fn git_with(app: &App, uid: i64, cwd: &Path, args: &[&std::ffi::OsStr], env: &[(&str, &std::ffi::OsStr)], timeout: u64, cap: usize) -> Result<(Vec<u8>, bool)> {
+    use tokio::io::AsyncReadExt;
+    let s = app.store.settings(uid)?;
+    let mut c = base_command(app, uid, "git", cwd)?;
+    c.args(args).envs(env.iter().copied());
+    let mut child = c.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+    let _group = ProcessGroup(child.id().context("PID non disponibile")?);
+    let (mut stdout, mut stderr) = (child.stdout.take().context("Output git non disponibile")?, child.stderr.take().context("Output git non disponibile")?);
+    let run = async {
+        let errors = tokio::spawn(async move {
+            let mut text = vec![];
+            let _ = stderr.read_to_end(&mut text).await;
+            text
+        });
+        let mut out = vec![];
+        (&mut stdout).take(u64::try_from(cap).unwrap_or(u64::MAX).saturating_add(1)).read_to_end(&mut out).await?;
+        let cut = out.len() > cap;
+        if cut {
+            out.truncate(cap);
+            let _ = child.start_kill();
+        }
+        let status = child.wait().await?;
+        let errors = errors.await.unwrap_or_default();
+        ensure!(
+            cut || status.success(),
+            "git: {}",
+            redact_for_user(app, uid, &String::from_utf8_lossy(&errors), &s).chars().take(4000).collect::<String>()
+        );
+        anyhow::Ok((out, cut))
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(timeout), run).await.context("Tempo massimo comando superato")?
+}
 /// Run a project command, such as the local test step, as the run user. It gets only the
 /// base environment: no agent configuration and no provider credentials.
 pub async fn project_tool(app: &App, uid: i64, cwd: &Path, argv: &[String], timeout: u64) -> Result<String> {

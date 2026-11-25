@@ -30,6 +30,22 @@ impl TestCommand {
     }
 }
 
+/// A passing run shows at most this much of its output in the Activity log; the report keeps all of it.
+const PASSING_LINES: usize = 20;
+const PASSING_CHARS: usize = 2000;
+/// The Activity log message for a passing test command: the last lines of its output, which hold the
+/// test runner's totals. The output is redacted like a failure's before it gets here.
+pub fn passing_summary(output: &str) -> String {
+    let lines: Vec<&str> = output.trim_end().lines().collect();
+    let tail = lines[lines.len().saturating_sub(PASSING_LINES)..].join("\n");
+    let count = tail.chars().count();
+    let tail: String = tail.chars().skip(count.saturating_sub(PASSING_CHARS)).collect();
+    if tail.trim().is_empty() {
+        return "Test superati: il comando non ha scritto output.".into();
+    }
+    format!("Test superati. Ultime righe dell’output (completo nel report del passo):\n{}", tail.trim_start_matches('\n'))
+}
+
 /// Order matters: a workspace with both Cargo.toml and package.json runs cargo test.
 const DETECTION: &[(&[&str], &[&str])] = &[
     (&["Cargo.toml"], &["cargo", "test"]),
@@ -124,6 +140,20 @@ mod tests {
         words.iter().map(|s| s.to_string()).collect()
     }
 
+    #[test]
+    fn passing_output_is_summarized_by_its_last_lines() {
+        let unittest = "test_add (test_calculator.CalculatorTest.test_add) ... ok\n\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK\n";
+        let summary = passing_summary(unittest);
+        assert!(summary.starts_with("Test superati. Ultime righe dell’output (completo nel report del passo):\ntest_add"));
+        assert!(summary.ends_with("Ran 1 test in 0.000s\n\nOK"));
+        let long: String = (1..=100).map(|i| format!("line {i}\n")).collect();
+        let summary = passing_summary(&long);
+        assert!(!summary.contains("line 80\n") && summary.contains("line 81\n") && summary.ends_with("line 100"));
+        let wide = format!("{}\nRan 3 tests\nOK", "x".repeat(10_000));
+        let summary = passing_summary(&wide);
+        assert!(summary.chars().count() < PASSING_CHARS + 100 && summary.ends_with("Ran 3 tests\nOK"));
+        assert_eq!(passing_summary(" \n\n"), "Test superati: il comando non ha scritto output.");
+    }
     #[test]
     fn cargo_wins_over_package_json() {
         let found = detected(&[("package.json", "{}"), ("Cargo.toml", "")]).unwrap();

@@ -63,21 +63,7 @@
 
 ## 快速开始
 
-### Docker
-
-启动 Docker，然后运行以下命令克隆并启动 rightcommit。
-
-```sh
-git clone https://github.com/rightcommit/rightcommit.git && cd rightcommit && docker compose up -d --build
-```
-
-首次构建可能需要几分钟。下载 ZIP 或查看分步说明，请参阅 [Docker 安装指南](INSTALL.md)。
-
-<!-- TODO: link Gitee
-如果在中国大陆访问 GitHub 较慢，可在 Gitee 镜像上线后使用该镜像。
--->
-
-### 在 macOS 上使用 Homebrew
+### macOS：Homebrew
 
 ```sh
 brew install rightcommit/tap/rightcommit
@@ -86,13 +72,32 @@ rightcommit setup
 rightcommit
 ```
 
-首次运行 `rightcommit setup` 以安装智能体。以后从同一目录启动 `rightcommit`，即可继续使用已有数据。参见 [macOS 安装指南](INSTALL_MAC.md)。
+在搭载 Apple 芯片且运行 macOS 15 或更高版本的 Mac 上，Homebrew 会在几秒内下载可直接使用的 rightcommit；在 Intel Mac 和较旧的 macOS 版本上，Homebrew 会从源码编译，需要几分钟。首次运行 `rightcommit setup` 以安装智能体。以后从同一目录启动 `rightcommit`，即可继续使用已有数据。参见 [macOS 安装指南](INSTALL_MAC.md)。如需清空数据、恢复到首次安装时的状态，请先停止应用，再运行 `rightcommit resetdb`；它会删除哪些数据、如何恢复它留下的备份，参见[重置与恢复指南](HOW_TO_RESET_RESTORE_RIGHTCOMMIT.md)。
+
+### Windows、Linux 或任意系统：Docker
+
+Docker 在 macOS、Windows 和 Linux 上运行包含所有依赖的 rightcommit，并让每个账户以独立的系统用户运行。启动 Docker，然后运行以下命令克隆并启动 rightcommit。
+
+```sh
+git clone https://github.com/rightcommit/rightcommit.git && cd rightcommit && docker compose up -d
+```
+
+首次启动会下载最新发布版本的预构建镜像（约 1 GB），所需时间取决于网络速度，通常为几分钟。下载 ZIP、查看分步说明或从源码构建镜像（首次需要 10–30 分钟），请参阅 [Docker 安装指南](INSTALL.md)。如何选择安装方式，请参阅[选择哪种安装方式](INSTALL.md#which-install-to-choose)。
+
+<!-- TODO: link Gitee
+如果在中国大陆访问 GitHub 较慢，可在 Gitee 镜像上线后使用该镜像。
+-->
 
 ### 运行第一个工作流
 
 1. 打开 <http://localhost:8080>。首个账户将成为管理员，此后默认关闭公开注册。
-2. 在 **Personal settings → Agents** 中，为至少一个智能体配置 API 密钥或已获授权的服务提供方，并选择模型。参见[配置智能体](#configuring-the-agents)。
-3. 点击 **+** 选择预置工作流，或向 **Project Manager** 描述所需的工作流。在画布上检查草稿，然后运行。
+2. **无需 API 密钥，先检查安装是否正常。** 点击 **+**，在 **Get started** 下选择 **Local CI example**，然后点击 **Save**。依次点击 **Run workflow** → **Run now** → **Start**。服务端会运行一个内置的小型 Python 项目的测试：选中 **Local CI tests**，Activity log 会显示输出的最后几行，可以看到 `Ran 1 test` 和 `OK`；在 **Artifacts** 下打开它的报告，可以查看完整输出。
+3. 在 **Personal settings → Agents** 中，为至少一个智能体配置 API 密钥或已获授权的服务提供方，并选择模型。参见[配置智能体](#configuring-the-agents)。
+4. **在内置示例上运行智能体。** 点击 **+**，选择 **Feature → SDD → Delivery**。它使用 rightcommit 内置的小型 Rust 项目 Northstar Helpdesk：智能体为一个功能编写规格说明和代码，服务端运行 `cargo test`，最后在本地提交，不会推送。按第 2 步的方式启动。运行暂停等待你审批时，点击 **Review required**。
+
+在 **+** 列表中，标记为 **Local** 的工作流不需要任何外部账户。如果卡片上还列出了某个智能体（例如 **Local · Codex**），也需要先配置该智能体：如果工作流用到的智能体尚未配置，启动时会被拒绝，并在提示中列出这些智能体。标记为 GitHub、Jira、Bitbucket、Confluence 或 ServiceNow 的工作流需要先连接对应服务，建议稍后再用。你也可以向 **Project Manager** 描述所需的工作流。完整步骤、每次运行的前提条件以及结果的查看位置，请参阅 [Your first run](INSTALL.md#your-first-run)。
+
+**使用你自己的代码。** 将项目复制或克隆到 `sources` 目录：使用 Docker 或 Podman 时是 `compose.yaml` 旁边的目录，使用 Homebrew 时是 `~/rightcommit/sources`。在工作流中选中 **Source** 节点，将 **Source type** 设为 **Folder in /sources**，然后选择你的项目。参见 [Your own project folders](INSTALL.md#your-own-project-folders)。
 
 如果觉得有用，欢迎[给 rightcommit 点 Star](https://github.com/rightcommit/rightcommit)。
 你也可以[报告问题或提出建议](https://github.com/rightcommit/rightcommit/issues)，或阅读[贡献指南](CONTRIBUTING.md)。
@@ -105,7 +110,7 @@ rightcommit
 ### AI 智能体说“完成了”，rightcommit 来验证。
 
 - **分配智能体和工具。** 为每个需要智能体的步骤选择 Claude Code、Codex 或 Pi。可以直接在画布上搭建流程，也可以编辑 Project Manager 生成的草稿。
-- **设置质量门禁。** 检查任务是否已关闭，[在服务端运行项目测试](guides/CONFIGURING_LOCAL_CI.md)，文件变更后要求重新测试。还可以在本地提交前加入智能体审查和人工审批。
+- **设置质量门禁。** 检查任务是否已关闭，[在服务端运行项目测试](guides/CONFIGURING_LOCAL_CI.md)，文件变更后要求重新测试。还可以加入智能体审查，并在创建本地提交前审批确切的文件和差异。
 - **查看每个产出文件。** 每个步骤都会记录它创建或修改的文件，包括版本、SHA-256 指纹，以及对支持的文本文件的逐行比对。可在运行视图中筛选、比较和下载这些文件。检查失败时可退回修改，并限制重试次数。
 - **从任意步骤重新开始。** 从你选择的节点继续已停止的运行。之前的结果、文件和智能体会话都会保留，只有该节点及其后续节点重新运行，已完成的工作不必再付一次费用。也可以修改工作流后在同一工作区中继续。
 - **决定何时介入。** 可选择交互、辅助或无人值守模式，暂停等待人工决定，再从保存的位置继续。
@@ -128,8 +133,8 @@ rightcommit 支持个人使用，也支持在组织内部部署并使用独立�
 
 | 指南 | 适用场景 |
 |---|---|
-| [INSTALL.md](INSTALL.md) | 在 macOS、Windows 和 Linux 上使用 Docker，含分步说明 |
 | [INSTALL_MAC.md](INSTALL_MAC.md) | 在 macOS 上无容器安装：Homebrew、crates.io 或源码 |
+| [INSTALL.md](INSTALL.md) | 在 macOS、Windows 和 Linux 上使用 Docker，含分步说明 |
 | [INSTALL_LINUX.md](INSTALL_LINUX.md) | 在 Linux 和 WSL2 上无容器安装：crates.io 或源码 |
 | [INSTALL_PODMAN.md](INSTALL_PODMAN.md) | 使用 Podman 替代 Docker |
 
@@ -138,7 +143,8 @@ rightcommit 支持个人使用，也支持在组织内部部署并使用独立�
 | 操作 | 命令 |
 |---|---|
 | 停止应用 | `docker compose down` |
-| 获取新版本后更新 | `docker compose up -d --build` |
+| 获取新版本后更新 | 先运行 `docker compose pull`，再运行 `docker compose up -d` |
+| 从源码构建镜像 | `docker compose -f compose.yaml -f compose.build.yaml up -d --build` |
 | 更换端口 | 在 `.env` 文件中设置 `RIGHTCOMMIT_PORT=9090`，然后运行 `docker compose up -d` |
 
 > [!WARNING]
@@ -152,13 +158,15 @@ rightcommit 支持个人使用，也支持在组织内部部署并使用独立�
 
 请先阅读[服务提供方条款与许可用途](PROVIDER_TERMS.md)。三个智能体都支持多用户使用。仍需遵守服务提供方的授权要求和凭据权限范围。
 
-| 指南 | 内容 |
-|---|---|
-| [HOW_TO_CONFIGURE_CLAUDECODE.md](HOW_TO_CONFIGURE_CLAUDECODE.md) | Claude Code：API 密钥、网关、Bedrock、Vertex、Foundry |
-| [HOW_TO_CONFIGURE_CODEX.md](HOW_TO_CONFIGURE_CODEX.md) | Codex：API 密钥和兼容的服务提供方配置 |
-| [HOW_TO_CONFIGURE_PI.md](HOW_TO_CONFIGURE_PI.md) | 将 Pi 与 Anthropic 或 OpenAI 搭配使用 |
-| [HOW_TO_CONFIGURE_PI_OPENROUTER.md](HOW_TO_CONFIGURE_PI_OPENROUTER.md) | 将 Pi 与 OpenRouter 搭配使用 |
-| [HOW_TO_CONFIGURE_PI_LOCAL.md](HOW_TO_CONFIGURE_PI_LOCAL.md) | 在 Pi 中使用本地模型（Ollama、LM Studio、vLLM） |
+设置中只接受 API 密钥，不接受 Claude Pro/Max 或 ChatGPT 订阅，应用也不提供 Claude 或 ChatGPT 账号登录。管理员可以在 `.env` 中设置令牌，让 Claude Code 使用自己的 Claude 订阅；其他用户都需要 API 密钥。
+
+| 智能体 | 所需凭据 | 指南 |
+|---|---|---|
+| Claude Code | Claude Console 中创建的 Anthropic API 密钥，或由管理员配置的网关、Amazon Bedrock、Google Vertex AI、Microsoft Foundry。仅管理员可以通过 `.env` 中的 `CLAUDE_CODE_OAUTH_TOKEN` 使用自己的 Claude 订阅；API 密钥字段会拒绝订阅令牌。 | [HOW_TO_CONFIGURE_CLAUDECODE.md](HOW_TO_CONFIGURE_CLAUDECODE.md) |
+| Codex | OpenAI 平台 API 密钥，或由管理员配置的兼容服务提供方。不支持 ChatGPT 登录。 | [HOW_TO_CONFIGURE_CODEX.md](HOW_TO_CONFIGURE_CODEX.md) |
+| Pi | 所选服务提供方（Anthropic、OpenAI、Gemini 等）的 API 密钥或云凭据。使用 Anthropic 时，Claude 订阅令牌会被拒绝。 | [HOW_TO_CONFIGURE_PI.md](HOW_TO_CONFIGURE_PI.md) |
+| 将 Pi 与 OpenRouter 搭配使用 | 账户中有余额的 OpenRouter API 密钥。 | [HOW_TO_CONFIGURE_PI_OPENROUTER.md](HOW_TO_CONFIGURE_PI_OPENROUTER.md) |
+| 在 Pi 中使用本地模型 | 在本机运行的模型服务器（Ollama、LM Studio、vLLM），无需 API 密钥。 | [HOW_TO_CONFIGURE_PI_LOCAL.md](HOW_TO_CONFIGURE_PI_LOCAL.md) |
 
 <a name="documentation"></a>
 
@@ -168,6 +176,7 @@ rightcommit 支持个人使用，也支持在组织内部部署并使用独立�
 |---|---|
 | [SPEC-DRIVEN-DEVELOPMENT.md](SPEC-DRIVEN-DEVELOPMENT.md) | 用 Spec Kit、OpenSpec 或其他任何框架进行规范驱动开发：完整示例和 SDD 工作流模板 |
 | [CHANGELOG.md](CHANGELOG.md) | 各版本的变更 |
+| [HOW_TO_RESET_RESTORE_RIGHTCOMMIT.md](HOW_TO_RESET_RESTORE_RIGHTCOMMIT.md) | 清空数据重新开始、恢复重置留下的备份、删除旧备份 |
 | [ADD_A_SKILL.md](ADD_A_SKILL.md) | 一次为 Claude Code、Codex 和 Pi 添加技能 |
 | [ADD-PI-PACKAGES.md](ADD-PI-PACKAGES.md) | 将 pi.dev 上的包添加到 Pi 智能体 |
 | [ADD-A-FRAMEWORK.md](ADD-A-FRAMEWORK.md) | 在自己的项目中使用 Spec Kit、OpenSpec 或其他框架 |

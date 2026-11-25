@@ -593,6 +593,10 @@ mod tests {
         std::fs::create_dir_all(app.sources.join("material")).unwrap();
         std::fs::write(app.sources.join("material/input.txt"), "test").unwrap();
         app.store.save_workflow(1, &workflow()).unwrap();
+        // The Task's Agent must have credentials for the run to start; the run stops at the Review first.
+        let mut settings = Settings::default();
+        settings.agents.insert("codex".into(), AgentConfig {api_key: "scheduled-test-key".into(), ..Default::default()});
+        app.store.save_settings(1, &settings).unwrap();
         let mut c = config("minutes", "2026-01-01T09:00");
         c.every = 1;
         let s = create(State(app.clone()), user(1), Json(c))

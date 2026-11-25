@@ -206,6 +206,56 @@
           }
         }
       }
+    },
+    {
+      "id": "start",
+      "order": -1,
+      "status": "published",
+      "locales": {
+        "it": {
+          "title": "Per iniziare",
+          "description": "Una prima esecuzione senza agenti né API key.",
+          "setup": "",
+          "objective": "",
+          "prerequisites": "",
+          "outputs": "",
+          "limitations": ""
+        },
+        "en": {
+          "title": "Get started",
+          "description": "A first run with no agent and no API key.",
+          "setup": "",
+          "objective": "",
+          "prerequisites": "",
+          "outputs": "",
+          "limitations": ""
+        }
+      },
+      "published": {
+        "id": "start",
+        "order": -1,
+        "status": "published",
+        "locales": {
+          "it": {
+            "title": "Per iniziare",
+            "description": "Una prima esecuzione senza agenti né API key.",
+            "setup": "",
+            "objective": "",
+            "prerequisites": "",
+            "outputs": "",
+            "limitations": ""
+          },
+          "en": {
+            "title": "Get started",
+            "description": "A first run with no agent and no API key.",
+            "setup": "",
+            "objective": "",
+            "prerequisites": "",
+            "outputs": "",
+            "limitations": ""
+          }
+        }
+      }
     }
   ],
   "templates": [
@@ -3661,6 +3711,7 @@
             "mcp_tools": [],
             "provider": "local",
             "operation": "commit",
+            "confirm_commit": true,
             "outcomes": [],
             "require_tests": false,
             "require_tasks_closed": false,
@@ -3796,7 +3847,7 @@
         "it": {
           "title": "Funzionalità → SDD → Delivery",
           "description": "Spec Kit ufficiale, agenti reali, review umane e test locali. Il nodo commit non effettua push, merge o deploy. Configura Connection per sistemi remoti.",
-          "setup": "Esempio pronto su Northstar Helpdesk. Per un altro progetto cambia il nodo Source e indica obiettivo e vincoli all'avvio.",
+          "setup": "Esempio pronto su Northstar Helpdesk. Per un altro progetto cambia il nodo Source e riscrivi i prompt di Specify, Clarify e Checklist, che descrivono la funzionalità di Northstar. Indica obiettivo e vincoli all'avvio.",
           "objective": "",
           "prerequisites": "",
           "outputs": "",
@@ -3805,7 +3856,7 @@
         "en": {
           "title": "Feature → SDD → Delivery",
           "description": "Official Spec Kit, real agents, human reviews and local tests. The commit node does not push, merge or deploy. Configure Connection for remote systems.",
-          "setup": "Ready to use with Northstar Helpdesk. For another project, change the Source node and provide goals and constraints at startup.",
+          "setup": "Ready to use with Northstar Helpdesk. For another project, change the Source node and rewrite the Specify, Clarify and Checklist prompts, which describe the Northstar feature. Give goals and constraints at startup.",
           "objective": "",
           "prerequisites": "",
           "outputs": "",
@@ -4475,6 +4526,7 @@
               "mcp_tools": [],
               "provider": "local",
               "operation": "commit",
+              "confirm_commit": true,
               "outcomes": [],
               "require_tests": false,
               "require_tasks_closed": false,
@@ -4610,7 +4662,7 @@
           "it": {
             "title": "Funzionalità → SDD → Delivery",
             "description": "Spec Kit ufficiale, agenti reali, review umane e test locali. Il nodo commit non effettua push, merge o deploy. Configura Connection per sistemi remoti.",
-            "setup": "Esempio pronto su Northstar Helpdesk. Per un altro progetto cambia il nodo Source e indica obiettivo e vincoli all'avvio.",
+            "setup": "Esempio pronto su Northstar Helpdesk. Per un altro progetto cambia il nodo Source e riscrivi i prompt di Specify, Clarify e Checklist, che descrivono la funzionalità di Northstar. Indica obiettivo e vincoli all'avvio.",
             "objective": "",
             "prerequisites": "",
             "outputs": "",
@@ -4619,7 +4671,7 @@
           "en": {
             "title": "Feature → SDD → Delivery",
             "description": "Official Spec Kit, real agents, human reviews and local tests. The commit node does not push, merge or deploy. Configure Connection for remote systems.",
-            "setup": "Ready to use with Northstar Helpdesk. For another project, change the Source node and provide goals and constraints at startup.",
+            "setup": "Ready to use with Northstar Helpdesk. For another project, change the Source node and rewrite the Specify, Clarify and Checklist prompts, which describe the Northstar feature. Give goals and constraints at startup.",
             "objective": "",
             "prerequisites": "",
             "outputs": "",
@@ -5436,6 +5488,7 @@
             "mcp_tools": [],
             "provider": "local",
             "operation": "commit",
+            "confirm_commit": true,
             "outcomes": [],
             "require_tests": false,
             "require_tasks_closed": false,
@@ -6430,6 +6483,7 @@
               "mcp_tools": [],
               "provider": "local",
               "operation": "commit",
+              "confirm_commit": true,
               "outcomes": [],
               "require_tests": false,
               "require_tasks_closed": false,
@@ -16188,6 +16242,166 @@
         "created": 0,
         "updated": 0,
         "version": 2
+      }
+    },
+    {
+      "id": "local-ci-example",
+      "section": "start",
+      "services": [],
+      "workflow": {
+        "id": "local-ci-example",
+        "name": "Local CI example",
+        "description": "Run a bundled Python test without a cloud account or model credentials.",
+        "entry": "tests",
+        "nodes": [
+          {
+            "id": "source",
+            "kind": "Source",
+            "title": "Bundled calculator project",
+            "x": 120,
+            "y": 180,
+            "source_type": "examples",
+            "source_mode": "copy",
+            "location": "local-ci/project"
+          },
+          {
+            "id": "tests",
+            "kind": "Connection",
+            "title": "Local CI tests",
+            "x": 420,
+            "y": 180,
+            "provider": "local",
+            "operation": "test",
+            "test_command": "python3 -m unittest -v test_calculator"
+          }
+        ],
+        "edges": [
+          {
+            "from": "source",
+            "to": "tests",
+            "kind": "context",
+            "outcome": ""
+          }
+        ]
+      },
+      "order": 0,
+      "status": "published",
+      "locales": {
+        "it": {
+          "title": "Esempio di CI locale",
+          "description": "Esegue sul server il test di un piccolo progetto Python incluso negli esempi e mostra il risultato nel Registro attività.",
+          "setup": "Non serve nessun agente né API key: solo Python 3 dove gira rightcommit (l’immagine Docker lo include). Avvia l’esecuzione e apri il Registro attività. Guida: guides/CONFIGURING_LOCAL_CI.md.",
+          "objective": "Vedere un’esecuzione completa e il risultato di un passo di CI locale prima di configurare un agente.",
+          "prerequisites": "Python 3 sul server. Nessun agente, API key o connettore.",
+          "outputs": "L’esito del test nel Registro attività e nel report del passo.",
+          "limitations": "Esegue solo il test dell’esempio. Per vedere un errore imposta il comando di test python3 -m unittest -v demo_failure. Per il tuo progetto cambia il Source e il comando di test.",
+          "nodes": {
+            "source": {
+              "title": "Progetto calcolatrice di esempio"
+            },
+            "tests": {
+              "title": "Test della CI locale"
+            }
+          }
+        },
+        "en": {
+          "title": "Local CI example",
+          "description": "Runs the test of a small bundled Python project on the server and shows the result in the Activity log.",
+          "setup": "Needs no agent and no API key: only Python 3 where rightcommit runs (the Docker image includes it). Start the run, then open the Activity log. Guide: guides/CONFIGURING_LOCAL_CI.md.",
+          "objective": "See a complete run and the result of a Local CI step before configuring an agent.",
+          "prerequisites": "Python 3 on the server. No agent, API key or connector.",
+          "outputs": "The test result in the Activity log and in the step's report.",
+          "limitations": "Runs only the bundled example test. To see a failure, set the test command to python3 -m unittest -v demo_failure. For your own project, change the Source and the test command."
+        }
+      },
+      "tags": [],
+      "source_locale": "en",
+      "translation_status": "reviewed",
+      "created": 0,
+      "updated": 0,
+      "version": 1,
+      "provenance": {
+        "type": "bundled"
+      },
+      "published": {
+        "id": "local-ci-example",
+        "section": "start",
+        "services": [],
+        "workflow": {
+          "id": "local-ci-example",
+          "name": "Local CI example",
+          "description": "Run a bundled Python test without a cloud account or model credentials.",
+          "entry": "tests",
+          "nodes": [
+            {
+              "id": "source",
+              "kind": "Source",
+              "title": "Bundled calculator project",
+              "x": 120,
+              "y": 180,
+              "source_type": "examples",
+              "source_mode": "copy",
+              "location": "local-ci/project"
+            },
+            {
+              "id": "tests",
+              "kind": "Connection",
+              "title": "Local CI tests",
+              "x": 420,
+              "y": 180,
+              "provider": "local",
+              "operation": "test",
+              "test_command": "python3 -m unittest -v test_calculator"
+            }
+          ],
+          "edges": [
+            {
+              "from": "source",
+              "to": "tests",
+              "kind": "context",
+              "outcome": ""
+            }
+          ]
+        },
+        "order": 0,
+        "status": "published",
+        "locales": {
+          "it": {
+            "title": "Esempio di CI locale",
+            "description": "Esegue sul server il test di un piccolo progetto Python incluso negli esempi e mostra il risultato nel Registro attività.",
+            "setup": "Non serve nessun agente né API key: solo Python 3 dove gira rightcommit (l’immagine Docker lo include). Avvia l’esecuzione e apri il Registro attività. Guida: guides/CONFIGURING_LOCAL_CI.md.",
+            "objective": "Vedere un’esecuzione completa e il risultato di un passo di CI locale prima di configurare un agente.",
+            "prerequisites": "Python 3 sul server. Nessun agente, API key o connettore.",
+            "outputs": "L’esito del test nel Registro attività e nel report del passo.",
+            "limitations": "Esegue solo il test dell’esempio. Per vedere un errore imposta il comando di test python3 -m unittest -v demo_failure. Per il tuo progetto cambia il Source e il comando di test.",
+            "nodes": {
+              "source": {
+                "title": "Progetto calcolatrice di esempio"
+              },
+              "tests": {
+                "title": "Test della CI locale"
+              }
+            }
+          },
+          "en": {
+            "title": "Local CI example",
+            "description": "Runs the test of a small bundled Python project on the server and shows the result in the Activity log.",
+            "setup": "Needs no agent and no API key: only Python 3 where rightcommit runs (the Docker image includes it). Start the run, then open the Activity log. Guide: guides/CONFIGURING_LOCAL_CI.md.",
+            "objective": "See a complete run and the result of a Local CI step before configuring an agent.",
+            "prerequisites": "Python 3 on the server. No agent, API key or connector.",
+            "outputs": "The test result in the Activity log and in the step's report.",
+            "limitations": "Runs only the bundled example test. To see a failure, set the test command to python3 -m unittest -v demo_failure. For your own project, change the Source and the test command."
+          }
+        },
+        "tags": [],
+        "source_locale": "en",
+        "translation_status": "reviewed",
+        "created": 0,
+        "updated": 0,
+        "version": 1,
+        "provenance": {
+          "type": "bundled"
+        }
       }
     }
   ]

@@ -7,6 +7,7 @@ on:
       - Dockerfile
       - .dockerignore
       - compose.yaml
+      - compose.build.yaml
       - Cargo.toml
       - Cargo.lock
       - src/**
@@ -21,6 +22,7 @@ on:
       - Dockerfile
       - .dockerignore
       - compose.yaml
+      - compose.build.yaml
       - Cargo.toml
       - Cargo.lock
       - src/**
@@ -36,6 +38,7 @@ permissions:
   contents: read
 
 # Docker is how Windows users run rightcommit, so the image is checked whenever its files change.
+# It is built from source here; docker-publish.yml publishes the release images that compose.yaml pulls.
 jobs:
   docker:
     runs-on: ubuntu-24.04
@@ -43,8 +46,8 @@ jobs:
       - uses: actions/checkout@v6
       - name: Free disk space
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
-      - name: Check compose.yaml
-        run: docker compose config --quiet
+      - name: Check compose.yaml and compose.build.yaml
+        run: docker compose config --quiet && docker compose -f compose.yaml -f compose.build.yaml config --quiet
       - uses: docker/setup-buildx-action@v4
       - name: Build the image
         uses: docker/build-push-action@v7

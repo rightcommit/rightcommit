@@ -70,18 +70,7 @@ Start from more than 20 ready-made workflows, or describe a new one to the Proje
 
 ## Quickstart
 
-### Docker
-
-Start Docker, then run the command below to clone and start rightcommit.
-
-```sh
-git clone https://github.com/rightcommit/rightcommit.git && cd rightcommit && docker compose up -d --build
-```
-
-The first build can take several minutes. For a ZIP download or step-by-step instructions, see the
-[Docker install guide](INSTALL.md).
-
-### Homebrew on macOS
+### macOS: Homebrew
 
 ```sh
 brew install rightcommit/tap/rightcommit
@@ -90,17 +79,58 @@ rightcommit setup
 rightcommit
 ```
 
+On Apple Silicon Macs with macOS 15 or later, Homebrew downloads rightcommit ready to use in a
+few seconds; on Intel Macs and older macOS versions it compiles it, which takes several minutes.
 Run `rightcommit setup` once to install the agents. Launch `rightcommit` from the same folder
 on future starts to reuse your data. See the [macOS install guide](INSTALL_MAC.md).
+To start over with empty data, stop the app and run `rightcommit resetdb`; see
+[Reset and restore](HOW_TO_RESET_RESTORE_RIGHTCOMMIT.md) for what it deletes and how to
+restore its backup.
+
+### Windows, Linux or any system: Docker
+
+Docker runs rightcommit on macOS, Windows and Linux with everything included, and runs each
+account as a separate system user. Start Docker, then run the command below to clone and start
+rightcommit.
+
+```sh
+git clone https://github.com/rightcommit/rightcommit.git && cd rightcommit && docker compose up -d
+```
+
+The first start downloads the prebuilt image of the latest release (about 1 GB), so it takes a few
+minutes, depending on your connection. For a ZIP download, step-by-step instructions or a build
+from source (10–30 minutes the first time), see the [Docker install guide](INSTALL.md).
+To choose between the install methods, see [Which install to choose](INSTALL.md#which-install-to-choose).
 
 ### Run your first workflow
 
 1. Open <http://localhost:8080>. The first account becomes the administrator, and public sign-up
    closes by default.
-2. In **Personal settings → Agents**, configure an API key or authorized provider for at least
+2. **Check the install, without an API key.** Press **+**, choose **Local CI example** under
+   **Get started** and press **Save**. Press **Run workflow** → **Run now** → **Start**. The
+   server runs the tests of a small bundled Python project: select **Local CI tests**, and the
+   Activity log shows the last lines of the output, with `Ran 1 test` and `OK`. Its report under
+   **Artifacts** has all of it.
+3. In **Personal settings → Agents**, configure an API key or authorized provider for at least
    one agent and pick a model. See [Configuring the agents](#configuring-the-agents).
-3. Press **+** to pick a ready-made workflow, or describe one to the **Project Manager**. Check
-   the draft on the canvas and run it.
+4. **Run an agent on the bundled example.** Press **+** and choose **Feature → SDD → Delivery**.
+   It works on Northstar Helpdesk, a small Rust project bundled with rightcommit: the agent
+   writes the specification and the code for a feature, the server runs `cargo test`, and the
+   run ends with a local commit, with no push. Start it as in step 2. When it stops for your
+   approval, press **Review required**.
+
+In the **+** list, the workflows tagged **Local** need no external account. When a card also
+names an agent, such as **Local · Codex**, that agent must be configured too: a workflow whose
+agents are not configured is refused at start, with a message naming them. Those tagged GitHub,
+Jira, Bitbucket, Confluence or ServiceNow need that service connected first, so keep them for
+later. You can also describe a workflow to the **Project Manager**.
+[Your first run](INSTALL.md#your-first-run) has every step, what each run needs and where to find
+the results.
+
+**Use your own code.** Copy or clone your project into the `sources` folder: the one next to
+`compose.yaml` with Docker or Podman, `~/rightcommit/sources` with Homebrew. In the workflow,
+select the **Source** node, set **Source type** to **Folder in /sources** and pick your project.
+See [Your own project folders](INSTALL.md#your-own-project-folders).
 
 **[Star rightcommit](https://github.com/rightcommit/rightcommit)** if you find it useful.
 [Report a bug or suggest an idea](https://github.com/rightcommit/rightcommit/issues),
@@ -114,7 +144,7 @@ or see [how to contribute](CONTRIBUTING.md).
 ### AI agents say done. rightcommit proves it.
 
 - **Assign agents and tools.** Pick Claude Code, Codex or Pi for each agent step. Build the workflow on the canvas or edit a draft from Project Manager.
-- **Set quality gates.** Require closed tasks, [run your project's tests on the server](guides/CONFIGURING_LOCAL_CI.md) and require fresh test results if files change. Add agent reviews and human approval before a local commit.
+- **Set quality gates.** Require closed tasks, [run your project's tests on the server](guides/CONFIGURING_LOCAL_CI.md) and require fresh test results if files change. Add agent reviews, and approve the exact files and diff before the local commit is created.
 - **Inspect every artifact.** Each step records the files it creates or changes, with versions, SHA-256 fingerprints and line-by-line diffs for supported text files. Filter, compare and download them from the run view. Route failed checks back for a limited number of retries.
 - **Restart from any step.** Continue a stopped run from the node you choose. Earlier results, files and agent sessions are kept, so only that node and the ones after it run again, and you don't pay twice for work already done. You can also edit the workflow and continue in the same workspace.
 - **Choose when to intervene.** Run in interactive, assisted or unattended mode. Pause for human decisions and resume from the saved state.
@@ -143,8 +173,8 @@ and do not imply affiliation or endorsement.
 
 | Guide | For |
 |---|---|
-| [INSTALL.md](INSTALL.md) | Docker on macOS, Windows and Linux, step by step |
 | [INSTALL_MAC.md](INSTALL_MAC.md) | macOS without containers: Homebrew, crates.io or source |
+| [INSTALL.md](INSTALL.md) | Docker on macOS, Windows and Linux, step by step |
 | [INSTALL_LINUX.md](INSTALL_LINUX.md) | Linux and WSL2 without containers: crates.io or source |
 | [INSTALL_PODMAN.md](INSTALL_PODMAN.md) | Podman instead of Docker |
 
@@ -153,7 +183,8 @@ and do not imply affiliation or endorsement.
 | What | Command |
 |---|---|
 | Stop the app | `docker compose down` |
-| Update after getting a new version | `docker compose up -d --build` |
+| Update after getting a new version | `docker compose pull`, then `docker compose up -d` |
+| Build the image from source | `docker compose -f compose.yaml -f compose.build.yaml up -d --build` |
 | Use another port | set `RIGHTCOMMIT_PORT=9090` in a `.env` file, then `docker compose up -d` |
 
 > [!WARNING]
@@ -167,13 +198,17 @@ By default, Docker Compose binds the app to localhost.
 Start with [Provider terms and permitted use](PROVIDER_TERMS.md). All three agents support multiple users;
 provider authorization and credential scope still apply.
 
-| Guide | Covers |
-|---|---|
-| [HOW_TO_CONFIGURE_CLAUDECODE.md](HOW_TO_CONFIGURE_CLAUDECODE.md) | Claude Code: API keys, gateways, Bedrock, Vertex, Foundry |
-| [HOW_TO_CONFIGURE_CODEX.md](HOW_TO_CONFIGURE_CODEX.md) | Codex: API keys and compatible provider configuration |
-| [HOW_TO_CONFIGURE_PI.md](HOW_TO_CONFIGURE_PI.md) | Pi with Anthropic or OpenAI |
-| [HOW_TO_CONFIGURE_PI_OPENROUTER.md](HOW_TO_CONFIGURE_PI_OPENROUTER.md) | Pi with OpenRouter |
-| [HOW_TO_CONFIGURE_PI_LOCAL.md](HOW_TO_CONFIGURE_PI_LOCAL.md) | Pi with a local model (Ollama, LM Studio, vLLM) |
+The settings take API keys, not Claude Pro/Max or ChatGPT subscriptions, and the app has no
+Claude or ChatGPT sign-in. The administrator can run Claude Code on their own Claude subscription
+with a token in `.env`; every other user needs an API key.
+
+| Agent | What you need | Guide |
+|---|---|---|
+| Claude Code | An Anthropic API key from the Claude Console, or a gateway, Amazon Bedrock, Google Vertex AI or Microsoft Foundry set up by the administrator. Only the administrator can use their own Claude subscription, through `CLAUDE_CODE_OAUTH_TOKEN` in `.env`; the API key field refuses subscription tokens. | [HOW_TO_CONFIGURE_CLAUDECODE.md](HOW_TO_CONFIGURE_CLAUDECODE.md) |
+| Codex | An OpenAI platform API key, or a compatible provider set up by the administrator. No ChatGPT sign-in. | [HOW_TO_CONFIGURE_CODEX.md](HOW_TO_CONFIGURE_CODEX.md) |
+| Pi | An API key or cloud credentials for the selected provider (Anthropic, OpenAI, Gemini and more). With Anthropic, Claude subscription tokens are refused. | [HOW_TO_CONFIGURE_PI.md](HOW_TO_CONFIGURE_PI.md) |
+| Pi with OpenRouter | An OpenRouter API key with credit. | [HOW_TO_CONFIGURE_PI_OPENROUTER.md](HOW_TO_CONFIGURE_PI_OPENROUTER.md) |
+| Pi with a local model | A model server on your computer (Ollama, LM Studio, vLLM). No API key. | [HOW_TO_CONFIGURE_PI_LOCAL.md](HOW_TO_CONFIGURE_PI_LOCAL.md) |
 
 ## Documentation
 
@@ -181,6 +216,7 @@ provider authorization and credential scope still apply.
 |---|---|
 | [SPEC-DRIVEN-DEVELOPMENT.md](SPEC-DRIVEN-DEVELOPMENT.md) | Run spec-driven development with Spec Kit, OpenSpec or any other framework: a worked example and the SDD workflow templates |
 | [CHANGELOG.md](CHANGELOG.md) | What changed in each version |
+| [HOW_TO_RESET_RESTORE_RIGHTCOMMIT.md](HOW_TO_RESET_RESTORE_RIGHTCOMMIT.md) | Start over with empty data, restore the backup a reset leaves, delete old backups |
 | [ADD_A_SKILL.md](ADD_A_SKILL.md) | Give a skill to Claude Code, Codex and Pi in one step |
 | [ADD-PI-PACKAGES.md](ADD-PI-PACKAGES.md) | Add packages from pi.dev to the Pi agent |
 | [ADD-A-FRAMEWORK.md](ADD-A-FRAMEWORK.md) | Use Spec Kit, OpenSpec or another framework with your own project |

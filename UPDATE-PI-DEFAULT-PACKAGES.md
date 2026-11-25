@@ -45,7 +45,7 @@ python3 scripts/bundle-assets.py
 
 ```sh
 cargo test --locked
-docker compose up -d --build
+docker compose -f compose.yaml -f compose.build.yaml up -d --build
 ```
 
 Then run a short workflow with Pi and check in the Activity Log that `web_fetch`,
@@ -56,7 +56,8 @@ Then run a short workflow with Pi and check in the Activity Log that `web_fetch`
 Commit `pi-extensions/package.json`, `pi-extensions/package-lock.json`,
 `distribution/assets.json` and, if you changed it, `pi-extensions/web-fetch.ts`.
 
-- **Docker and Podman** users get the update when they rebuild (`up -d --build`).
+- **Docker and Podman** users get the update with the next release image (`docker compose pull`,
+  then `docker compose up -d`), or at their next build from source.
 - **Local installations** get it with the next release (`brew upgrade rightcommit` or
   `cargo install`, from source `git pull`), followed by `rightcommit setup`.
 

@@ -83,6 +83,9 @@ pub struct Node {
     pub api_headers: String,
     pub api_body: String,
     pub api_encoding: String,
+    /// Local commit Connection only: pause and show the exact commit for approval first.
+    /// Missing in workflows saved before the option, which therefore commit without pausing.
+    pub confirm_commit: bool,
     pub outcomes: Vec<String>,
     pub require_tests: bool,
     pub require_tasks_closed: bool,
@@ -345,6 +348,9 @@ pub struct Pending {
     pub node: String,
     pub questions: Vec<String>,
     pub resume_task: Option<String>,
+    /// Local commit confirmation: what the commit will contain, shown with the approval.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit: Option<crate::local_commit::Preview>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 #[serde(default)]

@@ -124,7 +124,10 @@ emit(dict(type='result',result='<nodo_result>'+json.dumps(dict(status='completed
    // Long content scrolls inside its own area: the version, mode and path controls stay in place.
    assert.deepEqual(await page.evaluate(()=>{const box=document.querySelector('#dialog .artifact-view'),bar=document.querySelector('#dialog .artifact-toolbar'),body=document.querySelector('#dialog .modal-body'),filler=document.createElement('div');filler.style.height='3000px';box.append(filler);const top=bar.getBoundingClientRect().top;box.scrollTop=1500;body.scrollTop=1500;const result=[box.scrollTop,body.scrollTop,bar.getBoundingClientRect().top===top,document.querySelector('#artifact-location').getBoundingClientRect().bottom<=box.getBoundingClientRect().top];filler.remove();return result}),[1500,0,true,true]);
    assert.equal(await page.locator('#dialog .code-line').first().evaluate(el=>getComputedStyle(el,'::before').content),'"1"');
-   assert.equal(await page.locator('#dialog pre.code-view').innerText(),'import sys\n\ndef main():\n    return 0\n');await closeArtifact();
+   // Copying the whole view gives back the file exactly: line numbers are left out and the final newline is kept.
+   await page.context().grantPermissions(['clipboard-read','clipboard-write'],{origin:base});
+   const copied=async()=>{await page.locator('#dialog pre.code-view').evaluate(view=>{const range=document.createRange();range.selectNodeContents(view);getSelection().removeAllRanges();getSelection().addRange(range)});await page.evaluate(()=>navigator.clipboard.writeText(''));await page.keyboard.press('ControlOrMeta+C');return page.evaluate(()=>navigator.clipboard.readText())};
+   assert.equal(await page.locator('#dialog pre.code-view').innerText(),'import sys\n\ndef main():\n    return 0\n');assert.equal(await copied(),'import sys\n\ndef main():\n    return 0\n');await closeArtifact();
    // YAML folds by indentation and XML by element, both shown exactly as written.
    await openArtifact('compose.yaml');assert.equal(await page.locator('#dialog pre.code-view').innerText(),yamlFixture);const yamlFolds=page.locator('#dialog .code-fold');assert.equal(await yamlFolds.count(),4);
    await yamlFolds.nth(2).click();assert.equal(await numbers(),'1,2,3,4,5,8,9,10,11');await yamlFolds.nth(0).click();assert.equal(await numbers(),'1,2,10,11');
@@ -146,7 +149,8 @@ emit(dict(type='result',result='<nodo_result>'+json.dumps(dict(status='completed
    await folds.nth(1).click();assert.equal(await numbers(),'1,2,3,4,5,8,9,10');assert.equal(await folds.nth(1).getAttribute('aria-expanded'),'true');
    await folds.nth(0).click();assert.equal(await numbers(),'1');await folds.nth(0).click();assert.equal(await numbers(),'1,2,3,4,5,8,9,10');
    await page.locator('#dialog [data-action=artifact-mode][data-mode=source]').click();await page.waitForFunction(()=>document.querySelector('#dialog .code-line')&&!document.querySelector('#dialog .code-fold'));assert.equal(await numbers(),'1');assert.equal(await page.locator('#dialog .code-fold').count(),0);
-   assert.equal(await page.locator('#dialog pre.code-view').innerText(),'{"id":12345678901234567890,"items":[1,{"deep":true}],"empty":{}}\n');await closeArtifact();await page.locator('[data-artifact-query]').fill('');
+   // The file has no final newline and none is added, as text or when copied.
+   assert.equal(await page.locator('#dialog pre.code-view').innerText(),'{"id":12345678901234567890,"items":[1,{"deep":true}],"empty":{}}');assert.equal(await copied(),'{"id":12345678901234567890,"items":[1,{"deep":true}],"empty":{}}');await closeArtifact();await page.locator('[data-artifact-query]').fill('');
    if(mode==='direct'){
     await page.evaluate(()=>openStorage('main/data.json','sources'));await page.locator('#dialog pre.storage-preview .code-fold').first().waitFor();assert.equal(await numbers(),'1,2,3,4,5,6,7,8,9,10');
     // Storage downloads are named after the file or folder, not after the root.

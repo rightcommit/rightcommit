@@ -274,6 +274,7 @@ mod tests {
             node: "baseline-review".into(),
             questions: vec![],
             resume_task: None,
+            commit: None,
         });
         app.store.save_run(1, &r).unwrap();
         let ids = candidates(&app, 1, &r);
@@ -323,6 +324,7 @@ mod tests {
             node: "baseline-review".into(),
             questions: vec![],
             resume_task: None,
+            commit: None,
         });
         app.store.save_run(1, &r).unwrap();
         assert!(prepare(&app, 1, &r.id, "step-1", true).is_err());

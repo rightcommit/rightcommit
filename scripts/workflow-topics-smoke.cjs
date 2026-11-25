@@ -7,6 +7,8 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
  try{
   for(let i=0;i<150;i++){try{if((await fetch(base+'/healthz')).ok)break}catch{}await new Promise(r=>setTimeout(r,100));}
   browser=await chromium.launch({channel:'chrome',headless:true});const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
+  // No agent is configured on this disposable server; keep the startup notice out of the way.
+  await page.addInitScript(()=>localStorage.setItem('rightcommit.hideAgentSetupNotice','true'));
   const call=async(url,body)=>{const r=await page.request.fetch(base+'/api'+url,{method:body?'POST':'GET',headers:{'X-Nodo-Request':'1'},data:body});assert.equal(r.status(),200,await r.text());return r.json()};
   assert.equal((await page.request.get(base+'/api/workflow-topics')).status(),401);
   await call('/auth/register',{email:'topics@test.local',password:'temporary-topics-password'});

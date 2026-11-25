@@ -26,7 +26,7 @@ exit 2
   await api('/auth/register',{email:'atlassian-settings@test.local',password:'temporary-settings-test-password'});
   const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto(base);await page.locator('#app').waitFor();await page.locator('#settings').click();await page.locator('#settings-tab-connections').click();
   const section=()=>page.locator('[data-service=atlassian]');assert.equal(await section().getByRole('heading',{name:'Atlassian',exact:true}).count(),1);
-  await page.locator('[name=base_atlassian]').fill('https://demo.atlassian.net');await page.locator('[name=username_atlassian]').fill('demo@example.test');await page.locator('[name=token_atlassian]').fill('fixture-bb-token');await page.locator('[name=repo_atlassian]').fill('workspace/demo');
+  await page.locator('[name=base_atlassian]').fill('https://demo.atlassian.net');await page.locator('[name=username_atlassian]').fill('demo@example.test');await page.locator('[name=token_atlassian]').fill('fixture-bb-token');
   await section().getByRole('button',{name:'Test connection',exact:true}).click();await page.locator('[data-atlassian-status]').filter({hasText:'Atlassian access: Connected · Bitbucket: Connected'}).waitFor();
   assert.equal((await api('/settings')).connections.atlassian,undefined,'Draft test must not save');
   await page.locator('[data-action=save-settings]').click();await page.locator('[data-action=save-settings]').waitFor({state:'visible'});await page.locator('[data-service=atlassian]').getByText('Bitbucket token saved',{exact:true}).waitFor();

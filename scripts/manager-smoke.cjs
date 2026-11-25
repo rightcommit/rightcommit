@@ -7,17 +7,25 @@ const BASE=process.env.NODO_TEST_URL||'http://127.0.0.1:18082';
 (async()=>{
  const browser=await chromium.launch({channel:'chrome',headless:true});
  const page=await browser.newPage({viewport:{width:1540,height:1050}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
+ // No agent is configured in the browser preferences of this disposable server; keep the startup notice out of the way.
+ await page.addInitScript(()=>localStorage.setItem('rightcommit.hideAgentSetupNotice','true'));
+ // The workflow picker is a button with a topic menu; new workflows are listed first in the open topic.
+ const openWorkflow=async id=>{await page.locator('#workflow-select').click();await page.locator(`#workflow-topic-menu [data-workflow-choice="${id}"]`).click();await page.waitForFunction(id=>app.wf?.id===id,id)};
  const call=async(path,body,expected=200)=>{const response=await page.request.fetch(BASE+'/api'+path,{method:body?'POST':'GET',headers:{'X-Nodo-Request':'1'},data:body});const raw=await response.text();assert.equal(response.status(),expected,raw);return JSON.parse(raw)};
  const send=async text=>{await page.locator('#manager-input').fill(text);const response=page.waitForResponse(r=>r.url()===BASE+'/api/manager/chat'&&r.request().method()==='POST');await page.locator('#manager-form [type=submit]').click();const r=await response;assert.equal(r.status(),200,await r.text());await page.waitForFunction(()=>!document.querySelector('#manager-form [type=submit]').disabled);return r.json()};
  try{
   const auth=await call('/auth/status');await call(auth.setup_required?'/auth/register':'/auth/login',{email:'manager-qa@nodo.local',password:'temporary-manager-qa-password'});
   const w={id:'manager-smoke-'+Date.now(),name:'Manager smoke',description:'No provider calls',entry:'read',nodes:[{id:'source',kind:'Source',title:'Source',source_type:'example',x:80,y:100},{id:'read',kind:'Connection',title:'Read actual file',provider:'local',operation:'read_ticket',location:'README.md',x:320,y:100}],edges:[{from:'source',to:'read',kind:'context'}]};await call('/workflows',w);
-  await page.goto(BASE);await page.locator('#app').waitFor({state:'visible'});await page.locator('#workflow-select').selectOption(w.id);
+  await page.goto(BASE);await page.locator('#app').waitFor({state:'visible'});await openWorkflow(w.id);
   await page.locator('#icon-guide').click();await page.locator('.icon-guide-row').first().waitFor({state:'visible'});
-  const ids=[...fs.readFileSync('web/icons.svg','utf8').matchAll(/<symbol id="([^"]+)/g)].map(m=>m[1]);
+  // Symbols no screen shows: the provider logos replaced by labeled service identities (f2aa993) and two arrows.
+  // Every other sprite symbol appears in the interface and must have a guide row.
+  const unlisted=['brand-azuredevops','brand-bitbucket','brand-claude','brand-openai','brand-servicenow','arrow-down','arrow-up'];
+  const sprite=[...fs.readFileSync('web/icons.svg','utf8').matchAll(/<symbol id="([^"]+)/g)].map(m=>m[1]),ids=sprite.filter(id=>!unlisted.includes(id));
+  assert.deepEqual(unlisted.filter(id=>!sprite.includes(id)),[],'unlisted icons still exist in the sprite');
   assert.deepEqual(await page.locator('.icon-guide-row[data-guide-id] svg use').evaluateAll(ns=>[...new Set(ns.map(n=>n.getAttribute('href').split('#')[1]))].sort()),ids.sort());
   for(const term of ['Atlassian','A2A','Comment']){await page.locator('#icon-guide-search').fill(term);assert(await page.locator('.icon-guide-row:visible').count()>0)}
-  await page.locator('[data-help-tab=quick]').click();assert.equal(await page.locator('.quick-start-step:visible').count(),12);await page.locator('[data-help-tab=icons]').click();
+  await page.locator('[data-help-tab=quick]').click();assert.equal(await page.locator('.quick-start-step:visible').count(),14);await page.locator('[data-help-tab=icons]').click();
   await page.locator('#icon-guide-search').fill('Review');assert(await page.locator('.icon-guide-row:visible').count()>0);assert(await page.locator('.icon-guide-row:visible').count()<ids.length);
   await page.locator('#dialog [data-action=close-dialog]').click();
   await page.locator('.node-main[data-id=read]').click();await page.locator('#inspector').waitFor({state:'visible'});
@@ -32,7 +40,7 @@ const BASE=process.env.NODO_TEST_URL||'http://127.0.0.1:18082';
   await send('aggiungi ancora un controllo finale');assert.equal(await page.evaluate(()=>app.wf.nodes.length),3);
   await page.screenshot({path:process.env.NODO_TEST_SCREENSHOT||'/tmp/nodo-manager-desktop.png'});
   await page.locator('#save').click();await page.waitForFunction(()=>!app.dirty);
-  await page.reload();await page.locator('#app').waitFor({state:'visible'});await page.locator('#workflow-select').selectOption(w.id);await page.locator('#manager-toggle').click();
+  await page.reload();await page.locator('#app').waitFor({state:'visible'});await openWorkflow(w.id);await page.locator('#manager-toggle').click();
   await page.waitForFunction(()=>document.querySelectorAll('.manager-message').length===4);
   const invalid=await send('proposta invalida');assert.equal(invalid.workflow,null);assert.match(invalid.messages.at(-1).text,/Non ho applicato/);assert.equal(await page.evaluate(()=>app.wf.nodes.length),3);
   const otherEmail='manager-other-'+Date.now()+'@nodo.local';await call('/users',{email:otherEmail,password:'temporary-manager-other-password'});
@@ -49,8 +57,8 @@ const BASE=process.env.NODO_TEST_URL||'http://127.0.0.1:18082';
   const created=await send('crea un nuovo workflow');assert.equal(created.kind,'create');await page.waitForFunction(id=>app.wf.id!==id,priorDraftId);
   assert(await page.locator('#manager-restore').isVisible());await page.locator('#manager-restore').click();await page.waitForFunction(id=>app.wf.id===id,priorDraftId);
   const resetGraph=await page.evaluate(()=>JSON.stringify(app.wf));await page.locator('#manager-reset').click();await page.waitForFunction(()=>document.querySelectorAll('.manager-message').length===0);assert.equal(await page.evaluate(()=>JSON.stringify(app.wf)),resetGraph);
-  const all=await send('crea un workflow con tutti i nodi');assert.equal(all.workflow.nodes.length,11);await page.waitForFunction(()=>app.wf.nodes.length===11);
-  assert.deepEqual((await page.evaluate(()=>app.wf.nodes.map(n=>n.kind))).sort(),['Source','Agent','Task','Review','Gate','Memory','Connection','Workflow','MCP','RAG','Comment'].sort());
+  const all=await send('crea un workflow con tutti i nodi');assert.equal(all.workflow.nodes.length,14);await page.waitForFunction(()=>app.wf.nodes.length===14);
+  assert.deepEqual((await page.evaluate(()=>app.wf.nodes.map(n=>n.kind))).sort(),['Source','Agent','Task','Review','Fork','Join','Gate','Memory','Connection','Workflow','MCP','RAG','A2A','Comment'].sort());
   assert(await page.locator('.manager-warning').count()>0);await page.locator('#manager-input').fill('bozza');
   await page.locator('#manager-toggle').click();await page.locator('#manager-toggle').click();await page.locator('.node-main').first().click();
   await page.setViewportSize({width:390,height:900});await page.waitForTimeout(100);assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
@@ -61,6 +69,6 @@ const BASE=process.env.NODO_TEST_URL||'http://127.0.0.1:18082';
   await page.locator('#app').waitFor({state:'visible'});await page.waitForTimeout(100);
   assert.equal(await page.locator('.manager-message').count(),0);assert.equal(await page.locator('#manager-restore').count(),0);
   assert.deepEqual(errors,[]);
-  console.log(JSON.stringify({pass:true,provider_inference:false,checks:['complete SVG icon guide and search','manager opening closes inspector','horizontal panel stacking','typing survives node selection','native manager resume and persistent history','validated node and edge edits with undo','drafts remain unsaved until Save','invalid graph refused','cross-user history isolation and logout cache clearing','actual run evidence and frozen run graph','new draft from run','automatic new workflow with conversation continuity and draft recovery','safe Markdown bubbles','chat reset without graph changes','all 11 node types in editor','mobile horizontal panel layout']}));
+  console.log(JSON.stringify({pass:true,provider_inference:false,checks:['complete SVG icon guide and search','manager opening closes inspector','horizontal panel stacking','typing survives node selection','native manager resume and persistent history','validated node and edge edits with undo','drafts remain unsaved until Save','invalid graph refused','cross-user history isolation and logout cache clearing','actual run evidence and frozen run graph','new draft from run','automatic new workflow with conversation continuity and draft recovery','safe Markdown bubbles','chat reset without graph changes','all 14 node types in editor','mobile horizontal panel layout']}));
  }finally{await browser.close()}
 })().catch(error=>{console.error(error);process.exit(1)});

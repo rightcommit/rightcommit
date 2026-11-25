@@ -16,6 +16,9 @@ emit(dict(type='result',result='<nodo_result>'+json.dumps(dict(status='completed
 const server=spawn(path.resolve('target/debug/rightcommit'),[],{env:{...process.env,NODO_DATA:dir,NODO_LISTEN:'127.0.0.1:18108',NODO_SOURCES:path.resolve('sources'),PATH:bin+':'+process.env.PATH,ANTHROPIC_AUTH_TOKEN:'secret-activity-sentinel'},stdio:'ignore'});let browser;
 try{for(let i=0;i<100;i++){try{if((await fetch(base+'/healthz')).ok)break}catch{}await new Promise(r=>setTimeout(r,100))}
 browser=await chromium.launch({channel:'chrome',headless:true});const page=await browser.newPage({viewport:{width:1440,height:1050}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
+// Choices are jui-select controls: pick through the visible listbox.
+const choose=async(control,value)=>{const index=await control.evaluate((e,v)=>Array.from(e.querySelectorAll('jui-option')).findIndex(o=>o.getAttribute('value')===v),value);assert(index>=0,'option '+value);await control.getByRole('combobox').click();await control.locator(`[role=option][data-index="${index}"]`).click();assert.equal(await control.evaluate(e=>e.value),value)};
+
 const api=async(p,b)=>{const r=await page.request.fetch(base+'/api'+p,{method:b?'POST':'GET',headers:{'X-Nodo-Request':'1'},data:b});assert(r.ok(),await r.text());return r.json()};
 await api('/auth/register',{email:'activity@test.local',password:'temporary-activity-password'});
 const wf={id:'activity-test',name:'Activity workflow',description:'Offline fixture',entry:'task',nodes:[{id:'source',kind:'Source',title:'Source',source_type:'example'},{id:'agent',kind:'Agent',title:'Claude',runtime:'claude'},{id:'task',kind:'Task',title:'Work',agent:'agent',prompt:'Offline log test'}],edges:[{from:'source',to:'agent',kind:'context'},{from:'agent',to:'task',kind:'context'}]};await api('/workflows',wf);
@@ -42,7 +45,7 @@ assert((await page.evaluate(message=>activityMessage({kind:'compaction',text:JSO
 assert.equal(await page.evaluate(summary=>activityMessage({kind:'output',text:'<nodo_result>'+JSON.stringify({summary})+'</nodo_result>'}),longDetail),longDetail);
 await page.evaluate(()=>settingsDialog('activity'));
 await page.locator('[name="activity_log_page_size"]').fill('3');
-await page.locator('[name="activity_log_verbosity"]').selectOption('full');
+await choose(page.locator('[name="activity_log_verbosity"]'),'full');
 await page.locator('[data-action="save-settings"]').click();
 await page.waitForFunction(()=>app.settings.activity_log_verbosity==='full');
 assert.equal((await api('/settings')).activity_log_verbosity,'full');assert.equal((await api('/settings')).activity_log_page_size,3);
@@ -50,7 +53,7 @@ assert((await page.evaluate(detail=>activityMessage({kind:'activity',text:JSON.s
 await page.locator('[data-action="close-dialog"]').first().click();
 await page.reload();await page.locator('#app').waitFor({state:'visible'});
 assert.equal(await page.evaluate(()=>app.settings.activity_log_verbosity),'full');assert.equal(await page.evaluate(()=>app.settings.activity_log_page_size),3);
-await page.evaluate(()=>settingsDialog('activity'));await page.locator('[name="activity_log_verbosity"]').selectOption('preview');await page.locator('[data-action="save-settings"]').click();await page.waitForFunction(()=>app.settings.activity_log_verbosity==='preview');await page.locator('[data-action="close-dialog"]').first().click();
+await page.evaluate(()=>settingsDialog('activity'));await choose(page.locator('[name="activity_log_verbosity"]'),'preview');await page.locator('[data-action="save-settings"]').click();await page.waitForFunction(()=>app.settings.activity_log_verbosity==='preview');await page.locator('[data-action="close-dialog"]').first().click();
 await page.evaluate(id=>loadRun(id),second.id);await page.evaluate(()=>logs(true));
 await page.locator('[data-log-run="'+first.id+'"]').click();
 await page.waitForFunction(id=>activityLog.runs.get(id)?.loaded,first.id);
@@ -60,9 +63,9 @@ await page.locator('[data-log-run="'+first.id+'"]').click();
 await page.locator('#activity-panel').evaluate(el=>el.scrollTop=el.scrollHeight);
 const geometry=await page.evaluate(()=>{const heading=document.querySelector('#logs .panel-heading').getBoundingClientRect(),tabs=document.querySelector('.activity-tabs').getBoundingClientRect(),content=document.querySelector('#activity-panel').getBoundingClientRect();return {heading:heading.bottom,tabsTop:tabs.top,tabsBottom:tabs.bottom,contentTop:content.top}});
 assert(geometry.tabsTop>=geometry.heading-1);assert(geometry.contentTop>=geometry.tabsBottom-1);
-// Events are single-line, newest first, including multiline full details.
-const rows=await page.locator('.activity-event').evaluateAll(rows=>rows.map(r=>({seq:Number(r.dataset.logSeq),nowrap:getComputedStyle(r.querySelector('pre')).whiteSpace,top:r.querySelector('pre').getBoundingClientRect().top,metaTop:r.firstElementChild.getBoundingClientRect().top})));
-assert(rows.length>500);assert(rows.every((r,i)=>r.nowrap==='nowrap'&&Math.abs(r.top-r.metaTop)<5&&(!i||rows[i-1].seq>r.seq)));
+// Events are newest first; since d171333 each shows its details line, then a wrapping preview of the message below it.
+const rows=await page.locator('.activity-event').evaluateAll(rows=>rows.map(r=>({seq:Number(r.dataset.logSeq),wrap:getComputedStyle(r.querySelector('pre')).whiteSpace,top:r.querySelector('pre').getBoundingClientRect().top,metaBottom:r.firstElementChild.getBoundingClientRect().bottom})));
+assert(rows.length>500);assert(rows.every((r,i)=>r.wrap==='pre-wrap'&&r.top>=r.metaBottom-1&&r.top-r.metaBottom<10&&(!i||rows[i-1].seq>r.seq)));
 await page.screenshot({path:'/tmp/activity-log.png'});
 await page.route(/\/api\/runs\/fixture-.*\/events/,route=>route.fulfill({json:[]}));
 // A large metadata history renders only the configured number of tabs and one panel.
@@ -75,5 +78,5 @@ assert.equal(await page.locator('[data-log-run]').count(),3);
 assert.equal(await page.evaluate(()=>app.run.id),second.id);
 const invalid=await page.request.put(base+'/api/settings',{headers:{'X-Nodo-Request':'1'},data:{...(await api('/settings')),activity_log_page_size:0}});assert.equal(invalid.status(),400);
 await page.setViewportSize({width:390,height:900});assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));assert.deepEqual(errors,[]);
-console.log('PASS: newest-first single-line events, bounded configurable tabs, page-size validation and persistence, verbosity persistence, separate scrolling, live Claude command, redacted secrets, full history beyond 500 events, stable canvas context, completed tools and mobile');
+console.log('PASS: newest-first events with wrapped previews, bounded configurable tabs, page-size validation and persistence, verbosity persistence, separate scrolling, live Claude command, redacted secrets, full history beyond 500 events, stable canvas context, completed tools and mobile');
 }finally{await browser?.close();server.kill('SIGINT');await new Promise(r=>server.exitCode!==null?r():server.once('exit',r));fs.rmSync(dir,{recursive:true,force:true})}})().catch(e=>{console.error(e);process.exit(1)});

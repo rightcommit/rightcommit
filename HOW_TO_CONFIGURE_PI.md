@@ -5,6 +5,13 @@ including Anthropic, OpenAI, OpenRouter, cloud services and local models. Pi is 
 to every user. Read [Provider terms and permitted use](PROVIDER_TERMS.md) before connecting
 a provider; technical support for a credential is not permission to use it.
 
+**What you need:** an API key, or the cloud credentials, of the provider you select, or a model
+running on your own computer, which may need no key at all. The app has no provider sign-in for
+Pi. With the Anthropic provider, Claude subscription tokens (`sk-ant-oat…`) and Claude account
+logins are refused: use a Claude Console API key. A Claude subscription can be used only by the
+administrator, with Claude Code; see
+[Your own Claude subscription](HOW_TO_CONFIGURE_CLAUDECODE.md#4-your-own-claude-subscription-administrator-only).
+
 | Guide | For |
 |---|---|
 | this page | API-key setup, complete provider environment list and precedence |

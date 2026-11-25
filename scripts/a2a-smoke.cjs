@@ -6,13 +6,20 @@ const BASE=process.env.NODO_TEST_URL||'http://127.0.0.1:18089';
  const browser=await chromium.launch({channel:'chrome',headless:true});
  try{
   const page=await browser.newPage({viewport:{width:1540,height:1050}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
+  // No agent is configured on this disposable server; keep the startup notice out of the way.
+  // English is the default since 1.1.0 and this test checks the Italian texts, so start in Italian.
+  await page.addInitScript(()=>{localStorage.setItem('rightcommit.hideAgentSetupNotice','true');if(!localStorage.getItem('nodo.language'))localStorage.setItem('nodo.language','it')});
+  // Choices are jui-select controls: pick through the visible listbox.
+  const choose=async(control,value)=>{const index=await control.evaluate((e,v)=>Array.from(e.querySelectorAll('jui-option')).findIndex(o=>o.getAttribute('value')===v),value);assert(index>=0,'option '+value);await control.getByRole('combobox').click();await control.locator(`[role=option][data-index="${index}"]`).click();assert.equal(await control.evaluate(e=>e.value),value)};
   const call=async(path,body)=>{const r=await page.request.fetch(BASE+'/api'+path,{method:body?'POST':'GET',headers:{'X-Nodo-Request':'1'},data:body});const v=await r.json();assert.equal(r.status(),200,JSON.stringify(v));return v};
   const email=process.env.NODO_TEST_EMAIL||'a2a-ui@nodo.local';const registration=await page.request.post(BASE+'/api/auth/register',{headers:{'X-Nodo-Request':'1'},data:{email,password:'temporary-a2a-password-123'}});if(registration.status()!==200)await call('/auth/login',{email,password:'temporary-a2a-password-123'});
   await page.goto(BASE);await page.locator('#app').waitFor({state:'visible'});
+  // A first login opens an empty workflow (e937314); publish the first example, which has result nodes.
+  const example=(await call('/workflows'))[0].id;await page.locator('#workflow-select').click();await page.locator(`#workflow-topic-menu [data-workflow-choice="${example}"]`).click();await page.waitForFunction(id=>app.wf?.id===id,example);
   await page.locator('#a2a-publication').click();await page.locator('#a2a-publication-form').waitFor();
-  await page.locator('#a2a-publication-form [name=enabled]').selectOption('true');
-  await page.locator('#a2a-publication-form [name=outputs]').first().check();
-  await page.locator('#a2a-publication-form [name=rotate]').selectOption('true');
+  await choose(page.locator('#a2a-publication-form [name=enabled]'),'true');
+  const output=page.locator('#a2a-publication-form jui-switch[name=outputs]').first();if(!await output.evaluate(e=>e.checked))await output.locator('button').click();assert(await output.evaluate(e=>e.checked));
+  await choose(page.locator('#a2a-publication-form [name=rotate]'),'true');
   await page.locator('[data-action=a2a-publish]').click();
   await page.getByText('Token A2A creato',{exact:true}).waitFor();
   const token=await page.locator('#dialog textarea').inputValue();assert(token.length>50);
@@ -25,9 +32,9 @@ const BASE=process.env.NODO_TEST_URL||'http://127.0.0.1:18089';
   await page.locator('#a2a-connection-form [name=url]').fill(BASE+pub.path+'/.well-known/agent-card.json');
   await page.locator('#a2a-connection-form [name=token]').fill(token);
   await page.locator('[data-action=a2a-save-connection]').click();
-  await page.locator('#node-form [name=a2a_id] option').nth(1).waitFor({state:'attached'});
-  const option=await page.locator('#node-form [name=a2a_id] option').nth(1).getAttribute('value');
-  await page.locator('#node-form [name=a2a_id]').selectOption(option);
+  await page.locator('#node-form [name=a2a_id] jui-option').nth(1).waitFor({state:'attached'});
+  const option=await page.locator('#node-form [name=a2a_id] jui-option').nth(1).getAttribute('value');
+  await choose(page.locator('#node-form [name=a2a_id]'),option);
   await page.locator('[data-action=a2a-probe]').click();await page.waitForFunction(()=>document.querySelector('#toast').textContent.includes('Agente disponibile'));
   await page.locator('#save').click();await page.waitForFunction(()=>!app.dirty);
   const stored=(await call('/workflows')).find(w=>w.id===wid);assert.equal(stored.nodes.find(n=>n.kind==='A2A').a2a_id,option);

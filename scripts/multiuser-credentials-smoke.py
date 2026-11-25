@@ -9,6 +9,7 @@ import socket
 import subprocess
 import tempfile
 import time
+import urllib.error
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -73,7 +74,7 @@ def check(tokens_only=False):
             assert 'instance_mode' not in admin('/auth/me')
             assert 'instance_mode' not in member('/auth/me')
 
-            def execute(api, uid, runtime, personal, phase, inherited=None):
+            def execute(api, uid, runtime, personal, phase, inherited=None, refused=False):
                 settings = api('/settings')
                 settings = api('/settings', {'revision': settings['_revision'], 'changes': {'agents': {
                     runtime: {'api_key': personal or '__CLEAR__', 'model': 'offline-fixture-model'}}}}, 'PATCH')
@@ -91,6 +92,15 @@ def check(tokens_only=False):
                     edges=[dict(**{'from': 'source', 'to': 'agent'}, kind='context'),
                            dict(**{'from': 'agent', 'to': 'task'}, kind='context')])
                 api('/workflows', workflow)
+                if refused:
+                    # A run whose agents have no credentials is refused before it starts (7cb128c).
+                    try:
+                        api('/runs', {'workflow_id': wid, 'input': 'Offline test'})
+                    except urllib.error.HTTPError as error:
+                        assert error.code == 400, error.code
+                        assert 'senza credenziali' in json.loads(error.read())['error']
+                        return None
+                    raise AssertionError('A run without agent credentials must be refused')
                 run = api('/runs', {'workflow_id': wid, 'input': 'Offline test'})
                 for _ in range(200):
                     result = api('/runs/' + run['id'])
@@ -137,8 +147,9 @@ def check(tokens_only=False):
                 captured = execute(member, 2, runtime, '', 'shared', inherited=shared)
                 admin_settings = admin('/settings')
                 admin('/settings', {'revision': admin_settings['_revision'], 'changes': {'agents': {runtime: {'api_key': '__CLEAR__'}}}}, 'PATCH')
-                captured = execute(member, 2, runtime, '', 'fallback')
-                assert not any('u1-' in value for value in captured.values())
+                # Without company API keys Pi has no credentials (the OAuth token is not for Pi), so its run is refused.
+                captured = execute(member, 2, runtime, '', 'fallback', refused=tokens_only and runtime == 'pi')
+                assert captured is None or not any('u1-' in value for value in captured.values())
             # Clearing native Pi OAuth is mandatory, even if a usable API key is supplied.
             auth = directory / 'data/users/2/.pi/agent/auth.json'
             oauth = {'anthropic': {'type': 'oauth', 'access': 'dummy-pi-access', 'refresh': 'dummy-pi-refresh', 'expires': 1}}

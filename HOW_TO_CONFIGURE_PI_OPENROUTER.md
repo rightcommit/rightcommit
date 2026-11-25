@@ -3,6 +3,8 @@
 [OpenRouter](https://openrouter.ai) gives you hundreds of models (Claude, GPT, Gemini, Qwen,
 DeepSeek and more) with one key and one bill.
 
+**What you need:** an OpenRouter API key, with credit on your OpenRouter account.
+
 Pi is available to every user. Use an OpenRouter account or API
 key you are authorized to use, with billing and model access covered by your agreement.
 Read [Provider terms and permitted use](PROVIDER_TERMS.md).

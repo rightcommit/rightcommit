@@ -7,13 +7,15 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
  try{
   for(let i=0;i<100;i++){try{if((await fetch(base+'/healthz')).ok)break}catch{}await new Promise(r=>setTimeout(r,100))}
   browser=await chromium.launch({channel:'chrome',headless:true});const page=await browser.newPage({viewport:{width:1440,height:1050},acceptDownloads:true}),errors=[];page.on('pageerror',e=>errors.push(e.message));
+  // No agents are configured on this disposable server; keep the startup notice out of the way.
+  await page.addInitScript(()=>localStorage.setItem('rightcommit.hideAgentSetupNotice','true'));
   for(const file of ['app.js','app.css','i18n.js','icons.svg'])await page.route('**/'+file,r=>r.fulfill({path:path.resolve('web/'+file)}));
   await page.route(base+'/',r=>r.fulfill({path:path.resolve('web/index.html'),contentType:'text/html'}));
   const api=async(p,data)=>{const r=await page.request.fetch(base+'/api'+p,{method:data?'POST':'GET',headers:{'X-Nodo-Request':'1'},data});assert(r.ok(),await r.text());return r.json()};
   await api('/auth/register',{email:'transfer@test.local',password:'temporary-transfer-password'});
   const wf={id:'original-workflow',name:'Workflow esempio',description:'Round trip',entry:'task',execution:{mode:'interactive'},nodes:[{id:'agent',kind:'Agent',title:'Agent',runtime:'codex',x:100,y:100},{id:'task',kind:'Task',title:'Task',agent:'agent',command:'implement',prompt:'Original',x:350,y:100}],edges:[{from:'agent',to:'task',kind:'context',outcome:''}]};await api('/workflows',wf);const baseline=(await api('/workflows')).length;
   await page.goto(base);await page.locator('#app').waitFor({state:'visible'});await page.evaluate(()=>selectWorkflow('original-workflow'));
-  assert(await page.locator('#save + #download-workflow').count());assert.equal(await page.locator('.topbar #import-workflow').count(),0);assert.equal(await page.locator('#download-workflow').getAttribute('aria-label'),'Export');
+  assert(await page.locator('#save + #download-workflow').count());assert.equal(await page.locator('.topbar #import-workflow').count(),0);assert.equal(await page.locator('#download-workflow').getAttribute('aria-label'),'Export workflow');
   const openImport=async()=>{await page.locator('#new-workflow').click();await page.locator('[data-action=import-workflow]').click()};
   await page.locator('.node-main[data-id=task]').click();await page.locator('#node-form [name=prompt]').fill('Latest unsaved edit');
   const downloading=page.waitForEvent('download');await page.locator('#download-workflow').click();const download=await downloading;assert(download.suggestedFilename().endsWith('.json'));const exported=JSON.parse(fs.readFileSync(await download.path(),'utf8'));assert.equal(exported.nodes.find(n=>n.id==='task').prompt,'Latest unsaved edit');assert.deepEqual(exported.edges,wf.edges);assert.equal(exported.nodes.find(n=>n.id==='task').command,'implement');

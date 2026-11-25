@@ -11,21 +11,28 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   await page.route('**/app.css',route=>route.fulfill({path:path.resolve('web/app.css'),contentType:'text/css'}));
   await page.route('**/app.js',route=>route.fulfill({path:path.resolve('web/app.js'),contentType:'text/javascript'}));
   const call=async(url,body)=>{const r=await page.request.fetch(base+'/api'+url,{method:body?'POST':'GET',headers:{'X-Nodo-Request':'1'},data:body});assert.equal(r.status(),200,await r.text());return r.json()};
+  // The workflow picker is a button with a topic menu; new workflows are listed first in the open topic.
+  const openWorkflow=async id=>{await page.locator('#workflow-select').click();await page.locator(`#workflow-topic-menu [data-workflow-choice="${id}"]`).click();await page.waitForFunction(id=>app.wf?.id===id,id)};
+  // No agents are configured on this disposable server; keep the startup notice out of the way.
+  await page.addInitScript(()=>localStorage.setItem('rightcommit.hideAgentSetupNotice','true'));
   await call('/auth/register',{email:'node-settings@test.local',password:'temporary-node-settings-password'});
   const wf={id:'node-settings-qa',name:'Node settings QA',description:'',entry:'task',nodes:[{id:'source',kind:'Source',title:'Source',source_type:'example',x:80,y:100},{id:'agent',kind:'Agent',title:'Agent',runtime:'codex',x:300,y:100},{id:'task',kind:'Task',title:'Task',agent:'agent',x:520,y:100},{id:'gate',kind:'Gate',title:'Gate',x:750,y:100,outcomes:['pass','rework'],max_rework:2}],edges:[]};await call('/workflows',wf);
-  await page.goto(base);await page.locator('#app').waitFor({state:'visible'});await page.locator('#workflow-select').selectOption(wf.id);
+  await page.goto(base);await page.locator('#app').waitFor({state:'visible'});await openWorkflow(wf.id);
   const select=async id=>page.locator('.node-main[data-id="'+id+'"]').click();const field=name=>page.locator('#node-form [name="'+name+'"]');
-  await select('source');await field('source_type').selectOption('folder');await field('location').fill('analisi');assert(await page.evaluate(()=>app.dirty));
-  await select('agent');await field('runtime').selectOption('claude');await field('model').fill('opus');
+  // Inspector choices are jui-select controls: pick through the visible listbox and read the form value.
+  const choose=async(control,value)=>{if(await control.evaluate(e=>e.tagName==='SELECT'))return control.selectOption(value);const index=await control.evaluate((e,v)=>Array.from(e.querySelectorAll('jui-option')).findIndex(o=>o.getAttribute('value')===v),value);assert(index>=0,'option '+value);await control.getByRole('combobox').click();await control.locator(`[role=option][data-index="${index}"]`).click();assert.equal(await control.evaluate(e=>e.value),value)};
+  const valueOf=control=>control.evaluate(e=>e.value);
+  await select('source');await choose(field('source_type'),'folder');await field('location').fill('analisi');assert(await page.evaluate(()=>app.dirty));
+  await select('agent');await choose(field('runtime'),'claude');await field('model').fill('opus');
   await select('task');await field('prompt').fill('Inspect UBS without changing files');await field('command').fill('analyze');
-  await select('gate');await field('outcomes').fill('accepted, revise');await field('max_rework').fill('3');await field('require_tests').selectOption('true');
-  await select('source');assert.equal(await field('source_type').inputValue(),'folder');assert.equal(await field('location').inputValue(),'analisi');
+  await select('gate');await field('outcomes').fill('accepted, revise');await field('max_rework').fill('3');await choose(field('require_tests'),'true');
+  await select('source');assert.equal(await valueOf(field('source_type')),'folder');assert.equal(await valueOf(field('location')),'analisi');
   // Save while the last field still has focus, with no Apply or Save click.
   await field('location').fill('esempio');await page.waitForFunction(()=>!app.dirty);
   let stored=(await call('/workflows')).find(w=>w.id===wf.id),node=id=>stored.nodes.find(n=>n.id===id);
   assert.equal(node('source').source_type,'folder');assert.equal(node('source').location,'esempio');assert.equal(node('agent').runtime,'claude');assert.equal(node('agent').model,'opus');assert.equal(node('task').prompt,'Inspect UBS without changing files');assert.equal(node('task').command,'analyze');assert.deepEqual(node('gate').outcomes,['accepted','revise']);assert.equal(node('gate').max_rework,3);assert.equal(node('gate').require_tests,true);
-  await page.reload();await page.locator('#app').waitFor({state:'visible'});await page.locator('#workflow-select').selectOption(wf.id);await select('source');assert.equal(await field('source_type').inputValue(),'folder');assert.equal(await field('location').inputValue(),'esempio');
-  await field('source_type').selectOption('git');await field('location').fill('https://example.com/ubs.git');await page.waitForFunction(()=>!app.dirty);await page.reload();await page.locator('#app').waitFor({state:'visible'});await page.locator('#workflow-select').selectOption(wf.id);await select('source');assert.equal(await field('source_type').inputValue(),'git');assert.equal(await field('location').inputValue(),'https://example.com/ubs.git');assert.deepEqual(errors,[]);
+  await page.reload();await page.locator('#app').waitFor({state:'visible'});await openWorkflow(wf.id);await select('source');assert.equal(await valueOf(field('source_type')),'folder');assert.equal(await valueOf(field('location')),'esempio');
+  await choose(field('source_type'),'git');await field('location').fill('https://example.com/ubs.git');await page.waitForFunction(()=>!app.dirty);await page.reload();await page.locator('#app').waitFor({state:'visible'});await openWorkflow(wf.id);await select('source');assert.equal(await valueOf(field('source_type')),'git');assert.equal(await valueOf(field('location')),'https://example.com/ubs.git');assert.deepEqual(errors,[]);
   // Synthetic catalogs exercise saved references without contacting external services.
   const ragIndex={id:'rag-qa',name:'QA index',root:'sources',path:'material',directory:true,generation:1,progress:{state:'completed'}};
   await page.route('**/api/rag',route=>route.fulfill({json:{indices:[ragIndex],languages:[]}}));
@@ -33,10 +40,10 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   const seed=()=>page.evaluate(()=>{app.settings.mcp_servers={'mcp-qa':{name:'QA MCP'}};a2aConnections=[{id:'a2a-qa',name:'QA remote'}];ragCatalog=[{id:'rag-qa',name:'QA index',root:'sources',path:'material',directory:true,generation:1,progress:{state:'completed'}}]});
   await seed();await page.evaluate(()=>{for(const kind of ['Review','Memory','Connection','Workflow','MCP','RAG','A2A','Comment'])app.wf.nodes.push({id:kind.toLowerCase(),kind,title:kind,phase:'Workflow',x:100,y:400,agent:'agent',text:'',markdown:false,width:300,height:220,max_rework:2,rag_top_k:8,provider:'local',operation:'test'});render()});
   const inspect=async id=>page.evaluate(id=>{setNodeSelection([id]);render()},id);
-  await inspect('source');await field('source_type').selectOption('folder');await page.locator('#source-folder-options [role=option]').first().waitFor({state:'attached'});await field('location').click();
+  await inspect('source');await choose(field('source_type'),'folder');await page.locator('#source-folder-options [role=option]').first().waitFor({state:'attached'});await field('location').click();
   assert.equal(await page.locator('#source-folder-options [role=option]').count(),35);assert(await page.locator('#source-folder-options').evaluate(el=>el.scrollHeight>el.clientHeight&&getComputedStyle(el).overflowY==='auto'));
-  await page.locator('[data-folder="folder-34"]').click();assert.equal(await field('location').inputValue(),'folder-34');assert(await page.locator('#source-folder-options').isHidden());
-  await field('location').fill('custom/subfolder');await field('location').press('Escape');assert.equal(await field('location').inputValue(),'custom/subfolder');await field('location').press('ArrowDown');await field('location').press('Enter');assert.equal(await field('location').inputValue(),'folder-00');await field('location').fill('custom/subfolder');await field('location').press('Tab');assert(await page.locator('#source-folder-options').isHidden());
+  await page.locator('[data-folder="folder-34"]').click();assert.equal(await valueOf(field('location')),'folder-34');assert(await page.locator('#source-folder-options').isHidden());
+  await field('location').fill('custom/subfolder');await field('location').press('Escape');assert.equal(await valueOf(field('location')),'custom/subfolder');await field('location').press('ArrowDown');await field('location').press('Enter');assert.equal(await valueOf(field('location')),'folder-00');await field('location').fill('custom/subfolder');await field('location').press('Tab');assert(await page.locator('#source-folder-options').isHidden());
   const changes={
    review:{agent:'agent',mode:'human',prompt:'Review criteria'},
    memory:{agent:'task',target:'agent'},
@@ -47,17 +54,17 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
    a2a:{a2a_id:'a2a-qa',prompt:'Remote request'}
   };
   await call('/workflows',{id:'child-qa',name:'Child QA',description:'',entry:'',nodes:[],edges:[]});await page.evaluate(async()=>{app.workflows=await api('/workflows')});
-  for(const [id,fields] of Object.entries(changes)){await inspect(id);await field('title').fill('Configured '+id);await field('phase').fill('QA phase');for(const [name,value] of Object.entries(fields)){const f=field(name);if(await f.evaluate(el=>el.tagName==='SELECT'))await f.selectOption(value);else await f.fill(value)}}
+  for(const [id,fields] of Object.entries(changes)){await inspect(id);await field('title').fill('Configured '+id);await field('phase').fill('QA phase');for(const [name,value] of Object.entries(fields)){const f=field(name);if(await f.evaluate(el=>['SELECT','JUI-SELECT'].includes(el.tagName)))await choose(f,value);else await f.fill(value)}}
   // Dynamic hidden operation must persist when leaving Connection without Apply/Save.
   assert.equal(await page.evaluate(()=>app.wf.nodes.find(n=>n.id==='connection').operation),'twg');
-  await inspect('gate');await field('max_rework').fill('0');await field('require_tasks_closed').selectOption('true');await field('location').fill('specs/qa/tasks.md');
+  await inspect('gate');await field('max_rework').fill('0');await choose(field('require_tasks_closed'),'true');await field('location').fill('specs/qa/tasks.md');
   await inspect('comment');await page.locator('.comment-node[data-id=comment] textarea').fill('## Saved comment');await page.locator('.comment-node[data-id=comment] [data-comment-preview]').click();
-  await inspect('source');assert.equal(await field('location').inputValue(),'custom/subfolder');
+  await inspect('source');assert.equal(await valueOf(field('location')),'custom/subfolder');
   const expected=await page.evaluate(()=>structuredClone(app.wf.nodes));await page.waitForFunction(()=>!app.dirty);stored=(await call('/workflows')).find(w=>w.id===wf.id);
   for(const original of expected){const actual=stored.nodes.find(n=>n.id===original.id);for(const [key,value] of Object.entries(original))assert.deepEqual(actual[key],value,original.kind+'.'+key)}
-  await page.reload();await page.locator('#app').waitFor({state:'visible'});await page.locator('#workflow-select').selectOption(wf.id);await seed();
-  for(const [id,fields] of Object.entries(changes)){await inspect(id);assert.equal(await field('title').inputValue(),'Configured '+id);for(const [name,value] of Object.entries(fields)){const expectedValue=name==='mcp_tools'?'search\nread\nlist':value;assert.equal(await field(name).inputValue(),expectedValue,id+'.'+name)}}
-  await inspect('gate');assert.equal(await field('max_rework').inputValue(),'0');await inspect('source');assert.equal(await field('location').inputValue(),'custom/subfolder');assert.equal(await field('source_type').inputValue(),'folder');assert.equal(await page.evaluate(()=>app.wf.nodes.find(n=>n.id==='comment').text),'## Saved comment');assert.equal(await page.evaluate(()=>app.wf.nodes.find(n=>n.id==='comment').markdown),true);assert.deepEqual(errors,[]);
+  await page.reload();await page.locator('#app').waitFor({state:'visible'});await openWorkflow(wf.id);await seed();
+  for(const [id,fields] of Object.entries(changes)){await inspect(id);assert.equal(await valueOf(field('title')),'Configured '+id);for(const [name,value] of Object.entries(fields)){const expectedValue=name==='mcp_tools'?'search\nread\nlist':value;assert.equal(await valueOf(field(name)),expectedValue,id+'.'+name)}}
+  await inspect('gate');assert.equal(await valueOf(field('max_rework')),'0');await inspect('source');assert.equal(await valueOf(field('location')),'custom/subfolder');assert.equal(await valueOf(field('source_type')),'folder');assert.equal(await page.evaluate(()=>app.wf.nodes.find(n=>n.id==='comment').text),'## Saved comment');assert.equal(await page.evaluate(()=>app.wf.nodes.find(n=>n.id==='comment').markdown),true);assert.deepEqual(errors,[]);
   // Missing external catalogs must not silently replace previously saved references.
   await page.unroute('**/api/rag');await page.evaluate(()=>{ragCatalog=[];a2aConnections=[];app.settings.mcp_servers={}});
   for(const id of ['mcp','rag','a2a']){await inspect(id);await page.waitForFunction(()=>!app.dirty)}

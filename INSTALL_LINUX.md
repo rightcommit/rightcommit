@@ -5,7 +5,8 @@ and Claude Code are available to every user. Before connecting an agent, read
 [Provider terms and permitted use](PROVIDER_TERMS.md).
 
 This guide installs rightcommit directly on Linux, without Docker. The app is compiled on
-your computer. For the quickest start with Docker, see [INSTALL.md](INSTALL.md); with Podman, see [INSTALL_PODMAN.md](INSTALL_PODMAN.md).
+your computer. To skip the compilation, run the ready-made image with Docker
+([INSTALL.md](INSTALL.md)) or Podman ([INSTALL_PODMAN.md](INSTALL_PODMAN.md)).
 
 It also works inside **WSL2** on Windows (for example Ubuntu from the Microsoft Store).
 
@@ -83,12 +84,25 @@ From source, use `cargo +1.95.0 run --locked` wherever this guide says `rightcom
   Always start from the same folder: that is where your data lives.
 - **Update:** repeat `cargo +1.95.0 install rightcommit --locked`, then `rightcommit setup`
   in `~/rightcommit`. From source: `git pull`, then `cargo +1.95.0 run --locked -- setup`.
+- **Start over with empty data:** stop the app, then run `rightcommit resetdb` in
+  `~/rightcommit` (from source: `cargo +1.95.0 run --locked -- resetdb`). It lists what it
+  will delete and asks you to type `resetdb` to confirm (`--yes` skips the question in
+  scripts). Accounts, settings and saved credentials, workflows, runs and each user's files
+  (agent sign-ins, run workspaces) are deleted; the agents installed by `rightcommit setup`
+  and the folders in `sources` are kept. A copy of the database is saved in
+  `data/system/backups` (skip it with `--no-backup`). Every reset adds a new copy there (the
+  database and its encryption key, in a folder named `resetdb-` with the date and time); delete
+  old copies yourself when you no longer need them. At the next start, the first account you
+  create becomes the administrator.
+  To restore the backup a reset leaves, or to delete old backups, see
+  [Reset and restore](HOW_TO_RESET_RESTORE_RIGHTCOMMIT.md).
 
 ## Your own project folders
 
 To work on folders from your computer, use a **Source** node of type **Folder in /sources**.
 rightcommit creates `~/rightcommit/sources` at its first start: put your project folders
 there. To use another folder, start it with `NODO_SOURCES=/path/to/folder rightcommit`.
+The steps in the app are in [Your own project folders](INSTALL.md#your-own-project-folders).
 
 ## Open the app
 
@@ -97,7 +111,10 @@ there. To use another folder, start it with `NODO_SOURCES=/path/to/folder rightc
 3. Open **Agents and connections**, paste the API key of the agent you want to use
    (Codex, Claude Code or Pi) and save.
 
-Done: you can create your first workflow.
+Next: [your first run](INSTALL.md#your-first-run), on the two examples bundled with rightcommit.
+Without containers, the Local CI example needs Python 3: check that `python3 --version` works
+in the terminal that starts rightcommit. The Rust you installed in step 3 runs the tests of the
+second example.
 
 ## Troubleshooting
 

@@ -490,6 +490,22 @@ fn memory_source_instructions(workflow: &Workflow, task: &Node) -> &'static str 
     }
 }
 
+/// The checks of the workflow a root run starts from, before anything depends on the user's
+/// credentials: run creation calls it first, so a graph or configuration error is reported before
+/// the refusal for an Agent without credentials.
+pub fn validate_start(app: &App, uid: i64, w: &Workflow) -> Result<()> {
+    crate::subworkflows::validate_tree(app, uid, w)?;
+    let sources: Vec<_> = w.nodes.iter().filter(|n| n.kind == "Source").collect();
+    ensure!(
+        sources.iter().all(|n| !n.id.is_empty()
+            && n.id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')),
+        "ID Source non valido"
+    );
+    ensure!(!sources.is_empty(), "Aggiungi almeno un Source");
+    Ok(())
+}
 pub async fn create(
     app: &App,
     uid: i64,
@@ -503,7 +519,7 @@ pub async fn create_reserved(
     app: &App, uid: i64, mut w: Workflow, input: String,
     base_run: Option<String>, reserved_id: Option<String>,
 ) -> Result<Run> {
-    crate::subworkflows::validate_tree(app, uid, &w)?;
+    validate_start(app, uid, &w)?;
     let settings = app.store.settings(uid)?;
     let active_agents: HashSet<_> = w.nodes.iter().filter(|n| {
         n.kind == "Task" && !n.skip || n.kind == "Gate" || n.kind == "Review" && n.mode != "human"
@@ -527,14 +543,6 @@ pub async fn create_reserved(
     let mut workspace = run_folder.clone();
     let mut source_context = BTreeMap::new();
     let sources: Vec<_> = w.nodes.iter().filter(|n| n.kind == "Source").collect();
-    ensure!(
-        sources.iter().all(|n| !n.id.is_empty()
-            && n.id
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')),
-        "ID Source non valido"
-    );
-    ensure!(!sources.is_empty(), "Aggiungi almeno un Source");
     // Resolve every direct binding before changing permissions or preparing files.
     for (i, n) in sources.iter().enumerate() {
         if crate::source_access::direct(n) && !(i == 0 && base_run.is_some()) {
@@ -662,6 +670,11 @@ pub async fn create_reserved(
             30,
         )
         .await?;
+    }
+    // Edits already in the workspace (a direct Source is the user's own folder) stay out of
+    // the local commit. Recorded before setup, whose files belong to the run.
+    if let Some(start) = crate::local_commit::start(app, uid, &workspace).await? {
+        source_context.insert(crate::local_commit::START.into(), start);
     }
     // After the baseline commit, so files added here show up in the run's changes.
     // A workspace continued from an earlier run was already prepared.
@@ -912,6 +925,17 @@ fn pause_for(
     questions: Vec<String>,
     resume_task: Option<String>,
 ) -> Result<()> {
+    pause_with(app, uid, r, kind, questions, resume_task, None)
+}
+fn pause_with(
+    app: &App,
+    uid: i64,
+    r: &mut Run,
+    kind: &str,
+    questions: Vec<String>,
+    resume_task: Option<String>,
+    commit: Option<crate::local_commit::Preview>,
+) -> Result<()> {
     r.status = if kind == "review" || kind == "effect" {
         "waiting_review"
     } else {
@@ -926,6 +950,7 @@ fn pause_for(
         node: r.current.clone(),
         questions,
         resume_task,
+        commit,
     });
     save(app, uid, r)
 }
@@ -1047,7 +1072,7 @@ fn bypass_task(r: &mut Run, n: &Node) {
     if r.last_task.as_ref() == Some(&n.id) { r.last_task = None; }
 }
 
-async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
+pub(crate) async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
     let mut r = app.store.run(uid, rid)?;
     if r.pause_requested {
         r.status = "paused".into();
@@ -1099,6 +1124,25 @@ async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
         if n.kind == "Fork" {
             execute_parallel(app, uid, &mut r, &n).await?;
             continue;
+        }
+        // The local commit asks like an external write, with the exact content as the effect.
+        // Unattended runs have nobody to ask: the commit goes ahead with its usual checks.
+        let mut commit_digest = None;
+        if connectors::confirms_commit(&n) && r.execution.mode != ExecutionMode::Unattended {
+            let (mut preview, digest) = crate::local_commit::preview(app, uid, &r).await?;
+            let approved = r.context.remove(&format!("effect:{}", n.id));
+            // Nothing to commit needs no approval; the digest still stops anything new.
+            if !preview.files.is_empty() && approved.as_deref() != Some(&digest) {
+                preview.changed = approved.is_some();
+                r.context.insert(format!("effect-preview:{}", n.id), digest);
+                let question = format!(
+                    "{}Confermare il commit locale di {} file? Controlla file, differenze e test prima di approvare.",
+                    if preview.changed { "I file sono cambiati dopo l’approvazione. " } else { "" },
+                    preview.files.len() + preview.more_files
+                );
+                return pause_with(app, uid, &mut r, "effect", vec![question], None, Some(preview));
+            }
+            commit_digest = Some((digest, approved.is_some()));
         }
         if n.kind == "Connection" && connectors::is_write(&n) {
             let digest = connectors::effect_digest(&n, &r, &app.store.settings(uid)?);
@@ -1382,6 +1426,25 @@ async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
                     crate::artifacts::snapshot_async(app, uid, &r, &n.id, "", &out.report()).await?;
                 }
                 out
+            }
+            "Connection" if connectors::confirms_commit(&n) => {
+                match crate::local_commit::commit(app, uid, &r, commit_digest.as_ref().map(|(digest, _)| digest.as_str())).await? {
+                    Some(mut summary) => {
+                        if commit_digest.is_none() {
+                            summary.push_str("\nCommit eseguito senza conferma: la run è in modalità non presidiata, quindi nessuno poteva approvarlo.");
+                        }
+                        let out = AgentResult { status: "completed".into(), summary, decision: "pass".into(), ..Default::default() };
+                        crate::artifacts::snapshot_async(app, uid, &r, &n.id, "", &out.report()).await?;
+                        out
+                    }
+                    // Changed after the check above: ask again, saying so if it had been approved.
+                    None => {
+                        if let Some((digest, true)) = commit_digest {
+                            r.context.insert(format!("effect:{}", n.id), digest);
+                        }
+                        continue;
+                    }
+                }
             }
             "Connection" => {
                 let out = connectors::execute(app, uid, &r, &n).await?;
@@ -1685,6 +1748,7 @@ pub(crate) fn apply_decision(
 ) -> Result<Run> {
     let mut r = app.store.run(user.id, rid)?;
     let p = r.pending.clone().context("Nessuna decisione in attesa")?;
+    let commit = r.workflow.node(&p.node).is_ok_and(connectors::confirms_commit);
     ensure!(
         supervisor.is_none() || r.execution.mode == ExecutionMode::Unattended,
         "Decisione automatica non autorizzata"
@@ -1693,7 +1757,8 @@ pub(crate) fn apply_decision(
         supervisor.is_none()
             || p.kind != "effect"
             || action != "approve"
-            || r.execution.allow_external_writes,
+            || r.execution.allow_external_writes
+            || commit,
         "Scritture esterne non autorizzate"
     );
     ensure!(
@@ -1750,7 +1815,11 @@ pub(crate) fn apply_decision(
             );
             if p.kind == "effect" {
                 r.status = "failed".into();
-                r.error = Some("Operazione remota rifiutata; nessuna scrittura eseguita".into());
+                r.error = Some(if commit {
+                    "Commit locale rifiutato: nessun commit creato, i file restano nel workspace come li ha lasciati la run"
+                } else {
+                    "Operazione remota rifiutata; nessuna scrittura eseguita"
+                }.into());
             } else if rework_review_state(&mut r).is_err() {
                 r.status = "failed".into();
                 r.error = Some(

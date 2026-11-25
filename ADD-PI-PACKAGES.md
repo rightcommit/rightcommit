@@ -73,7 +73,9 @@ cd ..
 python3 scripts/bundle-assets.py
 ```
 
-Then commit the changed files and rebuild (`docker compose up -d --build`).
+Then commit the changed files and build the image from source
+(`docker compose -f compose.yaml -f compose.build.yaml up -d --build`). Docker and Podman users
+get the packages with the next release image.
 
 To update the packages rightcommit already ships, see
 [UPDATE-PI-DEFAULT-PACKAGES.md](UPDATE-PI-DEFAULT-PACKAGES.md).

@@ -24,6 +24,7 @@ mod continuation;
 mod deletion;
 mod distribution;
 mod engine;
+mod local_commit;
 mod schedules;
 mod finops;
 mod claude_time;
@@ -39,6 +40,7 @@ mod presets;
 mod templates;
 mod test_command;
 mod rag;
+mod resetdb;
 mod revision;
 mod source_access;
 mod source_setup;
@@ -97,8 +99,14 @@ fn main() -> anyhow::Result<()> {
             return Ok(());
         }
         Some("--help" | "-h") => {
-            println!("rightcommit [setup | --version | --help]\n\nAvvio: http://localhost:8080\nsetup: installa agenti ed estensioni (richiede Node.js 24 o almeno 22.19, con npm).\nDati: ./data oppure NODO_DATA. Progetti: ./sources oppure NODO_SOURCES. Risorse esterne: NODO_ASSETS.\nAmbiente: .env nella cartella di avvio; le variabili già impostate hanno precedenza.");
+            println!("rightcommit [setup | resetdb [--yes] [--no-backup] | --version | --help]\n\nAvvio: http://localhost:8080\nsetup: installa agenti ed estensioni (richiede Node.js 24 o almeno 22.19, con npm).\nresetdb: azzera i dati come in una prima installazione (account, impostazioni, workflow, esecuzioni, file degli utenti) e conserva quanto installato da setup. Arresta prima il server. Chiede conferma; --yes la salta, --no-backup non salva la copia del database.\nDati: ./data oppure NODO_DATA. Progetti: ./sources oppure NODO_SOURCES. Risorse esterne: NODO_ASSETS.\nAmbiente: .env nella cartella di avvio; le variabili già impostate hanno precedenza.");
             return Ok(());
+        }
+        Some("resetdb") => {
+            // SAFETY: no runtime or application threads exist yet. The same .env as the server,
+            // so NODO_DATA selects the same data directory.
+            unsafe { startup_env::load()?; }
+            return resetdb::main(&std::env::args().skip(2).collect::<Vec<_>>());
         }
         Some("setup" | "mcp-bridge" | "mcp-workspace") | None => {}
         Some(arg) => anyhow::bail!("Argomento sconosciuto: {arg}; usa --help"),
