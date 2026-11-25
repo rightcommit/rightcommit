@@ -50,7 +50,7 @@ installation to someone else, or to wipe every saved secret at once.
 For smaller changes you do not need it:
 
 - delete a single workflow from the app;
-- remove a saved API key with the bin button next to it in **Personal Settings → Agents**;
+- remove a saved API key with the bin button next to it in **Personal settings → Agents**;
 - suspend or remove an account in **Users** (administrator only; removing an account keeps
   the work it saved);
 - updating rightcommit to a new version never needs a reset.
@@ -60,11 +60,8 @@ For smaller changes you do not need it:
 The app must be **stopped** first. While it runs it holds the database, and `resetdb` refuses
 with:
 
-> `Il database è in uso: arresta il server rightcommit che usa questa cartella dati (Ctrl+C nel
-> suo terminale, oppure docker compose stop) e riprova. Nessun file è stato modificato.`
->
-> ("The database is in use: stop the rightcommit server that uses this data folder and try
-> again. No file was changed.")
+> `The database is in use: stop the rightcommit server that uses this data folder (Ctrl+C in its
+> terminal, or docker compose stop) and try again. No file was changed.`
 
 ### Native install (Homebrew, crates.io)
 
@@ -77,10 +74,9 @@ with:
    ```
 
 3. Read the list. To go ahead, type `resetdb` and press **Return** when it asks
-   **Scrivi resetdb per confermare** ("type resetdb to confirm"). Anything else, or just
+   **Type resetdb to confirm**. Anything else, or just
    **Return**, cancels without changing anything.
-4. When it prints **Azzeramento completato** ("reset complete"), the line below it,
-   **Copia di sicurezza**, shows where the backup is.
+4. When it prints **Reset complete**, the line below it, **Backup**, shows where the backup is.
 5. Start the app again with `rightcommit`.
 
 From source, run the same steps in the folder where you cloned rightcommit and use
@@ -133,7 +129,7 @@ any keys you put in `.env` yourself.
 - Your projects in `sources` are still there.
 
 Running `resetdb` again on an installation that is already empty changes nothing and prints
-**Niente da azzerare** ("nothing to reset").
+**Nothing to reset**.
 
 ## Where the backup is
 
@@ -200,7 +196,7 @@ below deletes it first.
    ```
 
    Type `resetdb` to confirm. If the app was not started after the reset, it prints
-   **Niente da azzerare** ("nothing to reset"): that is fine. `--no-backup` avoids adding a
+   **Nothing to reset**: that is fine. `--no-backup` avoids adding a
    backup of the empty installation next to the one you want; your existing backups are kept.
 3. List the backups and pick one:
 
@@ -219,7 +215,7 @@ below deletes it first.
    database; usually they do not exist. The second copies `nodo.sqlite`, `master.key` and the
    template files into `data/system`. The backup stays where it is.
 5. Start the app with `rightcommit` and sign in with an old account.
-6. Check that your workflows are back and that **Personal Settings → Agents** shows your saved
+6. Check that your workflows are back and that **Personal settings → Agents** shows your saved
    API keys. When everything is in place, you can [delete the backup](#delete-old-backups).
 
 From source, use `cargo +1.95.0 run --locked -- resetdb --no-backup` in step 2 and
@@ -316,19 +312,18 @@ The same commands, with `podman compose` in place of `docker compose`.
 
 ## Troubleshooting
 
-`resetdb` prints its messages in Italian. Every error that ends with **Nessun file è stato
-modificato** ("no file was changed") left your data as it was.
+Every error that ends with **No file was changed** left your data as it was.
 
 | Message | What it means and what to do |
 |---|---|
-| `Il database è in uso: arresta il server rightcommit …` | The app is still running on this data. Stop it (**Ctrl + C**, or `docker compose stop` / `podman compose stop`) and run `resetdb` again. With Docker or Podman, use `compose run --rm`, not `compose exec`. |
-| `Cartella dati non trovata: data …` | No data folder where you ran the command. Go to the folder you start the app from (`cd ~/rightcommit`) or set `NODO_DATA` to the data folder, then run it again. |
-| `… non è una cartella dati di rightcommit: manca system …` | The folder found is not a rightcommit data folder (it has no `system` folder). Check that you are in the right folder, or that `NODO_DATA` points to the right one. |
-| `La cartella dei progetti … si trova dentro …: spostala prima di azzerare …` | Your projects folder (`NODO_SOURCES`) is inside a folder the reset would delete. Move the projects folder outside the data folder, update `NODO_SOURCES`, then run `resetdb` again. |
-| `Database non leggibile …` | The database file cannot be opened as a database. Do not try again blindly: keep a copy of the whole data folder and look at the error printed under **Caused by**. |
-| `Annullato …` | You did not type `resetdb` exactly at the question. Run the command again and type `resetdb`. |
-| `Conferma mancante: per eseguire senza terminale aggiungi --yes …` | There was no terminal to answer the question (a script, a pipe, `docker compose run -T`). Add `--yes` if you really want to reset. |
-| `Azzeramento non eseguito; i file sono stati rimessi al loro posto` | A file could not be moved (look at the error below it). Everything was put back. Fix the cause, often permissions on `data`, and run it again. |
-| `Spazio non ancora liberato: elimina a mano …` | The reset is complete, but a temporary folder named `resetdb-….trash` in `data/system` could not be deleted. Delete that folder yourself. |
-| `Argomento sconosciuto: …` | An option was misspelled. The only options are `--yes` and `--no-backup`. |
+| `The database is in use: stop the rightcommit server …` | The app is still running on this data. Stop it (**Ctrl + C**, or `docker compose stop` / `podman compose stop`) and run `resetdb` again. With Docker or Podman, use `compose run --rm`, not `compose exec`. |
+| `Data folder not found: data …` | No data folder where you ran the command. Go to the folder you start the app from (`cd ~/rightcommit`) or set `NODO_DATA` to the data folder, then run it again. |
+| `… is not a rightcommit data folder: it has no system folder …` | The folder found is not a rightcommit data folder (it has no `system` folder). Check that you are in the right folder, or that `NODO_DATA` points to the right one. |
+| `The projects folder … is inside …: move it before resetting …` | Your projects folder (`NODO_SOURCES`) is inside a folder the reset would delete. Move the projects folder outside the data folder, update `NODO_SOURCES`, then run `resetdb` again. |
+| `Database not readable …` | The database file cannot be opened as a database. Do not try again blindly: keep a copy of the whole data folder and look at the error printed under **Caused by**. |
+| `Cancelled …` | You did not type `resetdb` exactly at the question. Run the command again and type `resetdb`. |
+| `Confirmation missing: to run without a terminal, add --yes …` | There was no terminal to answer the question (a script, a pipe, `docker compose run -T`). Add `--yes` if you really want to reset. |
+| `Reset not done; the files were put back in place` | A file could not be moved (look at the error below it). Everything was put back. Fix the cause, often permissions on `data`, and run it again. |
+| `Space not freed yet: delete … yourself` | The reset is complete, but a temporary folder named `resetdb-….trash` in `data/system` could not be deleted. Delete that folder yourself. |
+| `Unknown argument: …` | An option was misspelled. The only options are `--yes` and `--no-backup`. |
 | After a restore, the settings page shows `Decifratura fallita` ("decryption failed") | The database was restored without the `master.key` from the same backup folder. Stop the app and repeat [the restore](#restore-a-backup) from step 2, copying the whole folder. |

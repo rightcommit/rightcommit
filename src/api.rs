@@ -131,6 +131,8 @@ pub fn router(app: App) -> Router {
         .route("/finops.js", axum::routing::get(finops_js))
         .route("/i18n.js", axum::routing::get(i18n))
         .route("/icons.svg", axum::routing::get(icons))
+        // Browsers ask for /favicon.ico on every page: the app icon (.github/assets/rightcommit-icon.png at 64 px).
+        .route("/favicon.ico", axum::routing::get(|| async { ([(header::CONTENT_TYPE, "image/png")], include_bytes!("../web/favicon.png").as_slice()) }))
         .route(
             "/healthz",
             axum::routing::get(|| async {
@@ -730,6 +732,7 @@ async fn save_settings(State(a): State<App>,u: User,Json(payload): Json<Value>) 
 async fn write_settings(a: App,u: User,payload: Value,partial: bool) -> ApiResult<Json<Value>> {
     let revision=payload[if partial {"revision"}else{"_revision"}].as_str().ok_or_else(||auth::ApiError(StatusCode::CONFLICT,SETTINGS_CONFLICT.into()))?;
     let mut mcp_changed=false;
+    let mut previous=None;
     let result=a.store.update_settings(u.id,|latest| {
         anyhow::ensure!(revision==settings_revision(latest),"{SETTINGS_CONFLICT}");
         let mut next=if partial {merge_settings_patch(latest,&payload["changes"])?}else{serde_json::from_value::<Settings>(payload.clone())?};
@@ -746,12 +749,21 @@ async fn write_settings(a: App,u: User,payload: Value,partial: bool) -> ApiResul
         validate_settings(&mut next,latest)?;
         mcp_changed=serde_json::to_value(&next.mcp_servers)?!=serde_json::to_value(&latest.mcp_servers)?;
         if serde_json::to_value(&next)?!=serde_json::to_value(&*latest)? {backup_settings(&a,u.id,latest)?;}
+        previous=Some(latest.clone());
         *latest=next;Ok(())
     });
-    let settings=result.map_err(|error|if error.to_string()==SETTINGS_CONFLICT {auth::ApiError(StatusCode::CONFLICT,SETTINGS_CONFLICT.into())}else{error.into()})?;
+    let mut settings=result.map_err(|error|if error.to_string()==SETTINGS_CONFLICT {auth::ApiError(StatusCode::CONFLICT,SETTINGS_CONFLICT.into())}else{error.into()})?;
+    // The first key saved for an agent makes it the Default when the Default has no credentials.
+    let mut default_changed=None;
+    if let Some(previous)=previous && let Some(runtime)=crate::agent_auth::default_after_new_key(&a,u.id,&previous,&settings).await? {
+        settings=a.store.update_settings(u.id,|latest| {if latest.default_runtime==previous.default_runtime {latest.default_runtime=runtime.clone();}Ok(())})?;
+        if settings.default_runtime==runtime {default_changed=Some(json!({"from":previous.default_runtime,"to":runtime}));}
+    }
     if mcp_changed {a.mcp.clear_user(u.id).await;}
     a.slots.changed.notify_waiters();
-    Ok(Json(public_settings(&a,&u,&settings)))
+    let mut public=public_settings(&a,&u,&settings);
+    if let Some(changed)=default_changed {public["default_runtime_changed"]=changed;}
+    Ok(Json(public))
 }
 
 async fn twg_status(State(a): State<App>, u: User) -> ApiResult<Json<Value>> {

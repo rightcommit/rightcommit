@@ -1,4 +1,4 @@
-//! ServiceNow credentials stay in encrypted personal settings, outside agent processes.
+//! ServiceNow credentials stay in encrypted Personal settings, outside agent processes.
 use crate::{App, agents, model::*};
 use anyhow::{Context, Result, bail, ensure};
 use axum::{Json, extract::State};
@@ -274,7 +274,7 @@ fn client() -> Result<reqwest::Client> {
 fn auth(request: reqwest::RequestBuilder, c: &ConnectionConfig) -> Result<reqwest::RequestBuilder> {
     ensure!(
         configured(c),
-        "Configura le credenziali ServiceNow nelle Personal Settings → Connessioni"
+        "Configura le credenziali ServiceNow nelle Configurazioni personali → Connessioni"
     );
     Ok(if c.authentication == "basic" {
         request.basic_auth(&c.username, Some(&c.password))
@@ -293,7 +293,7 @@ pub(crate) async fn send(
     send_at(client,c,method,path,body,&origin).await
 }
 async fn send_at(client:&reqwest::Client,c:&ConnectionConfig,method:&str,path:&str,body:Option<&Value>,origin:&str)->Result<Value> {
-    ensure!(configured(c), "Configura le credenziali ServiceNow nelle Personal Settings → Connessioni");
+    ensure!(configured(c), "Configura le credenziali ServiceNow nelle Configurazioni personali → Connessioni");
     let mut response = None;
     for attempt in 0..2 {
         let mut effective = c.clone();
@@ -393,7 +393,7 @@ pub async fn status(State(app): State<App>, user: User) -> crate::auth::ApiResul
     let c = settings
         .connections
         .get("servicenow")
-        .context("Configura ServiceNow nelle Personal Settings")?;
+        .context("Configura ServiceNow nelle Configurazioni personali")?;
     check(c).await
 }
 
@@ -403,7 +403,7 @@ pub async fn execute(app: &App, uid: i64, r: &Run, n: &Node) -> Result<AgentResu
     let c = settings
         .connections
         .get("servicenow")
-        .context("Configura ServiceNow nelle Personal Settings")?;
+        .context("Configura ServiceNow nelle Configurazioni personali")?;
     let client = client()?;
     let value = if n.operation == "check_connection" {
         send(

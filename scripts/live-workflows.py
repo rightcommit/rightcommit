@@ -20,7 +20,7 @@ def main():
     settings=api('/settings')
     if args.model:
         settings['agents']['codex']['model']=args.model;settings['agents']['codex']['effort']='low';api('/settings',settings,'PUT')
-    runtime=settings['default_runtime'];assert settings['agents'][runtime].get('configured'),f'Configure {runtime} credentials in the personal settings first'
+    runtime=settings['default_runtime'];assert settings['agents'][runtime].get('configured'),f'Configure {runtime} credentials in Personal settings first'
     report={'scope':'Real provider execution of two local sample workflows; automated test-account approvals, no production or external approval','started':time.time(),'runs':[]};out=Path('test-results/live-workflows.json')
     policy='''Automated verification on Northstar Helpdesk only. Rust library, no new dependencies or services. One feature directory specs/001-ticket-dedup. V1: exact case-sensitive fingerprint matching, retain oldest/lower ID, sum occurrences and preserve oldest priority. Priorities are integers 1..5 (1 most urgent); invalid input must be documented and tested. Do not add auth, persistence, APIs or a UI to this library. V2 incident is an explicitly requested specification change: minimum numeric priority wins; keep V1 ID and occurrence rules. Add P1-into-P3, equal-priority and existing regression tests. For remaining reversible technical decisions choose the smallest implementation and document it. Report necessary questions with needs_input. Do not create external PRs or deploy.'''
     base=None

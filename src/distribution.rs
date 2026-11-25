@@ -18,7 +18,7 @@ struct Resource {
 
 pub fn assets(data: &Path) -> Result<PathBuf> {
     if let Some(path) = std::env::var_os("NODO_ASSETS") {
-        return std::fs::canonicalize(path).context("NODO_ASSETS non accessibile");
+        return std::fs::canonicalize(path).context("NODO_ASSETS is not accessible");
     }
     extract(data)
 }
@@ -73,32 +73,49 @@ fn agent_packages() -> Vec<String> {
 
 pub fn setup(data: &Path, assets: &Path) -> Result<()> {
     let prefix = data.join("system/tools");
-    let status = Command::new("npm")
-        .args(["install", "--global", "--prefix"])
-        .arg(&prefix)
-        .args([
-            "--no-audit",
-            "--no-fund",
-            // Claude Code's postinstall puts its native binary in place of a stub; npm 12
-            // blocks install scripts unless they are allowed by name.
-            "--allow-scripts=@anthropic-ai/claude-code",
-        ])
-        .args(agent_packages())
-        .status()
-        .context("Installa Node.js 24 (almeno 22.19) e rendi npm disponibile nel PATH")?;
-    ensure!(
-        status.success(),
-        "Installazione degli agenti fallita; ripeti rightcommit setup"
-    );
-    let status = Command::new("npm")
-        .args(["ci", "--omit=dev", "--no-audit", "--no-fund"])
-        .current_dir(assets.join("pi-extensions"))
-        .status()?;
-    ensure!(
-        status.success(),
-        "Installazione delle estensioni Pi fallita"
-    );
-    println!("Configurazione completata. Avvia con rightcommit dalla stessa cartella.");
+    let mut install: Vec<String> = ["install", "--global", "--prefix"].map(String::from).into();
+    install.push(prefix.to_string_lossy().into_owned());
+    install.extend([
+        "--no-audit",
+        "--no-fund",
+        // Claude Code's postinstall puts its native binary in place of a stub; npm 12
+        // blocks install scripts unless they are allowed by name. The other two scripts npm
+        // lists are not needed: @google/genai's preinstall only echoes, and protobufjs's
+        // postinstall only warns about the version scheme of the package that depends on it.
+        "--allow-scripts=@anthropic-ai/claude-code",
+    ].map(String::from));
+    let packages = agent_packages();
+    install.extend(packages.iter().cloned());
+    npm(&format!("Installing the agents ({}), this can take a few minutes", packages.join(", ")), &install, None)
+        .context("Installing the agents failed; run rightcommit setup again")?;
+    println!("Agents installed in {}", tools(data).display());
+    npm("Installing the Pi extensions", &["ci", "--omit=dev", "--no-audit", "--no-fund"].map(String::from), Some(&assets.join("pi-extensions")))
+        .context("Installing the Pi extensions failed; run rightcommit setup again")?;
+    println!("Pi extensions installed.");
+    println!("Setup complete. Start rightcommit from the same folder.");
+    Ok(())
+}
+
+/// Runs npm with its output captured. On success its warnings, notices and summaries are not
+/// shown, since a new user reads them as problems or instructions; on failure all of npm's output
+/// is printed so that the cause is visible.
+fn npm(progress: &str, args: &[String], dir: Option<&Path>) -> Result<()> {
+    use std::io::Write;
+    println!("{progress}…");
+    let mut command = Command::new("npm");
+    command.args(args).arg("--no-update-notifier");
+    if let Some(dir) = dir {
+        command.current_dir(dir);
+    }
+    let output = command
+        .output()
+        .context("Install Node.js 24 (at least 22.19) and make npm available in PATH")?;
+    if !output.status.success() {
+        let mut err = std::io::stderr();
+        err.write_all(&output.stdout)?;
+        err.write_all(&output.stderr)?;
+        anyhow::bail!("npm exited with {}", output.status);
+    }
     Ok(())
 }
 

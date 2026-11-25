@@ -3,7 +3,7 @@
 This guide covers ServiceNow connectivity, ITSM classification, catalog Requests and
 Spec Kit examples. Start from a built-in template and keep business-specific settings in
 files inside its Source.
-Personal Settings hold the ServiceNow connection and Pi agent configuration.
+Personal settings hold the ServiceNow connection and Pi agent configuration.
 
 | Template in New workflow | Purpose | Bundled Source |
 |---|---|---|
@@ -145,9 +145,9 @@ If **Enforce token restriction** is enabled, also check the corresponding REST A
 Policies: they must allow the intended OAuth client/API. That setting is separate from the
 scope-to-API mapping.
 
-### 2.5 Configure rightcommit Personal Settings
+### 2.5 Configure rightcommit Personal settings
 
-Open **Personal Settings → Connections → ServiceNow**:
+Open **Personal settings → Connections → ServiceNow**:
 
 | Field | Value |
 |---|---|
@@ -178,11 +178,11 @@ is available for externally obtained tokens and does not renew them automaticall
 A rejected automatic token is invalidated; reads may retry once after renewal. Writes
 are never automatically replayed following an authentication error.
 
-In **Personal Settings → Agents**, configure Pi, including provider, model and credentials,
+In **Personal settings → Agents**, configure Pi, including provider, model and credentials,
 for the report task. With multiple providers, select Multi-provider and configure keys in
 the environment. Native startup loads `.env` from the startup directory; existing process
 variables win. Docker must pass the variables into the container, as the supplied Compose
-configuration does. ServiceNow credentials belong in Personal Settings, not in `.env`,
+configuration does. ServiceNow credentials belong in Personal settings, not in `.env`,
 Source files, workflow JSON or prompts for these examples.
 
 ### 2.6 Run the OAuth test template
@@ -497,7 +497,7 @@ personal Source folder. Set `source.mode` to `servicenow` and complete **exactly
 - `source.number`: the exact record number, which must resolve uniquely.
 
 The default table is `sc_req_item`. `source.fields` lists fields to acquire. Connection
-credentials always come from Personal Settings. With `include_variables: true`, RITM
+credentials always come from Personal settings. With `include_variables: true`, RITM
 variables are read through `sc_item_option_mtom`. With `variables_required: true`, denied
 or incomplete variable acquisition fails. Setting it to false permits transport failures
 with an explicit acquisition gap. Repeated variables/MRVS need a dedicated adapter.

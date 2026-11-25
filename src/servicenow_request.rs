@@ -50,7 +50,7 @@ where F:Fn(String)->Fut,Fut:Future<Output=Result<Value>> {
 pub(crate) async fn execute(app:&crate::App,uid:i64,r:&Run,n:&Node,c:Option<&ConnectionConfig>)->Result<AgentResult>{
     let config=servicenow_config::read_json(r,&n.location,"configurazione",128000)?;
     let fixture=config["source"]["mode"]=="fixture";
-    let instance=if fixture {None}else{Some(servicenow::base(c.context("Configura la connessione ServiceNow nelle impostazioni personali")?)?)};
+    let instance=if fixture {None}else{Some(servicenow::base(c.context("Configura la connessione ServiceNow nelle Configurazioni personali")?)?)};
     let client=reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).timeout(std::time::Duration::from_secs(30)).build()?;
     let snapshot=acquire(r,n,&config,instance,|path|{let client=&client;async move {servicenow::send(client,c.context("Connessione ServiceNow mancante")?,"GET",&path,None).await}}).await?;
     ensure!(!n.id.is_empty()&&n.id.bytes().all(|b|b.is_ascii_alphanumeric()||b"_-".contains(&b)),"ID nodo non valido");

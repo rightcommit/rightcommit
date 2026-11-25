@@ -193,7 +193,7 @@ use **POST**, path **/graphql**, and a JSON body such as:
 All POST, PUT, PATCH and DELETE requests pause for the workflow's external-effect
 approval, including GraphQL queries (POST). The preview includes the resolved target,
 method, headers and exact body. Changing request fields invalidates the previous
-approval. Credentials stay in personal settings. Requests still need the GitHub token
+approval. Credentials stay in Personal settings. Requests still need the GitHub token
 type and permissions required by the endpoint; the catalog does not grant permissions
 or create GitHub App credentials automatically.
 

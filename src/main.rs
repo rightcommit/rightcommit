@@ -99,7 +99,7 @@ fn main() -> anyhow::Result<()> {
             return Ok(());
         }
         Some("--help" | "-h") => {
-            println!("rightcommit [setup | resetdb [--yes] [--no-backup] | --version | --help]\n\nAvvio: http://localhost:8080\nsetup: installa agenti ed estensioni (richiede Node.js 24 o almeno 22.19, con npm).\nresetdb: azzera i dati come in una prima installazione (account, impostazioni, workflow, esecuzioni, file degli utenti) e conserva quanto installato da setup. Arresta prima il server. Chiede conferma; --yes la salta, --no-backup non salva la copia del database.\nDati: ./data oppure NODO_DATA. Progetti: ./sources oppure NODO_SOURCES. Risorse esterne: NODO_ASSETS.\nAmbiente: .env nella cartella di avvio; le variabili già impostate hanno precedenza.");
+            println!("rightcommit [setup | resetdb [--yes] [--no-backup] | --version | --help]\n\nStart: http://localhost:8080\nsetup: installs the agents and extensions (needs Node.js 24, or at least 22.19, with npm).\nresetdb: resets the data as in a first installation (accounts, settings, workflows, runs, user files) and keeps what setup installed. Stop the server first. It asks for confirmation; --yes skips it, --no-backup does not save a copy of the database.\nData: ./data or NODO_DATA. Projects: ./sources or NODO_SOURCES. External resources: NODO_ASSETS.\nEnvironment: .env in the start folder; variables already set take precedence.");
             return Ok(());
         }
         Some("resetdb") => {
@@ -109,7 +109,7 @@ fn main() -> anyhow::Result<()> {
             return resetdb::main(&std::env::args().skip(2).collect::<Vec<_>>());
         }
         Some("setup" | "mcp-bridge" | "mcp-workspace") | None => {}
-        Some(arg) => anyhow::bail!("Argomento sconosciuto: {arg}; usa --help"),
+        Some(arg) => anyhow::bail!("Unknown argument: {arg}; see --help"),
     }
     if matches!(std::env::args().nth(1).as_deref(),None|Some("setup")) {
         // SAFETY: no runtime or application threads exist yet. Utility MCP processes must
@@ -166,11 +166,11 @@ async fn run() -> anyhow::Result<()> {
         }
     });
     if app.isolate && unsafe { libc::geteuid() } != 0 {
-        anyhow::bail!("NODO_ISOLATE_USERS richiede root per avviare child con UID distinti");
+        anyhow::bail!("NODO_ISOLATE_USERS needs root to start child processes with separate UIDs");
     }
     let addr = std::env::var("NODO_LISTEN").unwrap_or_else(|_| "127.0.0.1:8080".into());
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    tracing::info!(%addr, isolated=app.isolate, "rightcommit pronto");
+    tracing::info!(%addr, isolated=app.isolate, "rightcommit ready");
     schedules::start_service(app.clone())?;
     axum::serve(listener, api::router(app))
         .with_graceful_shutdown(async {

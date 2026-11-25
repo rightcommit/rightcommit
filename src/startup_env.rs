@@ -6,19 +6,19 @@ fn read(path: &Path) -> Result<Vec<(String, String)>> {
         Ok(entries) => entries,
         Err(error) if error.not_found() => return Ok(Vec::new()),
         // dotenvy parse errors can contain an entire line, including a secret value.
-        Err(_) => return Err(anyhow!("Impossibile leggere .env nella cartella di avvio.")),
+        Err(_) => return Err(anyhow!("Cannot read .env in the start folder.")),
     };
     let values = entries
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(|_| {
             anyhow!(
-                "File .env non valido: controlla la sintassi. I valori non sono stati caricati."
+                "Invalid .env file: check the syntax. No values were loaded."
             )
         })?;
     for (name, value) in &values {
         ensure!(
             !name.is_empty() && !name.contains(['=', '\0']) && !value.contains('\0'),
-            "File .env non valido: controlla la sintassi. I valori non sono stati caricati."
+            "Invalid .env file: check the syntax. No values were loaded."
         );
     }
     Ok(values)
@@ -75,7 +75,7 @@ mod tests {
         )
         .unwrap();
         let error = read(&path).unwrap_err();
-        assert!(error.to_string().contains("File .env non valido"));
+        assert!(error.to_string().contains("Invalid .env file"));
         assert!(!format!("{error:?}").contains("private-key"));
         assert!(!format!("{error:?}").contains("valid-dummy-key"));
         std::fs::write(&path, b"OPENAI_API_KEY=bad\0value\n").unwrap();

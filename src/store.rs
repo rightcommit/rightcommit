@@ -36,7 +36,7 @@ impl Store {
         let key: [u8; 32] = if kp.exists() {
             std::fs::read(&kp)?
                 .try_into()
-                .map_err(|_| anyhow::anyhow!("Chiave master non valida"))?
+                .map_err(|_| anyhow::anyhow!("Invalid master key in system/master.key"))?
         } else {
             let mut k = [0; 32];
             OsRng.fill_bytes(&mut k);

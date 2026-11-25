@@ -161,7 +161,7 @@ pub async fn headers(
         .settings(uid)?
         .mcp_servers
         .remove(id)
-        .context("Configura il server MCP nelle impostazioni personali")?;
+        .context("Configura il server MCP nelle Configurazioni personali")?;
     let mut h = cfg.headers.clone();
     let a = &cfg.auth;
     let authorization = match a.mode.as_str() {

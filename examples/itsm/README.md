@@ -2,11 +2,11 @@
 
 Il workflow elabora **tutti i ticket di un lotto**, prepara un piano per ciascuno e li applica
 in sequenza con il connettore nativo ServiceNow. Pi classifica e cerca nel RAG interno;
-Python prepara e valida i piani. Le credenziali restano nelle Personal Settings.
+Python prepara e valida i piani. Le credenziali restano nelle Configurazioni personali.
 
 ## Preparazione nella UI
 
-1. Configurare Pi e ServiceNow nelle **Personal Settings**. Per ServiceNow usare URL e
+1. Configurare Pi e ServiceNow nelle **Configurazioni personali**. Per ServiceNow usare URL e
    credenziali della PDI, non del portale Developer. Verificare la connessione e salvare.
 2. In Storage indicizzare `examples/itsm/kb`: quattro articoli Markdown. Usare **keyword**
    senza download, oppure **hybrid / multilingual-minilm** per ricerca semantica.
@@ -14,7 +14,7 @@ Python prepara e valida i piani. Le credenziali restano nelle Personal Settings.
    oppure la variante **Northstar KB demo**. Aggiungere il nodo RAG
    con l’indice personale e collegarlo a **Pi ITSM operator** come contesto. Salvare.
 4. Per le Request completare `config/servicenow.json` nella Source: route, item_sys_id,
-   mapping dei campi e variabili obbligatorie. Non servono campi verticali nelle Personal Settings.
+   mapping dei campi e variabili obbligatorie. Non servono campi verticali nelle Configurazioni personali.
 5. Avviare in modalità interattiva: l’approvazione del lotto mostra i piani di tutti i ticket.
 
 Il generico è riutilizzabile con KB e regole del cliente; la demo Northstar contiene VPN,

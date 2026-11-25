@@ -289,7 +289,7 @@ fn inventory_cached(
         cache.monitor = match crate::file_watch::Monitor::start(roots.clone()) {
             Ok(monitor) => Some(monitor),
             Err(error) => {
-                tracing::warn!(run=%run.id, %error, "Notifiche non disponibili; riconciliazione metadati attiva");
+                tracing::warn!(run=%run.id, %error, "File notifications unavailable; reconciling file metadata instead");
                 None
             }
         };
@@ -1072,10 +1072,10 @@ pub fn recover_legacy_runs(app: &App) -> Result<(usize, usize)> {
             Ok(count) => {
                 completed += 1;
                 files += count;
-                tracing::info!(run=%run.id,recovered=count,"Artefatti storici recuperati");
+                tracing::info!(run=%run.id,recovered=count,"Recovered historical artifacts");
             }
             Err(error) => {
-                tracing::warn!(run=%run.id,%error,"Recupero artefatti storici non completato; verrà ritentato al riavvio")
+                tracing::warn!(run=%run.id,%error,"Historical artifact recovery incomplete; it will be retried at the next start")
             }
         }
     }

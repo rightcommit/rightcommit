@@ -47,7 +47,27 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   await page.locator('#workflow-import-file').setInputFiles({name:'plain.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify({...workflow,id:'y',name:'Plain'}))});
   await page.waitForFunction(()=>!document.querySelector('#workflow-import-confirm').disabled);
   assert(await page.locator('#workflow-import-commands').isHidden());
+  // A run of the bundled Python test. The step report keeps the unittest output, which later steps
+  // receive; the viewers show it as written, so its line of dashes is not a Markdown rule.
+  await page.evaluate(()=>closeModal());
+  const example=JSON.parse(fs.readFileSync(path.resolve('examples/local-ci/workflow.json'),'utf8'));
+  assert((await page.request.post(base+'/api/workflows',{headers,data:example})).ok());
+  const started=await (await page.request.post(base+'/api/runs',{headers,data:{workflow_id:example.id}})).json();
+  let detail;for(let i=0;i<300;i++){detail=await (await page.request.get(base+'/api/runs/'+started.id)).json();if(['completed','failed'].includes(detail.run.status))break;await new Promise(r=>setTimeout(r,100))}
+  assert.equal(detail.run.status,'completed',detail.run.error);
+  const report=detail.artifacts.find(a=>a.path==='.rightcommit/reports/tests.md');
+  const stored=(await (await page.request.get(base+'/api/artifacts/'+report.id)).json()).artifact.content;
+  assert(/\n-{20,}\n/.test(stored)&&stored.includes('Ran 1 test'),stored);
+  assert.equal(detail.run.outputs.tests.summary,stored,'later steps receive the report as stored');
+  await page.evaluate(id=>loadRun(id),started.id);
+  const shown=async()=>{const view=page.locator('#dialog .artifact-view');await view.waitFor();assert.equal(await view.locator('pre.step-output').count(),1);assert.equal(await view.locator('hr,h1,h2,ul,.markdown').count(),0);assert.equal(await view.locator('pre.step-output').textContent(),stored);assert.match(await view.locator('pre.step-output').evaluate(e=>getComputedStyle(e).fontFamily),/monospace/);await page.evaluate(()=>closeModal())};
+  await page.evaluate(id=>artifact(id),report.id);await shown();
+  await page.evaluate(p=>openStorage(p,'workspaces'),detail.run.workspace.split('/workspaces/')[1]+'/.rightcommit/reports/tests.md');await shown();
+  // The Activity log keeps its translated header lines above the output.
+  await page.evaluate(()=>logs(true));await page.waitForFunction(id=>activityLog.runs.get(id)?.loaded,started.id);
+  const log=await page.locator('#activity-panel').innerText();
+  assert(log.includes('Test command: python3 -m unittest -v test_calculator (set in the node)')&&log.includes("Tests passed. Last lines of the output (all of it is in the step's report):"),log);
   assert.deepEqual(errors,[]);
-  console.log('PASS: test command field, persistence, operation switch, English text and import warning');
+  console.log('PASS: test command field, persistence, operation switch, English text, import warning and test report shown as written');
  }finally{await browser?.close();server.kill();fs.rmSync(dir,{recursive:true,force:true})}
 })().catch(e=>{console.error(e);process.exit(1)});

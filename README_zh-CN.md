@@ -82,7 +82,7 @@ Docker 在 macOS、Windows 和 Linux 上运行包含所有依赖的 rightcommit�
 git clone https://github.com/rightcommit/rightcommit.git && cd rightcommit && docker compose up -d
 ```
 
-首次启动会下载最新发布版本的预构建镜像（约 1 GB），所需时间取决于网络速度，通常为几分钟。下载 ZIP、查看分步说明或从源码构建镜像（首次需要 10–30 分钟），请参阅 [Docker 安装指南](INSTALL.md)。如何选择安装方式，请参阅[选择哪种安装方式](INSTALL.md#which-install-to-choose)。
+首次启动会下载最新发布版本的预构建镜像（约 1 GB，解压后约占 3.5 GB 磁盘空间），所需时间取决于网络速度，通常为几分钟。下载 ZIP、查看分步说明或从源码构建镜像（首次需要 10–30 分钟），请参阅 [Docker 安装指南](INSTALL.md)。如何选择安装方式，请参阅[选择哪种安装方式](INSTALL.md#which-install-to-choose)。
 
 <!-- TODO: link Gitee
 如果在中国大陆访问 GitHub 较慢，可在 Gitee 镜像上线后使用该镜像。
@@ -92,7 +92,7 @@ git clone https://github.com/rightcommit/rightcommit.git && cd rightcommit && do
 
 1. 打开 <http://localhost:8080>。首个账户将成为管理员，此后默认关闭公开注册。
 2. **无需 API 密钥，先检查安装是否正常。** 点击 **+**，在 **Get started** 下选择 **Local CI example**，然后点击 **Save**。依次点击 **Run workflow** → **Run now** → **Start**。服务端会运行一个内置的小型 Python 项目的测试：选中 **Local CI tests**，Activity log 会显示输出的最后几行，可以看到 `Ran 1 test` 和 `OK`；在 **Artifacts** 下打开它的报告，可以查看完整输出。
-3. 在 **Personal settings → Agents** 中，为至少一个智能体配置 API 密钥或已获授权的服务提供方，并选择模型。参见[配置智能体](#configuring-the-agents)。
+3. 在 **Personal settings → Agents** 中，为至少一个智能体配置 API 密钥或已获授权的服务提供方，并选择模型。参见[配置智能体](#configuring-the-agents)。未指定智能体的步骤使用 **Default** 智能体：当 Default 智能体（新账户为 Codex）没有凭据时，保存某个智能体的第一个 API 密钥会将其设为 Default；如果凭据来自其他位置（例如 `.env`），请在该智能体旁边手动打开 **Default**。
 4. **在内置示例上运行智能体。** 点击 **+**，选择 **Feature → SDD → Delivery**。它使用 rightcommit 内置的小型 Rust 项目 Northstar Helpdesk：智能体为一个功能编写规格说明和代码，服务端运行 `cargo test`，最后在本地提交，不会推送。按第 2 步的方式启动。运行暂停等待你审批时，点击 **Review required**。
 
 在 **+** 列表中，标记为 **Local** 的工作流不需要任何外部账户。如果卡片上还列出了某个智能体（例如 **Local · Codex**），也需要先配置该智能体：如果工作流用到的智能体尚未配置，启动时会被拒绝，并在提示中列出这些智能体。标记为 GitHub、Jira、Bitbucket、Confluence 或 ServiceNow 的工作流需要先连接对应服务，建议稍后再用。你也可以向 **Project Manager** 描述所需的工作流。完整步骤、每次运行的前提条件以及结果的查看位置，请参阅 [Your first run](INSTALL.md#your-first-run)。

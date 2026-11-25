@@ -1105,7 +1105,7 @@ pub(crate) async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
         let mut n = r.workflow.node(&r.current)?.clone();
         if n.kind == "Connection" && n.provider == "servicenow" && connectors::is_write(&n) {
             let settings = app.store.settings(uid)?;
-            let config = settings.connections.get("servicenow").context("Configura ServiceNow nelle impostazioni personali")?;
+            let config = settings.connections.get("servicenow").context("Configura ServiceNow nelle Configurazioni personali")?;
             n.command = serde_json::to_string(&crate::servicenow::prepare(&n, &r, config)?)?;
         }
         if r.active_edge.is_none() {
@@ -1159,7 +1159,7 @@ pub(crate) async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
                         n.provider,
                         if n.provider == "github" && n.operation == "api_request" {
                             let settings=app.store.settings(uid)?;
-                            let config=settings.connections.get("github").context("Configura GitHub nelle impostazioni personali")?;
+                            let config=settings.connections.get("github").context("Configura GitHub nelle Configurazioni personali")?;
                             agents::redact(&crate::github_api::preview(&n,config)?, &settings)
                         } else if n.provider == "atlassian" {
                             format!("twg {}", n.command)

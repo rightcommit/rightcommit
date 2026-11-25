@@ -8,7 +8,8 @@ Docker runs rightcommit the same way on **macOS, Windows or Linux**. The contain
 everything the app needs: besides Docker, you don't install anything else.
 
 **You need:** a 64-bit computer (Intel, AMD or ARM) and an Internet connection. The first
-start downloads the ready-made rightcommit image, about 1 GB.
+start downloads the ready-made rightcommit image, about 1 GB, which needs about 3.5 GB of disk
+space once unpacked.
 
 ## Which install to choose
 
@@ -88,9 +89,11 @@ you can close the terminal. To build the image from the source code instead, see
 
 1. Open your browser at **[http://localhost:8080](http://localhost:8080)**.
 2. Create the first account with an email and a password: it becomes the **administrator**.
-3. Open **Agents and connections**, paste the API key of the agent you want to use
-   (Codex, Claude Code or Pi) and save. You can also do this later: the first run below needs
-   no API key.
+3. Open **Personal settings** (the sliders button left of **Run workflow**) → **Agents**, paste
+   the API key of the agent you want to use (Codex, Claude Code or Pi) and save. While the
+   Default agent (Codex on a new account) has no credentials, the first agent you save a key for
+   becomes the Default.
+   You can also do this later: the first run below needs no API key.
 
 Next: [your first run](#your-first-run).
 
@@ -137,7 +140,11 @@ described in the project's README, then implements it. The server runs `cargo te
 last step commits the result in the run's workspace. Nothing is pushed, merged or deployed.
 
 You need one agent configured in **Personal settings → Agents**, with a model (see
-[Configuring the agents](README.md#configuring-the-agents)): every step uses your default agent.
+[Configuring the agents](README.md#configuring-the-agents)): every step uses your **Default**
+agent. Saving the first API key of an agent makes it the Default while the Default agent (Codex on
+a new account) has no credentials. If your agent's credentials come from elsewhere, such as
+`CLAUDE_CODE_OAUTH_TOKEN` in `.env` or the administrator's key, turn on **Default** next to it in
+**Personal settings → Agents**.
 The test step needs Rust (`cargo`) where rightcommit runs: the Docker and Podman image includes
 it. The run has many agent steps, so it uses more tokens than a single prompt.
 
@@ -157,7 +164,8 @@ it. The run has many agent steps, so it uses more tokens than a single prompt.
    **Download result ZIP**.
 
 If no agent is configured, **Start** is refused before the run begins, with a message that names
-the agents to configure in **Personal settings → Agents**. If a step fails, the **Activity log**
+the agents to configure in **Personal settings → Agents**; when another agent is configured, it
+also suggests choosing that one as **Default**. If a step fails, the **Activity log**
 shows why. With a wrong API key, the first agent step (**Constitution**) stops with an error
 from the provider.
 
@@ -170,7 +178,7 @@ documents under `analysis/` without changing the application code, then ends wit
 |---|---|
 | **Local** | One agent, except **Local CI example**, which needs none. When the card also names an agent, that agent too: **Incident → Living spec → Delivery** shows **Local · Codex** because it uses Codex for triage. |
 | **Claude**, **Codex** | Those agents, configured. No external account. |
-| GitHub, Jira, Bitbucket, Confluence, ServiceNow | That service connected in **Agents and connections**, and the values to replace that the card lists. See the [configuration guides](guides/README.md). |
+| GitHub, Jira, Bitbucket, Confluence, ServiceNow | That service connected in **Personal settings → Connections**, and the values to replace that the card lists. See the [configuration guides](guides/README.md). |
 
 ## Everyday use
 

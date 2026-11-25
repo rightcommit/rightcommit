@@ -848,7 +848,7 @@ fn pi_packages(extensions: &Path, cfg: &AgentConfig) -> Vec<PathBuf> {
             Some(m) if is_pi_package(&m) => packages.push(dir),
             Some(_) => {} // A library used by an extension, not a Pi package.
             None => {
-                tracing::warn!(package = %name, "Pacchetto Pi non installato: esegui npm ci in pi-extensions")
+                tracing::warn!(package = %name, "Pi package not installed: run npm ci in pi-extensions")
             }
         }
     }
@@ -865,7 +865,7 @@ pub(crate) fn public_agent_failure(detail: &str) -> &'static str {
     } else if text.contains("safeguards flagged") || text.contains("usage policy") || text.contains("cyber verification") || text.contains("refusal") {
         "Il modello ha rifiutato la richiesta per le regole di sicurezza del provider, non per un errore di configurazione. Succede per esempio con strumenti di penetration test o exploit. Riformula la richiesta o scegli un altro modello."
     } else if text.contains("401") || text.contains("incorrect api key") || text.contains("invalid api key") || text.contains("unauthorized") || text.contains("authentication") {
-        "Il provider ha rifiutato le credenziali. Verifica la chiave API e il provider in Personal Settings → Agents, oppure le credenziali in .env."
+        "Il provider ha rifiutato le credenziali. Verifica la chiave API e il provider in Configurazioni personali → Agenti, oppure le credenziali in .env."
     } else if text.contains("insufficient_quota") || text.contains("billing") || text.contains("credit balance") || text.contains("quota exceeded") {
         "Il credito o la quota del provider è esaurito. Verifica il piano e i limiti del tuo account prima di riprovare."
     } else if text.contains("429") || text.contains("rate limit") || text.contains("too many requests") {
@@ -873,7 +873,7 @@ pub(crate) fn public_agent_failure(detail: &str) -> &'static str {
     } else if text.contains("403") || text.contains("forbidden") || text.contains("permission denied") {
         "Il provider non consente questa richiesta. Verifica i permessi dell’account e l’accesso al modello selezionato."
     } else if text.contains("404") || text.contains("model_not_found") || text.contains("model not found") || text.contains("unknown model") {
-        "Il modello o l’endpoint non è disponibile. Verifica provider, modello e URL in Personal Settings → Agents."
+        "Il modello o l’endpoint non è disponibile. Verifica provider, modello e URL in Configurazioni personali → Agenti."
     } else if is_timeout(&text) {
         "Una richiesta dell’agente non ha ricevuto risposta in tempo."
     } else if text.contains("connection") || text.contains("connect") || text.contains("dns") || text.contains("network") || text.contains("fetch failed") {
@@ -883,7 +883,7 @@ pub(crate) fn public_agent_failure(detail: &str) -> &'static str {
     } else if text.contains("conflicts with") {
         "Un pacchetto Pi registra uno strumento già presente. Rimuovi il pacchetto in conflitto e riprova."
     } else {
-        "L’agente non ha completato la risposta. Verifica la configurazione in Personal Settings → Agents e riprova."
+        "L’agente non ha completato la risposta. Verifica la configurazione in Configurazioni personali → Agenti e riprova."
     }
 }
 
@@ -1032,7 +1032,7 @@ pub(crate) fn pi_has_login(home: &Path, provider: &str) -> bool {
     }
 }
 pub(crate) fn validate_pi_model(runtime: &str, model: &str) -> Result<()> {
-    ensure!(runtime != "pi" || !model.trim().is_empty(), "Pi richiede un modello esplicito. Configuralo in Personal Settings → Agents → Pi, oppure nel nodo Agent del workflow.");
+    ensure!(runtime != "pi" || !model.trim().is_empty(), "Pi richiede un modello esplicito. Configuralo in Configurazioni personali → Agenti → Pi Agent, oppure nel nodo Agent del workflow.");
     Ok(())
 }
 pub async fn turn(app: &App, uid: i64, run: &mut Run, request: Turn<'_>) -> Result<AgentResult> {
@@ -1284,7 +1284,7 @@ runtime: runtime.into(),
     };
     let permissions = if managing {
         if settings.manager_write_enabled {
-            "Current permissions: read, write, edit and shell tools are enabled by Personal Settings / Manager (manager_write_enabled=true). Use them for implementation requested by the user. This replaces permissions and claims from earlier turns. An OS permission error for one path does not mean these tools are disabled; use the current user's permanent directories where appropriate and report the actual failing path."
+            "Current permissions: read, write, edit and shell tools are enabled by Personal settings / Manager (manager_write_enabled=true). Use them for implementation requested by the user. This replaces permissions and claims from earlier turns. An OS permission error for one path does not mean these tools are disabled; use the current user's permanent directories where appropriate and report the actual failing path."
         } else if runtime == "codex" {
             "Current permissions: READ ONLY. Shell remains available for read-only inspection. Do not write or edit files or perform dispositive actions. You can still propose workflow graph changes through the structured result. This replaces permissions from earlier turns."
         } else {

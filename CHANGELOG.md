@@ -3,6 +3,64 @@
 What changed in each version of rightcommit. Releases are also listed on
 [GitHub](https://github.com/rightcommit/rightcommit/releases).
 
+## [1.10.1] - 2026-11-25
+
+### Changed
+
+- Saving the first API key of an agent makes it the **Default** agent while the Default (Codex
+  on a new account) has no credentials, and the confirmation says so. A Default you choose in
+  the same save is kept, and Agent nodes with their own agent are not affected.
+- When a run is refused because the Default agent has no credentials while another agent is
+  configured, the message also suggests choosing that agent as Default.
+- The toolbar button that opens **Personal settings** is named like the dialog, in the tooltip
+  and for screen readers, instead of "Agents and connections". The guides use the same name.
+- After a page reload, the run that was open in the tab opens again instead of Design. A run
+  that no longer exists opens Design as before.
+- The command line is in English: `rightcommit setup`, `rightcommit resetdb`, `--help`,
+  argument and `.env` errors, and the server's log lines, such as `rightcommit ready` at
+  startup.
+- `rightcommit setup` prints one line for each step and hides npm's warnings, notices and
+  summaries when the installation succeeds; when it fails, npm's own output is shown. The two
+  install scripts npm reports as not allowed are not needed: the `@google/genai` one only
+  prints a message and the `protobufjs` one only checks the version scheme of its dependents.
+
+### Fixed
+
+- A blank workflow is named "New workflow" in English instead of "Nuovo workflow", on the first
+  sign-in and in **Create blank workflow**. Until it is saved, the default name follows a
+  language switch.
+- The Artifacts header counts the step reports listed under it, and with only reports the
+  panel says that the run has not created or modified files so far. A step report no longer
+  shows a **Full path**, which pointed to a file that does not exist: reports are kept by
+  rightcommit and are listed in **Storage** → **Runs**.
+- In **Start workflow**, a refused start is shown once, next to **Start**, instead of also in a
+  notification that covered it.
+- The Activity log labels the output of steps that run on the server without an agent (local
+  tests and commit, Source preparation, ServiceNow, GitHub and Atlassian) **Step result**
+  instead of **Agent response**.
+- The Activity log no longer shows the same **Running** status twice when a step starts.
+- A node added from the palette is titled in the interface language: "New Task", "New Review"
+  and so on in English, "Nuovo Task", "Nuova Review" in Italian. A comment is titled "Comment"
+  in English, and its empty text box invites you to write a note in English instead of
+  Italian. Titles already saved stay as written.
+- The Activity log names every kind of run event in the interface language, such as **Run
+  created**, **Stop** and **Decision**, instead of showing internal names like `created`.
+- The report of a step that runs on the server without an agent, such as local tests or a
+  GitHub, ServiceNow or Atlassian request, is shown as written, in a monospaced font, in the
+  artifact viewer, in **Storage** and in **Edit and continue**. A line of dashes in test output
+  no longer turns into a horizontal rule, and `#`, `*` or `<...>` are no longer read as
+  Markdown. The report itself, which later steps receive, is unchanged.
+- The ServiceNow and GitHub guides and the ServiceNow and ITSM examples write **Personal
+  settings** like the dialog.
+- Error messages, help texts and the built-in ServiceNow, ITSM and GitHub templates name the
+  dialog and its tabs as they appear: **Configurazioni personali → Agenti / Connessioni** in
+  Italian and **Personal settings → Agents / Connections** in English, instead of "Personal
+  Settings" or "impostazioni personali". Templates already saved in an installation keep their
+  old text.
+- `/favicon.ico` serves the rightcommit icon instead of an error on every page.
+- The install guides say that the Docker image, about 1 GB to download, needs about 3.5 GB of
+  disk space once unpacked.
+
 ## [1.10.0] - 2026-11-25
 
 ### Added

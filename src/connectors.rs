@@ -106,7 +106,7 @@ pub async fn execute(app: &App, uid: i64, r: &Run, n: &Node) -> Result<AgentResu
     let c = s
         .connections
         .get(&n.provider)
-        .context("Configura il connettore nelle impostazioni personali")?;
+        .context("Configura il connettore nelle Configurazioni personali")?;
     let c = &node_config(n, c)?;
     ensure!(!c.token.is_empty(), "Token connettore mancante");
     if n.provider == "github" && n.operation == "api_request" {

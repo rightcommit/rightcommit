@@ -32,7 +32,7 @@ continue to apply. This statement is not a certification of overall terms compli
 ## 1. API key in the app
 
 Create a key on the [OpenAI platform](https://platform.openai.com/api-keys).
-Open **Personal Settings → Agents → Codex**, enter the API key and save.
+Open **Personal settings → Agents → Codex**, enter the API key and save.
 The full key is encrypted in the database and is not returned by the app.
 Leave the field empty to retain it; use the bin button to remove it.
 
@@ -44,7 +44,7 @@ other users or copied into their settings.
 
 This section applies only to administrator ID 1. Other users do not inherit provider
 credentials, cloud/gateway configuration, endpoints or model settings from the server environment.
-Their shared fallback is exclusively the administrator's API key saved in Personal Settings.
+Their shared fallback is exclusively the administrator's API key saved in Personal settings.
 
 Edit `.env` for Docker and recreate the service with `docker compose up -d`. Protect the
 file with `chmod 600 .env`. For native installations, export variables before startup.
@@ -64,8 +64,8 @@ app API key is selected. Credential files must be available inside the container
 
 For the default OpenAI provider:
 
-1. The user's Codex API key in Personal Settings.
-2. The administrator's Codex API key in Personal Settings.
+1. The user's Codex API key in Personal settings.
+2. The administrator's Codex API key in Personal settings.
 3. For the administrator only, `CODEX_API_KEY`, then `OPENAI_API_KEY` from the environment.
 
 An app API key excludes global endpoint overrides. A custom provider explicitly selected

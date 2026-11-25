@@ -1,4 +1,4 @@
-// Test connection for Codex and Claude Code in Personal Settings: form values, saved-key fallback, errors, nothing saved.
+// Test connection for Codex and Claude Code in Personal settings: form values, saved-key fallback, errors, nothing saved.
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),assert=require('node:assert/strict'),{spawn}=require('node:child_process');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
 (async()=>{

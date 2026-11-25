@@ -111,7 +111,7 @@ with tempfile.TemporaryDirectory(prefix='rightcommit-native-env-') as temporary:
     failed = subprocess.run([str(BINARY)], cwd=invalid, env=base_environment(),
                             capture_output=True, text=True, timeout=10)
     assert failed.returncode != 0
-    assert 'File .env non valido' in failed.stderr
+    assert 'Invalid .env file' in failed.stderr
     assert 'private-first-key' not in failed.stdout + failed.stderr
     assert 'private-unclosed-key' not in failed.stdout + failed.stderr
     assert not (invalid / 'must-not-exist').exists()

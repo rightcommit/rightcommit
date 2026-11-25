@@ -147,7 +147,7 @@ impl Cache {
         );
         self.catalog.persisted = saved.is_ok() && !self.catalog.prices.is_empty();
         if let Err(error) = saved {
-            tracing::warn!(%error, "Impossibile salvare la cache delle tariffe OpenRouter");
+            tracing::warn!(%error, "Could not save the OpenRouter price cache");
         }
     }
 }
@@ -161,7 +161,7 @@ pub async fn catalog(app: &crate::App) -> Catalog {
         .await;
     let cache = caches.entry(app.data.clone()).or_insert_with(|| {
         Cache::load(&app.store).unwrap_or_else(|error| {
-            tracing::warn!(%error, "Cache delle tariffe OpenRouter non disponibile");
+            tracing::warn!(%error, "OpenRouter price cache not available");
             Cache::default()
         })
     });

@@ -439,13 +439,13 @@ pub fn start_service(app: App) -> Result<()> {
     app.store.db.lock().unwrap().execute("UPDATE schedule_occurrences SET state='error',message='Avvio interrotto dal riavvio del servizio' WHERE state='preparing'",[])?;
     tokio::spawn(async move {
         if let Err(e) = tick(&app, true).await {
-            tracing::error!("Ripristino pianificazioni: {e}");
+            tracing::error!("Restoring schedules: {e}");
         }
         let mut timer = tokio::time::interval(std::time::Duration::from_secs(2));
         loop {
             timer.tick().await;
             if let Err(e) = tick(&app, false).await {
-                tracing::error!("Pianificazioni: {e}");
+                tracing::error!("Schedules: {e}");
             }
         }
     });

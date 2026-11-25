@@ -251,7 +251,7 @@ pub async fn describe(app: &App, uid: i64, settings: &Settings) -> anyhow::Resul
     }
     Ok(json!({"claude":claude,"codex":codex}))
 }
-/// The "configured" state of Personal Settings -> Agents: the credentials this user's processes for
+/// The "configured" state of Personal settings -> Agents: the credentials this user's processes for
 /// `runtime` receive (own key, the administrator's key, the administrator's environment, native login).
 pub(crate) fn has_credentials(app: &App, uid: i64, runtime: &str, settings: &Settings, home: &Path) -> bool {
     let cfg = settings.agents.get(runtime).cloned().unwrap_or_default();
@@ -272,12 +272,12 @@ fn runtime_name(runtime: &str) -> &str {
 }
 /// The Agent nodes a run will call: those bound to a Task that is not skipped, a Gate or an agent
 /// Review, also inside called workflows. An Agent with no runtime uses the user's default agent.
-fn used_agents(app: &App, uid: i64, w: &Workflow, default: &str, prefix: &str, seen: &mut HashSet<String>, out: &mut Vec<(String, String)>) {
+fn used_agents(app: &App, uid: i64, w: &Workflow, default: &str, prefix: &str, seen: &mut HashSet<String>, out: &mut Vec<(String, String, bool)>) {
     if !seen.insert(w.id.clone()) {return;}
     for a in w.nodes.iter().filter(|a| a.kind == "Agent" && w.nodes.iter().any(|n| n.agent == a.id
         && (n.kind == "Task" && !n.skip || n.kind == "Gate" || n.kind == "Review" && n.mode != "human"))) {
         let runtime = if a.runtime.is_empty() {default} else {&a.runtime};
-        out.push((runtime.to_string(), format!("{prefix}{}", if a.title.trim().is_empty() {&a.id} else {&a.title})));
+        out.push((runtime.to_string(), format!("{prefix}{}", if a.title.trim().is_empty() {&a.id} else {&a.title}), a.runtime.is_empty()));
     }
     for n in w.nodes.iter().filter(|n| n.kind == "Workflow") {
         if let Ok(child) = app.store.workflow(uid, &n.workflow_id) {
@@ -286,7 +286,7 @@ fn used_agents(app: &App, uid: i64, w: &Workflow, default: &str, prefix: &str, s
     }
 }
 /// Refuse a run before it starts when an agent it calls has no credentials for this user, instead of
-/// failing at the first agent step. It uses the same state as Personal Settings and also accepts a
+/// failing at the first agent step. It uses the same state as Personal settings and also accepts a
 /// configuration only the CLI can read (External configuration), so it never blocks a setup that works.
 pub(crate) async fn ensure_agents_configured(app: &App, uid: i64, w: &Workflow) -> anyhow::Result<()> {
     let settings = app.store.settings(uid)?;
@@ -295,16 +295,48 @@ pub(crate) async fn ensure_agents_configured(app: &App, uid: i64, w: &Workflow) 
     used_agents(app, uid, w, &settings.default_runtime, "", &mut HashSet::new(), &mut used);
     let mut external: Option<Value> = None;
     let mut missing = vec![];
-    for (runtime, title) in used {
-        if has_credentials(app, uid, &runtime, &settings, &home) {continue;}
-        if ["claude", "codex"].contains(&runtime.as_str()) {
-            if external.is_none() {external = Some(describe(app, uid, &settings).await?);}
-            if external.as_ref().is_some_and(|e| e[&runtime]["method"] != "not_configured") {continue;}
-        }
+    let mut default_missing = false;
+    for (runtime, title, inherits_default) in used {
+        if configured(app, uid, &runtime, &settings, &home, &mut external).await? {continue;}
+        default_missing |= inherits_default;
         missing.push(format!("{title} ({})", runtime_name(&runtime)));
     }
-    anyhow::ensure!(missing.is_empty(), "Il workflow usa agenti senza credenziali: {}. Configurali in Configurazioni personali → Agenti, poi avvia di nuovo il workflow.", missing.join(", "));
-    Ok(())
+    if missing.is_empty() {return Ok(());}
+    // Agents without their own runtime use the Default agent: when another agent is configured,
+    // choosing it as Default is enough.
+    let mut other_configured = false;
+    for runtime in ["codex", "claude", "pi"].into_iter().filter(|r| *r != settings.default_runtime) {
+        other_configured |= default_missing && configured(app, uid, runtime, &settings, &home, &mut external).await?;
+    }
+    if other_configured {
+        anyhow::bail!("Il workflow usa agenti senza credenziali: {}. Configurali in Configurazioni personali → Agenti, oppure scegli lì come Default un agente configurato, poi avvia di nuovo il workflow.", missing.join(", "));
+    }
+    anyhow::bail!("Il workflow usa agenti senza credenziali: {}. Configurali in Configurazioni personali → Agenti, poi avvia di nuovo il workflow.", missing.join(", "))
+}
+/// Whether `runtime` can run for this user: credentials in Personal settings, inherited from the
+/// administrator or the environment, or an External configuration only the CLI can read.
+async fn configured(app: &App, uid: i64, runtime: &str, settings: &Settings, home: &Path, external: &mut Option<Value>) -> anyhow::Result<bool> {
+    if has_credentials(app, uid, runtime, settings, home) {return Ok(true);}
+    if !["claude", "codex"].contains(&runtime) {return Ok(false);}
+    if external.is_none() {*external = Some(describe(app, uid, settings).await?);}
+    Ok(external.as_ref().is_some_and(|e| e[runtime]["method"] != "not_configured"))
+}
+/// The agent that becomes the Default after a save of Personal settings, if any: an agent that
+/// receives its first personal API key while the Default agent has no credentials. Otherwise every
+/// Agent without its own runtime would still be refused for the unconfigured Default. A Default
+/// chosen in the same save is kept, and Agents with their own runtime are not affected.
+pub(crate) async fn default_after_new_key(app: &App, uid: i64, before: &Settings, after: &Settings) -> anyhow::Result<Option<String>> {
+    if after.default_runtime != before.default_runtime {return Ok(None);}
+    let has_key = |s: &Settings, runtime: &str| s.agents.get(runtime).is_some_and(|c| !c.api_key.is_empty());
+    let Some(runtime) = ["codex", "claude", "pi"].into_iter()
+        .find(|r| *r != after.default_runtime && !has_key(before, r) && has_key(after, r)) else {return Ok(None)};
+    let home = app.data.join("users").join(uid.to_string());
+    let mut external = None;
+    if configured(app, uid, &after.default_runtime, after, &home, &mut external).await?
+        || !has_credentials(app, uid, runtime, after, &home) {
+        return Ok(None);
+    }
+    Ok(Some(runtime.into()))
 }
 
 #[cfg(test)]
@@ -449,6 +481,35 @@ mod tests {
         let error = crate::api::prepare_run(&app, 2, start(), None).await.unwrap_err().to_string();
         assert!(error.starts_with("Il workflow usa agenti senza credenziali"), "{error}");
         assert!(app.store.runs(2).unwrap().is_empty());
+    }
+    #[tokio::test]
+    async fn first_key_of_an_agent_becomes_default_while_the_default_has_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = crate::tests::app(dir.path());
+        let key = |k: &str| AgentConfig {api_key: k.into(), ..Default::default()};
+        let before = Settings::default();
+        assert_eq!(before.default_runtime, "codex");
+        let mut claude = before.clone();
+        claude.agents.insert("claude".into(), key("claude-key"));
+        assert_eq!(default_after_new_key(&app, 2, &before, &claude).await.unwrap().as_deref(), Some("claude"));
+        // A Default chosen in the same save, or a key that was already saved, moves nothing.
+        let mut chosen = claude.clone();
+        chosen.default_runtime = "pi".into();
+        assert_eq!(default_after_new_key(&app, 2, &before, &chosen).await.unwrap(), None);
+        assert_eq!(default_after_new_key(&app, 2, &claude, &claude).await.unwrap(), None);
+        // A Default with credentials stays the Default.
+        let mut codex = before.clone();
+        codex.agents.insert("codex".into(), key("codex-key"));
+        let mut both = codex.clone();
+        both.agents.insert("claude".into(), key("claude-key"));
+        assert_eq!(default_after_new_key(&app, 2, &codex, &both).await.unwrap(), None);
+        // Until the Default is changed, the refusal for an Agent that inherits it says so.
+        app.store.save_settings(2, &claude).unwrap();
+        let inherited = ensure_agents_configured(&app, 2, &agent_task("", false)).await.unwrap_err().to_string();
+        assert_eq!(inherited, "Il workflow usa agenti senza credenziali: Author (Codex). Configurali in Configurazioni personali → Agenti, oppure scegli lì come Default un agente configurato, poi avvia di nuovo il workflow.");
+        let explicit = ensure_agents_configured(&app, 2, &agent_task("codex", false)).await.unwrap_err().to_string();
+        assert!(!explicit.contains("Default"), "{explicit}");
+        ensure_agents_configured(&app, 2, &agent_task("claude", false)).await.unwrap();
     }
     #[tokio::test]
     async fn runs_that_call_no_agent_or_a_configured_one_are_allowed() {

@@ -30,12 +30,12 @@ pub fn main(args: &[String]) -> Result<()> {
         match arg.as_str() {
             "--yes" => options.yes = true,
             "--no-backup" => options.no_backup = true,
-            _ => bail!("Argomento sconosciuto: {arg}; uso: rightcommit resetdb [--yes] [--no-backup]"),
+            _ => bail!("Unknown argument: {arg}; usage: rightcommit resetdb [--yes] [--no-backup]"),
         }
     }
     let data = PathBuf::from(std::env::var("NODO_DATA").unwrap_or_else(|_| "data".into()));
     // Never create it: a wrong start folder or NODO_DATA must not pass for an empty installation.
-    let data = std::fs::canonicalize(&data).with_context(|| format!("Cartella dati non trovata: {}. Avvia il comando dalla cartella in cui avvii rightcommit, oppure imposta NODO_DATA.", data.display()))?;
+    let data = std::fs::canonicalize(&data).with_context(|| format!("Data folder not found: {}. Run the command from the folder where you start rightcommit, or set NODO_DATA.", data.display()))?;
     // Same resolution as the server, without creating the folder.
     let sources = std::env::var_os("NODO_SOURCES").map(PathBuf::from).unwrap_or_else(|| if Path::new("/sources").is_dir() { "/sources".into() } else { "sources".into() });
     use std::io::IsTerminal;
@@ -46,7 +46,7 @@ pub fn main(args: &[String]) -> Result<()> {
 /// `data` is canonical, as main resolves it, so that it compares with the canonical sources path.
 fn reset(data: &Path, sources: &Path, options: &Options, input: &mut dyn BufRead, out: &mut dyn Write) -> Result<()> {
     let system = data.join("system");
-    ensure!(system.is_dir(), "{} non è una cartella dati di rightcommit: manca system. Nessun file è stato modificato.", data.display());
+    ensure!(system.is_dir(), "{} is not a rightcommit data folder: it has no system folder. No file was changed.", data.display());
     // Held until the end, so a server cannot start between the question and the reset.
     let mut db = match system.join(DATABASE).exists() { true => Some(lock(&system.join(DATABASE))?), false => None };
     let tables = match &db { Some(db) => tables(db)?, None => Vec::new() };
@@ -59,24 +59,24 @@ fn reset(data: &Path, sources: &Path, options: &Options, input: &mut dyn BufRead
     }
     removed.sort();
     if tables.is_empty() && removed.is_empty() {
-        writeln!(out, "Niente da azzerare in {}: è già come una prima installazione.", data.display())?;
+        writeln!(out, "Nothing to reset in {}: it is already like a first installation.", data.display())?;
         return Ok(());
     }
     if let Ok(sources) = std::fs::canonicalize(sources) {
         for path in &removed {
-            ensure!(!sources.starts_with(path), "La cartella dei progetti {} si trova dentro {}: spostala prima di azzerare. Nessun file è stato modificato.", sources.display(), path.display());
+            ensure!(!sources.starts_with(path), "The projects folder {} is inside {}: move it before resetting. No file was changed.", sources.display(), path.display());
         }
     }
     let stamp = jiff::Timestamp::now().strftime("%Y%m%dT%H%M%SZ").to_string();
     let backup = (!options.no_backup && !tables.is_empty()).then(|| system.join("backups").join(format!("resetdb-{stamp}")));
     out.write_all(describe(data, !tables.is_empty(), &removed, backup.as_deref()).as_bytes())?;
     if !options.yes {
-        ensure!(options.terminal, "Conferma mancante: per eseguire senza terminale aggiungi --yes. Nessun file è stato modificato.");
-        write!(out, "Scrivi {WORD} per confermare: ")?;
+        ensure!(options.terminal, "Confirmation missing: to run without a terminal, add --yes. No file was changed.");
+        write!(out, "Type {WORD} to confirm: ")?;
         out.flush()?;
         let mut answer = String::new();
         input.read_line(&mut answer)?;
-        ensure!(answer.trim() == WORD, "Annullato. Nessun file è stato modificato.");
+        ensure!(answer.trim() == WORD, "Cancelled. No file was changed.");
     }
     if let (Some(dir), Some(db)) = (&backup, &db) {
         std::fs::create_dir_all(system.join("backups"))?;
@@ -84,7 +84,7 @@ fn reset(data: &Path, sources: &Path, options: &Options, input: &mut dyn BufRead
         std::fs::create_dir(dir)?;
         crate::store::private(dir, true)?;
         // A consistent copy that includes what is still only in the WAL file.
-        db.execute("VACUUM INTO ?1", [dir.join(DATABASE).to_str().context("Percorso della copia non valido")?])?;
+        db.execute("VACUUM INTO ?1", [dir.join(DATABASE).to_str().context("Invalid backup path")?])?;
         crate::store::private(&dir.join(DATABASE), false)?;
     }
     // Everything leaves its place with a rename before the database is emptied: a folder that cannot
@@ -95,12 +95,12 @@ fn reset(data: &Path, sources: &Path, options: &Options, input: &mut dyn BufRead
     let mut moved: Vec<(PathBuf, PathBuf)> = Vec::new();
     let result = (|| -> Result<()> {
         for path in &removed {
-            let name = path.file_name().context("Percorso non valido")?;
+            let name = path.file_name().context("Invalid path")?;
             let dest = match &backup {
                 Some(dir) if path.parent() == Some(system.as_path()) && BACKED_UP.iter().any(|b| name == *b) => dir.join(name),
                 _ => trash.join(name),
             };
-            std::fs::rename(path, &dest).with_context(|| format!("Impossibile spostare {}", path.display()))?;
+            std::fs::rename(path, &dest).with_context(|| format!("Cannot move {}", path.display()))?;
             moved.push((path.clone(), dest));
         }
         if let Some(db) = &mut db { empty(db, &tables)?; }
@@ -111,17 +111,17 @@ fn reset(data: &Path, sources: &Path, options: &Options, input: &mut dyn BufRead
             std::fs::rename(staged, original)?;
         }
         let _ = std::fs::remove_dir(&trash);
-        return Err(error.context("Azzeramento non eseguito; i file sono stati rimessi al loro posto"));
+        return Err(error.context("Reset not done; the files were put back in place"));
     }
     // Free the database first: from here the folder is a first installation and may be started.
     if let Some(db) = db.take() {
         db.execute_batch("VACUUM")?;
         db.close().map_err(|(_, e)| e)?;
     }
-    writeln!(out, "Azzeramento completato. Al prossimo avvio il primo accesso crea l'account amministratore.")?;
-    if let Some(dir) = &backup { writeln!(out, "Copia di sicurezza: {}", dir.display())?; }
+    writeln!(out, "Reset complete. At the next start, the first sign-in creates the administrator account.")?;
+    if let Some(dir) = &backup { writeln!(out, "Backup: {}", dir.display())?; }
     if let Err(error) = remove(&trash) {
-        writeln!(out, "Spazio non ancora liberato: elimina a mano {} ({error}).", trash.display())?;
+        writeln!(out, "Space not freed yet: delete {} yourself ({error}).", trash.display())?;
     }
     Ok(())
 }
@@ -133,9 +133,9 @@ fn lock(path: &Path) -> Result<Connection> {
     db.busy_timeout(std::time::Duration::ZERO)?;
     match db.execute_batch("PRAGMA locking_mode=EXCLUSIVE; BEGIN EXCLUSIVE; COMMIT;") {
         Err(rusqlite::Error::SqliteFailure(e, _)) if matches!(e.code, ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked) => {
-            bail!("Il database è in uso: arresta il server rightcommit che usa questa cartella dati (Ctrl+C nel suo terminale, oppure docker compose stop) e riprova. Nessun file è stato modificato.")
+            bail!("The database is in use: stop the rightcommit server that uses this data folder (Ctrl+C in its terminal, or docker compose stop) and try again. No file was changed.")
         }
-        result => result.context("Database non leggibile. Nessun file è stato modificato.")?,
+        result => result.context("Database not readable. No file was changed.")?,
     }
     Ok(db)
 }
@@ -161,37 +161,37 @@ fn empty(db: &mut Connection, tables: &[String]) -> Result<()> {
 }
 
 fn describe(data: &Path, database: bool, removed: &[PathBuf], backup: Option<&Path>) -> String {
-    let mut text = format!("Azzeramento dei dati di rightcommit, come in una prima installazione.\nCartella dati: {}\n\nVerranno eliminati:\n", data.display());
+    let mut text = format!("Reset of the rightcommit data, as in a first installation.\nData folder: {}\n\nTo be deleted:\n", data.display());
     if database {
-        text += "  - system/nodo.sqlite: account, impostazioni e credenziali salvate, workflow, esecuzioni, pianificazioni, chat del Project Manager, artefatti e storico (il database viene svuotato)\n";
+        text += "  - system/nodo.sqlite: accounts, settings and saved credentials, workflows, runs, schedules, Project Manager chats, artifacts and history (the database is emptied)\n";
     }
     for path in removed {
         let name = path.strip_prefix(data).unwrap_or(path).display().to_string();
         let what = match name.as_str() {
-            "users" => "home degli utenti con le credenziali salvate degli agenti, workspace delle esecuzioni e spazi del Project Manager",
-            "system/master.key" => "chiave di cifratura delle credenziali; al prossimo avvio ne viene creata una nuova",
-            "system/workflow-templates.json" => "catalogo dei template di workflow; al prossimo avvio torna quello predefinito",
-            "system/template-history" => "versioni precedenti del catalogo dei template",
-            "system/settings-history" => "versioni precedenti delle impostazioni",
-            "system/a2a-history" => "versioni precedenti delle connessioni A2A",
-            "system/artifact-files" => "copie dei file degli artefatti",
-            "system/rag" => "indici RAG",
-            "system/itsm-items" | "system/servicenow-effects" => "operazioni ServiceNow registrate",
-            "system/deletions" => "file di workflow eliminati in attesa di pulizia",
-            _ => "dati di rightcommit",
+            "users" => "user homes with the saved agent credentials, run workspaces and Project Manager spaces",
+            "system/master.key" => "credentials encryption key; a new one is created at the next start",
+            "system/workflow-templates.json" => "workflow template catalog; the default one returns at the next start",
+            "system/template-history" => "earlier versions of the template catalog",
+            "system/settings-history" => "earlier versions of the settings",
+            "system/a2a-history" => "earlier versions of the A2A connections",
+            "system/artifact-files" => "copies of the artifact files",
+            "system/rag" => "RAG indexes",
+            "system/itsm-items" | "system/servicenow-effects" => "recorded ServiceNow operations",
+            "system/deletions" => "files of deleted workflows waiting for cleanup",
+            _ => "rightcommit data",
         };
         text += &format!("  - {name}: {what}\n");
     }
-    text += "\nRestano: agenti e strumenti installati da rightcommit setup (system/tools), risorse ed estensioni Pi (system/assets), modelli RAG scaricati (system/rag-models), copie di sicurezza precedenti (system/backups), i progetti in sources e il file .env.\n";
+    text += "\nKept: agents and tools installed by rightcommit setup (system/tools), resources and Pi extensions (system/assets), downloaded RAG models (system/rag-models), earlier backups (system/backups), the projects in sources and the .env file.\n";
     text += &match backup {
         Some(dir) => {
             let saved: String = removed.iter().filter_map(|p| p.strip_prefix(data.join("system")).ok()?.to_str()).filter(|n| BACKED_UP.contains(n)).map(|n| format!(", {n}")).collect();
-            format!("Copia di sicurezza: {} con {DATABASE}{saved}. Contiene le credenziali cifrate e la chiave per leggerle; per non crearla usa --no-backup.\n", dir.display())
+            format!("Backup: {} with {DATABASE}{saved}. It contains the encrypted credentials and the key to read them; to skip it, use --no-backup.\n", dir.display())
         }
-        None if database => "Nessuna copia di sicurezza (--no-backup): l'operazione non si può annullare.\n".into(),
+        None if database => "No backup (--no-backup): this cannot be undone.\n".into(),
         None => String::new(),
     };
-    text += "Il server non deve essere in esecuzione su questa cartella dati: fino al termine non può avviarsi.\n\n";
+    text += "The server must not be running on this data folder; it cannot start until the reset ends.\n\n";
     text
 }
 
@@ -257,9 +257,9 @@ mod tests {
         used(data).await;
         let old_key = std::fs::read(data.join("system/master.key")).unwrap();
         let text = run(data, &yes(), "").unwrap();
-        assert!(text.contains("users: home degli utenti") && text.contains("Azzeramento completato"), "{text}");
+        assert!(text.contains("users: user homes") && text.contains("Reset complete"), "{text}");
         // A second reset finds nothing to do and needs no confirmation.
-        assert!(run(data, &Options::default(), "").unwrap().contains("Niente da azzerare"));
+        assert!(run(data, &Options::default(), "").unwrap().contains("Nothing to reset"));
         // VACUUM rewrote the file: the old rows are not left behind in free pages.
         for file in ["nodo.sqlite", "nodo.sqlite-wal"] {
             let bytes = std::fs::read(data.join("system").join(file)).unwrap_or_default();
@@ -313,10 +313,10 @@ mod tests {
         // A terminal: Enter or another word cancels.
         for answer in ["\n", "y\n", "RESETDB\n", ""] {
             let error = run(data, &Options { terminal: true, ..Default::default() }, answer).unwrap_err().to_string();
-            assert!(error.contains("Annullato"), "{error}");
+            assert!(error.contains("Cancelled"), "{error}");
             assert_eq!(snapshot(), before);
         }
-        assert!(run(data, &Options { terminal: true, ..Default::default() }, "resetdb\n").unwrap().contains("Scrivi resetdb per confermare"));
+        assert!(run(data, &Options { terminal: true, ..Default::default() }, "resetdb\n").unwrap().contains("Type resetdb to confirm"));
         assert_eq!(users(data), 0);
     }
 
@@ -327,7 +327,7 @@ mod tests {
         used(data).await;
         let server = crate::tests::app(data);
         let error = run(data, &yes(), "").unwrap_err().to_string();
-        assert!(error.contains("arresta il server"), "{error}");
+        assert!(error.contains("stop the rightcommit server"), "{error}");
         assert!(data.join("users/1/.codex/auth.json").is_file() && !data.join("system/backups").exists());
         assert_eq!(server.store.workflows(1).unwrap().len(), 1);
         drop(server);
@@ -338,12 +338,12 @@ mod tests {
     async fn refuses_a_folder_that_is_not_a_data_directory_and_protects_sources() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("users/1")).unwrap();
-        assert!(run(dir.path(), &yes(), "").unwrap_err().to_string().contains("manca system"));
+        assert!(run(dir.path(), &yes(), "").unwrap_err().to_string().contains("has no system folder"));
         assert!(dir.path().join("users/1").is_dir());
         used(dir.path()).await;
         let data = std::fs::canonicalize(dir.path()).unwrap();
         let error = reset(&data, &data.join("users/1"), &yes(), &mut "".as_bytes(), &mut Vec::new()).unwrap_err().to_string();
-        assert!(error.contains("cartella dei progetti"), "{error}");
+        assert!(error.contains("projects folder"), "{error}");
         assert_eq!(users(dir.path()), 1);
     }
 }

@@ -36,6 +36,6 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   await page.evaluate(()=>{const language=document.querySelector('[data-language]');language.value='en';language.dispatchEvent(new Event('change',{bubbles:true}))});
   assert((await page.locator('#settings-panel-general').innerText()).includes('File previews'));
   await page.setViewportSize({width:390,height:844});assert(await page.locator('#settings-form').evaluate(el=>el.scrollWidth<=el.clientWidth));
-  assert.deepEqual(errors,[]);console.log('PASS: default 5 MB, Personal Settings save/reload, Markdown over 256 KB, configurable text preview, clear size message, validation, English and mobile');
+  assert.deepEqual(errors,[]);console.log('PASS: default 5 MB, Personal settings save/reload, Markdown over 256 KB, configurable text preview, clear size message, validation, English and mobile');
  }finally{await browser?.close();server.kill('SIGINT');fs.rmSync(dir,{recursive:true,force:true})}
 })().catch(e=>{console.error(e);process.exit(1)});

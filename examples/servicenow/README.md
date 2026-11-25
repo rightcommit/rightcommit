@@ -15,7 +15,7 @@ Three independent workflows, without catalog-specific forms in the application:
 3. `workflow-request-to-speckit.json`: acquire a requirement according to
    `config/request-to-spec.json`, normalize it and run the official Spec Kit specify command.
 
-Credentials and the instance URL stay in Personal Settings → Connections → ServiceNow.
+Credentials and the instance URL stay in Personal settings → Connections → ServiceNow.
 Catalog item sys_ids, internal variable names, request fields, source table/selector and
 specification mapping belong in the files of this Source. Do not put passwords or tokens
 in those files. Both workflows use a copied Source by default.

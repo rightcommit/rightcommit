@@ -97,8 +97,8 @@ rightcommit.
 git clone https://github.com/rightcommit/rightcommit.git && cd rightcommit && docker compose up -d
 ```
 
-The first start downloads the prebuilt image of the latest release (about 1 GB), so it takes a few
-minutes, depending on your connection. For a ZIP download, step-by-step instructions or a build
+The first start downloads the prebuilt image of the latest release (about 1 GB, about 3.5 GB of
+disk space once unpacked), so it takes a few minutes, depending on your connection. For a ZIP download, step-by-step instructions or a build
 from source (10–30 minutes the first time), see the [Docker install guide](INSTALL.md).
 To choose between the install methods, see [Which install to choose](INSTALL.md#which-install-to-choose).
 
@@ -112,7 +112,10 @@ To choose between the install methods, see [Which install to choose](INSTALL.md#
    Activity log shows the last lines of the output, with `Ran 1 test` and `OK`. Its report under
    **Artifacts** has all of it.
 3. In **Personal settings → Agents**, configure an API key or authorized provider for at least
-   one agent and pick a model. See [Configuring the agents](#configuring-the-agents).
+   one agent and pick a model. See [Configuring the agents](#configuring-the-agents). Steps
+   without their own agent use the **Default** agent: saving the first key of an agent makes it
+   the Default while the Default (Codex on a new account) has no credentials. With credentials
+   from elsewhere, such as `.env`, turn on **Default** next to that agent yourself.
 4. **Run an agent on the bundled example.** Press **+** and choose **Feature → SDD → Delivery**.
    It works on Northstar Helpdesk, a small Rust project bundled with rightcommit: the agent
    writes the specification and the code for a feature, the server runs `cargo test`, and the

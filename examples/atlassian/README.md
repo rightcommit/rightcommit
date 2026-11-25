@@ -13,7 +13,7 @@ optional workspace/repository in the same section. Save settings and use Test co
 The test reports Atlassian profile access and Bitbucket repository access separately; it
 does not certify permissions for every product. Testing unsaved values does not save them.
 
-Configurare Pi nelle impostazioni personali. In Connessioni → Atlassian salvare l’URL del
+Configurare Pi nelle Configurazioni personali. In Connessioni → Atlassian salvare l’URL del
 sito, poi usare Collega account Atlassian e completare l’autorizzazione nel browser. Jira,
 Confluence e gli altri prodotti condividono questo login OAuth: concedere i permessi dei
 prodotti necessari e la lettura del profilo. Per Bitbucket inserire nella stessa sezione

@@ -29,6 +29,10 @@ await page.locator('[data-log-run="'+first.id+'"]').click();await page.waitForFu
 assert.equal(await page.evaluate(()=>app.run.id),second.id);assert.equal(await page.locator('[data-log-run]').count(),2);
 await page.waitForFunction(()=>app.run.status==='completed');assert.equal(await page.locator('.activity-current').count(),0);
 await page.locator('[data-log-run="'+second.id+'"]').click();const secondText=await page.locator('#activity-panel').textContent();assert(!secondText.includes('private tool output'));assert(secondText.includes('Bash'));assert(!secondText.includes('secret-activity-sentinel'));
+// The first event of a run is written by the server: its label and its text follow the interface language.
+const setLanguage=value=>page.evaluate(value=>{const s=document.querySelector('[data-language]');s.value=value;s.dispatchEvent(new Event('change',{bubbles:true}))},value);
+let created=await page.locator('#activity-panel .activity-event').last().innerText();assert(created.includes('Run created')&&created.includes('Sources prepared as set in each Source node')&&!/·\s*created\s/.test(created),created);
+await setLanguage('it');created=await page.locator('#activity-panel .activity-event').last().innerText();assert(created.includes('Run creata')&&created.includes('Source preparate secondo la modalità selezionata'),created);await setLanguage('en');
 // Compact details, persisted personal setting, accessible tabs and separated scrolling.
 assert.equal(await page.locator('#log-lines details').count(),0);
 assert.equal(await page.locator('[data-log-run][aria-selected="true"]').count(),1);

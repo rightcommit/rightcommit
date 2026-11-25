@@ -478,7 +478,7 @@ pub async fn assist(
     let settings = a.store.settings(u.id)?;
     let runtime = &settings.default_runtime;
     if !["claude", "codex", "pi"].contains(&runtime.as_str()) {
-        return Err(bad("Configura il modello preferred in Personal Settings"));
+        return Err(bad("Configura il modello preferred nelle Configurazioni personali"));
     }
     let workspace = crate::agents::user_home(&a, u.id)?
         .join("template-assistant")

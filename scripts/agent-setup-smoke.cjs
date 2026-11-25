@@ -32,7 +32,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   await preference.getByRole('switch').click();await page.locator('#dialog .modal-actions [data-action=close-dialog]').click();
   await page.reload();await page.locator('#app').waitFor({state:'visible'});assert(await page.locator('#dialog').isHidden());assert.equal(await page.evaluate(()=>agentSetupNoticeHidden()),true);
 
-  // Personal Settings can restore the notice immediately without a server save.
+  // Personal settings can restore the notice immediately without a server save.
   await page.evaluate(()=>settingsDialog('general'));const enabled=page.locator('[data-agent-setup-enabled]');assert.equal(await enabled.evaluate(el=>el.checked),false);
   assert.equal(await enabled.getByRole('switch').getAttribute('aria-label'),'Mostra l’avviso degli agenti non configurati');
   await enabled.getByRole('switch').click();assert.equal(await page.evaluate(()=>localStorage.getItem('rightcommit.hideAgentSetupNotice')),'false');
@@ -49,6 +49,6 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   const settings=await (await page.request.get(base+'/api/settings')).json();
   const saved=await page.request.patch(base+'/api/settings',{headers:{'X-Nodo-Request':'1'},data:{revision:settings._revision,changes:{agents:{codex:{model:'configured-model',api_key:'dummy-setup-key'}}}}});assert(saved.ok(),await saved.text());
   await page.reload();await page.locator('#app').waitFor({state:'visible'});await page.waitForFunction(()=>app.settings.agents.codex.configured);assert(await page.locator('#dialog').isHidden());assert.deepEqual(errors,[]);
-  console.log('PASS: startup notice only without configured agents, IT/EN, agent icon, direct Agents settings, dismiss, mobile layout, default false browser preference, immediate persistence, reload suppression, browser-profile isolation, Personal Settings restore toggle and storage failure');
+  console.log('PASS: startup notice only without configured agents, IT/EN, agent icon, direct Agents settings, dismiss, mobile layout, default false browser preference, immediate persistence, reload suppression, browser-profile isolation, Personal settings restore toggle and storage failure');
  }finally{await browser?.close();server.kill('SIGINT');await new Promise(r=>server.exitCode!==null?r():server.once('exit',r));fs.rmSync(data,{recursive:true,force:true})}
 })().catch(e=>{console.error(e);process.exit(1)});

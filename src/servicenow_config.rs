@@ -1,4 +1,4 @@
-//! File-based ServiceNow business configuration. Credentials remain in personal settings.
+//! File-based ServiceNow business configuration. Credentials remain in Personal settings.
 use crate::model::Run;
 use anyhow::{Context,Result,ensure};
 use serde_json::{Value,json};
@@ -14,7 +14,7 @@ pub(crate) fn read_json(r:&Run,relative:&str,label:&str,limit:u64)->Result<Value
 pub(crate) fn no_credentials(value:&Value)->Result<()> {
     match value {
         Value::Object(values)=>for (key,v) in values {
-            ensure!(!["password","token","api_key","client_secret","authorization","access_token"].contains(&key.to_ascii_lowercase().as_str()),"Le credenziali non vanno nel file di configurazione; usa Personal Settings");
+            ensure!(!["password","token","api_key","client_secret","authorization","access_token"].contains(&key.to_ascii_lowercase().as_str()),"Le credenziali non vanno nel file di configurazione; usa le Configurazioni personali");
             no_credentials(v)?;
         },
         Value::Array(values)=>for v in values {no_credentials(v)?;},

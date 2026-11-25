@@ -8,7 +8,8 @@ Podman is a free alternative to Docker. It runs rightcommit with everything incl
 **macOS, Windows or Linux**. To use Docker instead, see [INSTALL.md](INSTALL.md).
 
 **You need:** a 64-bit computer (Intel, AMD or ARM) and an Internet connection. The first
-start downloads the ready-made rightcommit image, about 1 GB.
+start downloads the ready-made rightcommit image, about 1 GB, which needs about 3.5 GB of disk
+space once unpacked.
 
 ## Step 1 — Install Podman
 
@@ -81,8 +82,10 @@ to update it. See [Build the image yourself](INSTALL.md#build-the-image-yourself
 
 1. Open your browser at **[http://localhost:8080](http://localhost:8080)**.
 2. Create the first account with an email and a password: it becomes the **administrator**.
-3. Open **Agents and connections**, paste the API key of the agent you want to use
-   (Codex, Claude Code or Pi) and save.
+3. Open **Personal settings** (the sliders button left of **Run workflow**) → **Agents**, paste
+   the API key of the agent you want to use (Codex, Claude Code or Pi) and save. While the
+   Default agent (Codex on a new account) has no credentials, the first agent you save a key for
+   becomes the Default.
 
 Next: [your first run](INSTALL.md#your-first-run). The steps are the same as with Docker, and
 the image includes Python 3 and Rust for the two bundled examples.

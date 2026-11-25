@@ -38,7 +38,7 @@ continue to apply. This statement is not a certification of overall terms compli
 ## 1. API key in the app
 
 Create an API key in the [Claude Console](https://console.anthropic.com/settings/keys).
-Open **Personal Settings → Agents → Claude Code**, enter the API key and save.
+Open **Personal settings → Agents → Claude Code**, enter the API key and save.
 The full key is encrypted in the database and is not returned by the app.
 Leave the field empty to keep a saved key; use the bin button to remove it.
 
@@ -50,7 +50,7 @@ key takes precedence. The shared key is never displayed or copied into another u
 
 This section applies only to administrator ID 1. Other users do not inherit provider
 credentials, cloud/gateway configuration, endpoints or model settings from the server environment.
-Their shared fallback is exclusively the administrator's API key saved in Personal Settings.
+Their shared fallback is exclusively the administrator's API key saved in Personal settings.
 
 For Docker, edit `.env` beside the Compose file, protect it with `chmod 600 .env`, and run
 `docker compose up -d`. For native installations, set the variables before starting the app.
@@ -74,8 +74,8 @@ cloud and model variables are listed in `.env.example`.
 
 ## 3. Precedence
 
-1. The user's API key in Personal Settings.
-2. The administrator's Claude Code API key in Personal Settings.
+1. The user's API key in Personal settings.
+2. The administrator's Claude Code API key in Personal settings.
 3. For the administrator only, environment configuration, in this order: one enabled cloud
    provider, gateway authentication, `CLAUDE_CODE_OAUTH_TOKEN`, then `ANTHROPIC_API_KEY`.
 
@@ -91,7 +91,7 @@ Changing `.env` requires recreating the container; `docker compose restart` does
 The administrator can run their own Claude Code processes on their own Claude Pro or Max
 subscription instead of an API key. Only the first administrator (the first account created,
 ID 1) gets it. Other users need their own API key, or use the administrator's API key saved in
-Personal Settings if there is one; the subscription token is never passed to them.
+Personal settings if there is one; the subscription token is never passed to them.
 
 **Signing in to Claude Code on your computer is not enough.** rightcommit starts Claude Code
 with a separate configuration folder for each account (`CLAUDE_CONFIG_DIR` set to
@@ -119,12 +119,12 @@ install (Homebrew, crates.io, source) or with Docker or Podman. Use a token inst
      `~/rightcommit/.env`). Stop the app and start it again from that folder.
 
    Protect the file with `chmod 600 .env`.
-3. In **Personal Settings → Agents → Claude Code**, leave the API key field empty: a saved
+3. In **Personal settings → Agents → Claude Code**, leave the API key field empty: a saved
    API key is used instead of the token (see [Precedence](#3-precedence)). A cloud provider,
    `ANTHROPIC_AUTH_TOKEN` or an authentication header in `ANTHROPIC_CUSTOM_HEADERS` in
    `.env` also take precedence over the token.
 4. Check: the Claude Code section shows **Credential configured**, and in
-   **Personal Settings → Environment** the Claude Code card shows
+   **Personal settings → Environment** the Claude Code card shows
    **External configuration**. **Test connection** sends one short request to the model.
 
 rightcommit reads the token from the environment and passes it only to the administrator's

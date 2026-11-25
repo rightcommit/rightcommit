@@ -64,6 +64,9 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   await page.keyboard.press('Escape');assert.equal((await call('/workflows')).length,2);
   await page.locator('#new-workflow').click();await page.locator('.workflow-catalog').waitFor();
   await page.locator('[data-action=empty-workflow]').click();assert.equal(await page.locator('[name=workflow_name]').inputValue(),'Nuovo workflow');
+  // The untouched default name is in the interface language and follows a switch.
+  const switchLanguage=lang=>page.evaluate(lang=>{localStorage.setItem('nodo.language',lang);window.dispatchEvent(new StorageEvent('storage',{key:'nodo.language',newValue:lang}))},lang);
+  await switchLanguage('en');assert.equal(await page.locator('[name=workflow_name]').inputValue(),'New workflow');await switchLanguage('it');assert.equal(await page.locator('[name=workflow_name]').inputValue(),'Nuovo workflow');
   await page.locator('[name=workflow_name]').fill('Workflow vuoto QA');await page.locator('[data-action=create-workflow]').click();await page.waitForFunction(()=>!document.querySelector('#dialog').open);
   assert.equal(await page.evaluate(()=>app.wf.nodes.length),0);assert.equal(await page.evaluate(()=>app.wf.name),'Workflow vuoto QA');
   for(const [index,t] of templates.entries()){

@@ -34,7 +34,7 @@ function tmMessage(error){
 async function tmApi(path,body,method){
  try{return await api(path,body,method)}catch(cause){
   const error=new Error('',{cause});error.tmOriginal=cause.message;
-  error.tmFallback=path.endsWith('/assist')?'Impossibile completare la richiesta AI. Verifica il modello preferito e le credenziali nelle configurazioni personali.':path.includes('/history')?'Impossibile caricare la cronologia del catalogo. Riprova.':path.endsWith('/validate')?'Il catalogo JSON non è valido o contiene campi mancanti.':path.startsWith('/workflows')?'Impossibile caricare o salvare il workflow. Riprova.':'Impossibile leggere o salvare il catalogo. Riprova.';
+  error.tmFallback=path.endsWith('/assist')?'Impossibile completare la richiesta AI. Verifica il modello preferito e le credenziali nelle Configurazioni personali.':path.includes('/history')?'Impossibile caricare la cronologia del catalogo. Riprova.':path.endsWith('/validate')?'Il catalogo JSON non è valido o contiene campi mancanti.':path.startsWith('/workflows')?'Impossibile caricare o salvare il workflow. Riprova.':'Impossibile leggere o salvare il catalogo. Riprova.';
   if(path.endsWith('/validate')&&error.tmOriginal==='Risposta server non valida')error.tmOriginal=error.tmFallback;
   error.message=tmMessage(error);throw error;
  }

@@ -26,7 +26,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   await page.locator('#template-workflow-form [name=workflow_name]').fill('Test OAuth italiano');
   const savedItalian=page.waitForResponse(r=>r.url()===base+'/api/workflows'&&r.request().method()==='POST');await page.locator('[data-action=save-template]').click();assert((await savedItalian).ok());await page.locator('#template-workflow-form').waitFor({state:'hidden'});
   const italian=(await api('/workflows')).find(w=>w.name==='Test OAuth italiano');assert(italian);
-  assert.equal(italian.nodes.find(n=>n.id==='check-servicenow').title,'Verifica OAuth e lettura incident');assert(italian.nodes.find(n=>n.id==='report').prompt.includes('in italiano'));assert(italian.nodes.find(n=>n.id==='notes').text.includes('Configurare'));
+  assert.equal(italian.nodes.find(n=>n.id==='check-servicenow').title,'Verifica OAuth e lettura incident');assert(italian.nodes.find(n=>n.id==='report').prompt.includes('in italiano'));assert(italian.nodes.find(n=>n.id==='notes').text.startsWith('# Impostare le Configurazioni personali prima dell’avvio'));assert.equal(italian.nodes.find(n=>n.id==='notes').title,'Configurazioni personali · guida alla configurazione');
   assert.equal((await api('/runs')).length,0);assert.deepEqual(errors,[]);console.log('PASS: ServiceNow template order and creation in IT/EN, including OAuth node titles, prompts and setup notes; portable Sources; no workflow runs or service calls.');
  }finally{await browser?.close();if(server.exitCode===null){const stopped=new Promise(resolve=>server.once('exit',resolve));server.kill('SIGINT');await stopped;}fs.rmSync(data,{recursive:true,force:true});}
 })().catch(error=>{console.error(error);process.exit(1)});
