@@ -1,6 +1,6 @@
 [package]
 name = "rightcommit"
-version = "1.10.1"
+version = "1.10.2"
 edition = "2024"
 license = "Apache-2.0"
 description = "Self-hosted, Rust-built orchestration for Claude Code, Codex and Pi Agent. Parallel workflows, full control over every commit, and FinOps that shows exactly what each agent and model costs."
@@ -14,7 +14,7 @@ categories = ["development-tools", "command-line-utilities"]
 # local files such as .DS_Store or node_modules/*/LICENSE.
 include = [
     "/src/**/*.rs", "/src/templates/*.json",
-    "/web/*.css", "/web/*.html", "/web/*.js", "/web/*.svg",
+    "/web/*.css", "/web/*.html", "/web/*.js", "/web/*.svg", "/web/*.png",
     "/distribution/assets.json", "/distribution/agents.env", "/distribution/pi-providers.json", "/.env.example", "/Cargo.toml", "/Cargo.lock", "/LICENSE", "/NOTICE", "/licenses/*.txt", "/licenses/*.md",
     "/README.md", "/CHANGELOG.md", "/INSTALL*.md", "/HOW_TO_CONFIGURE*.md", "/PROVIDER_TERMS.md", "/.github/assets/*.png", "/.github/assets/*.svg",
 ]

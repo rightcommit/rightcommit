@@ -3,6 +3,14 @@
 What changed in each version of rightcommit. Releases are also listed on
 [GitHub](https://github.com/rightcommit/rightcommit/releases).
 
+## [1.10.2] - 2026-11-25
+
+### Fixed
+
+- The crates.io package builds again: it did not include the new favicon, so version 1.10.1
+  could not be published on crates.io or Homebrew and is available only on GitHub and as a
+  Docker image. This version has the same changes as 1.10.1 on every channel.
+
 ## [1.10.1] - 2026-11-25
 
 ### Changed
