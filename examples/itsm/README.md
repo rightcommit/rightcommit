@@ -1,4 +1,4 @@
-# Automate ITSM ticket classification and resolution · Pi + RAG interno
+# Automatizza classificazione e risoluzione dei ticket ITSM · Pi + RAG interno
 
 Il workflow elabora **tutti i ticket di un lotto**, prepara un piano per ciascuno e li applica
 in sequenza con il connettore nativo ServiceNow. Pi classifica e cerca nel RAG interno;
@@ -10,8 +10,8 @@ Python prepara e valida i piani. Le credenziali restano nelle Configurazioni per
    credenziali della PDI, non del portale Developer. Verificare la connessione e salvare.
 2. In Storage indicizzare `examples/itsm/kb`: quattro articoli Markdown. Usare **keyword**
    senza download, oppure **hybrid / multilingual-minilm** per ricerca semantica.
-3. Cliccare **Nuovo workflow** e scegliere **Automate ITSM ticket classification and resolution**
-   oppure la variante **Northstar KB demo**. Aggiungere il nodo RAG
+3. Cliccare **Nuovo workflow** e scegliere **Automatizza classificazione e risoluzione dei ticket ITSM**
+   oppure la variante **Demo KB Northstar**. Aggiungere il nodo RAG
    con l’indice personale e collegarlo a **Pi ITSM operator** come contesto. Salvare.
 4. Per le Request completare `config/servicenow.json` nella Source: route, item_sys_id,
    mapping dei campi e variabili obbligatorie. Non servono campi verticali nelle Configurazioni personali.

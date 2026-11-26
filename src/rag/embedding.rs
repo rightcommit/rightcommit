@@ -91,7 +91,7 @@ pub fn query(engine: &TextEmbedding, text: String, cfg: &Config) -> Result<Vec<f
         .len();
     ensure!(
         tokens <= cfg.encoder_tokens,
-        "La query supera il limite encoder di {} token; usa una domanda più breve",
+        "The query exceeds the encoder limit of {} tokens; use a shorter question",
         cfg.encoder_tokens
     );
     Ok(engine.embed(vec![text], None)?.remove(0))

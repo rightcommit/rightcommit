@@ -32,6 +32,14 @@ set to *Pi Agent*, or *Personal preference* with Pi as your Default agent. The s
 the Pi provider from Personal settings (the default provider in Multi-provider mode). Leave
 the field empty to use the model from Personal settings.
 
+The execution mode remembers which Pi provider the supervisor model was chosen for. If you later
+switch the Pi provider in Personal settings (or your Default agent is no longer Pi), a supervised
+run with that model does not start: starting it by hand shows an error that names the
+**Supervisor model** field, a scheduled run is recorded as an error in the schedule history with
+the schedule's name, and the execution mode and the schedule show a warning. Choose the model
+again for the current provider, or leave the field empty. Schedules and workflows saved by
+earlier versions start as before.
+
 ## Other ways to give the key
 
 - **Installation-wide:** set `OPENROUTER_API_KEY` in `.env` (Docker or Podman, then

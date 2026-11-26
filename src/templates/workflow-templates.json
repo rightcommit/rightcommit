@@ -11723,7 +11723,7 @@
       "status": "published",
       "locales": {
         "it": {
-          "title": "Automate ITSM ticket classification and resolution",
+          "title": "Automatizza classificazione e risoluzione dei ticket ITSM",
           "description": "Legge un lotto di ticket, li classifica e cerca risposte nella KB tramite RAG. Dopo approvazione crea gli incident o ordina le Request; alle domande risponde con la KB. La risoluzione di un incident richiede una verifica umana separata.",
           "setup": "Configurare Pi e ServiceNow. Collegare a Pi un indice RAG della propria KB e preparare tickets/batch.json. Per le Request completare config/servicenow.json nella Source. Guida: guides/CONFIGURING_SERVICENOW.md.",
           "objective": "Un lotto classificato, un piano per ticket e un report con gli esiti ServiceNow.",
@@ -11982,7 +11982,7 @@
         "status": "published",
         "locales": {
           "it": {
-            "title": "Automate ITSM ticket classification and resolution",
+            "title": "Automatizza classificazione e risoluzione dei ticket ITSM",
             "description": "Legge un lotto di ticket, li classifica e cerca risposte nella KB tramite RAG. Dopo approvazione crea gli incident o ordina le Request; alle domande risponde con la KB. La risoluzione di un incident richiede una verifica umana separata.",
             "setup": "Configurare Pi e ServiceNow. Collegare a Pi un indice RAG della propria KB e preparare tickets/batch.json. Per le Request completare config/servicenow.json nella Source. Guida: guides/CONFIGURING_SERVICENOW.md.",
             "objective": "Un lotto classificato, un piano per ticket e un report con gli esiti ServiceNow.",
@@ -12243,7 +12243,7 @@
       "status": "published",
       "locales": {
         "it": {
-          "title": "Automate ITSM ticket classification and resolution · Northstar KB demo",
+          "title": "Automatizza classificazione e risoluzione dei ticket ITSM · Demo KB Northstar",
           "description": "Prova il flusso ITSM con ticket e articoli KB di esempio: VPN, software, password e stato ticket. Classifica ogni ticket e, dopo approvazione, crea incident o ordina Request sulla PDI. Riporta anche le risposte KB e i casi da gestire a mano.",
           "setup": "Configurare Pi e ServiceNow. Indicizzare examples/itsm/kb in Storage e collegare il RAG a Pi. Configurare gli articoli reali in config/servicenow.json prima di approvare ordini. Guida: guides/CONFIGURING_SERVICENOW.md.",
           "objective": "La prova ITSM con la KB Northstar, i piani dei ticket e i risultati sulla PDI.",
@@ -12502,7 +12502,7 @@
         "status": "published",
         "locales": {
           "it": {
-            "title": "Automate ITSM ticket classification and resolution · Northstar KB demo",
+            "title": "Automatizza classificazione e risoluzione dei ticket ITSM · Demo KB Northstar",
             "description": "Prova il flusso ITSM con ticket e articoli KB di esempio: VPN, software, password e stato ticket. Classifica ogni ticket e, dopo approvazione, crea incident o ordina Request sulla PDI. Riporta anche le risposte KB e i casi da gestire a mano.",
             "setup": "Configurare Pi e ServiceNow. Indicizzare examples/itsm/kb in Storage e collegare il RAG a Pi. Configurare gli articoli reali in config/servicenow.json prima di approvare ordini. Guida: guides/CONFIGURING_SERVICENOW.md.",
             "objective": "La prova ITSM con la KB Northstar, i piani dei ticket e i risultati sulla PDI.",

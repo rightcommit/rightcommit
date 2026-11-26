@@ -3,6 +3,52 @@
 What changed in each version of rightcommit. Releases are also listed on
 [GitHub](https://github.com/rightcommit/rightcommit/releases).
 
+## [1.10.4] - 2026-11-26
+
+### Changed
+
+- The results rightcommit writes into a run itself are now in English, so a workflow written in
+  English no longer passes Italian text to its next agents: an approved Review and its server
+  receipt, the deterministic Gate checks (convergence not reached, server tests missing, Gate
+  changed the workspace after the tests), the local commit report, the requests to confirm a
+  local commit or an external write, the clarification request of an A2A service, the message
+  an exposed workflow sends to A2A clients while it waits for an approval, the supervisor's
+  name in decisions, the RAG search notice and the placeholder prompts the Project Manager
+  starts new nodes from. The interface still shows these results in its own
+  language, Italian or English, with hashes, counts and file names as written, in the step
+  reports, the Edit and continue preview, pending requests and the decision log. Runs from
+  earlier versions keep their Italian text and are shown the same way.
+- Errors from the MCP and RAG tools rightcommit gives agents are now in English: the MCP
+  endpoint, the bundled workspace MCP server and the RAG search. The interface shows them in
+  its own language, including the RAG test search, which showed them in Italian with the
+  interface in English (#34).
+- `libsais-rs` updated to 0.2.4, replacing a version withdrawn from crates.io.
+
+### Fixed
+
+- A supervised run no longer starts with a supervisor model chosen for another Pi provider.
+  The execution mode records the provider the **Supervisor model** was chosen for; when the
+  personal provider has changed since, a scheduled or manual run stops before any agent call
+  with an error naming the schedule and the field, and the execution mode and schedule dialogs
+  show a warning. Schedules and workflows saved by earlier versions are checked once the model
+  is chosen again (#36).
+- The two ITSM ticket classification templates have an Italian title with the interface in
+  Italian. Existing installations keep their saved catalog until it is reset or edited in
+  Manage templates (#35).
+- README_zh-CN has the **Agents and the server environment** section and its two MCP
+  subsections (#39).
+- The Codex guide says what was tested for the ChatGPT sign-in inside the container: with
+  Docker the whole procedure, from the device code to a workflow run, FinOps and an image
+  update; Podman was not tested. It also says where to put the container name when it is not
+  `rightcommit` (#37).
+
+### Tests
+
+- **Continue run** is covered with a Fork as the workflow's first step and with skipped Tasks
+  in the branches; both cases already worked (#38).
+- A check fails when a template catalog entry lacks its Italian or English title or
+  description.
+
 ## [1.10.3] - 2026-11-26
 
 ### Added

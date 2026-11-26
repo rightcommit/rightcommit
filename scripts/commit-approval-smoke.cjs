@@ -22,7 +22,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
    test:{state:'ran',node:'tests',command:'cargo test (rilevato da Cargo.toml)',output:'running 3 tests\ntest result: ok. 3 passed',output_cut:true,current:true},limits};
   const show=async(commit)=>page.evaluate(async commit=>{
    if(document.querySelector('#dialog').open)closeModal();
-   app.reviewRun=null;app.run={id:'commit-ui-run',status:'waiting_review',current:'commit',created:1793706088,updated:1793706157,workflow:{id:'commit-workflow',name:'Commit demo',nodes:[{id:'commit',kind:'Connection',provider:'local',operation:'commit',confirm_commit:true}]},pending:{kind:'effect',node:'commit',questions:['Confermare il commit locale di 6 file? Controlla file, differenze e test prima di approvare.'],commit}};
+   app.reviewRun=null;app.run={id:'commit-ui-run',status:'waiting_review',current:'commit',created:1793706088,updated:1793706157,workflow:{id:'commit-workflow',name:'Commit demo',nodes:[{id:'commit',kind:'Connection',provider:'local',operation:'commit',confirm_commit:true}]},pending:{kind:'effect',node:'commit',questions:['Confirm the local commit (files: 6)? Check the files, the changes and the tests before approving.'],commit}};
    await pending();
   },commit);
   const language=async lang=>page.evaluate(lang=>{const el=document.querySelector('[data-language]');el.value=lang;el.dispatchEvent(new Event('change',{bubbles:true}))},lang);

@@ -1148,9 +1148,11 @@ pub(crate) async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
             if !preview.files.is_empty() && approved.as_deref() != Some(&digest) {
                 preview.changed = approved.is_some();
                 r.context.insert(format!("effect-preview:{}", n.id), digest);
+                // Server-written text that reaches agents (the supervisor reads the request) is English;
+                // web/i18n.js shows it in the interface language.
                 let question = format!(
-                    "{}Confermare il commit locale di {} file? Controlla file, differenze e test prima di approvare.",
-                    if preview.changed { "I file sono cambiati dopo l’approvazione. " } else { "" },
+                    "{}Confirm the local commit (files: {})? Check the files, the changes and the tests before approving.",
+                    if preview.changed { "The files changed after the approval. " } else { "" },
                     preview.files.len() + preview.more_files
                 );
                 return pause_with(app, uid, &mut r, "effect", vec![question], None, Some(preview));
@@ -1167,17 +1169,17 @@ pub(crate) async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
                     &mut r,
                     "effect",
                     vec![format!(
-                        "Autorizzare {} su {}? {} Controlla target e artefatti nelle impostazioni e nel run.",
+                        "Authorize {} on {}?{} Check the target and the artifacts in the settings and in the run.",
                         n.operation,
                         n.provider,
                         if n.provider == "github" && n.operation == "api_request" {
                             let settings=app.store.settings(uid)?;
                             let config=settings.connections.get("github").context("Configura GitHub nelle Configurazioni personali")?;
-                            agents::redact(&crate::github_api::preview(&n,config)?, &settings)
+                            format!(" {}", agents::redact(&crate::github_api::preview(&n,config)?, &settings))
                         } else if n.provider == "atlassian" {
-                            format!("twg {}", n.command)
+                            format!(" twg {}", n.command)
                         } else if n.provider == "servicenow" {
-                            agents::redact(&n.command, &app.store.settings(uid)?)
+                            format!(" {}", agents::redact(&n.command, &app.store.settings(uid)?))
                         } else {
                             String::new()
                         }
@@ -1257,11 +1259,11 @@ pub(crate) async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
                 if let Some(receipt) = r.context.remove(&format!("human-approved:{}", n.id)) {
                     let mut out = r.outputs.get(&n.id).cloned().unwrap_or(AgentResult {
                         status: "completed".into(),
-                        summary: "Review approvata".into(),
+                        summary: "Review approved".into(),
                         ..Default::default()
                     });
                     out.summary
-                        .push_str(&format!("\nApprovazione registrata dal server: {receipt}"));
+                        .push_str(&format!("\nApproval recorded by the server: {receipt}"));
                     out
                 } else {
                     if n.mode != "human" {
@@ -1331,7 +1333,7 @@ pub(crate) async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
                             "Gate di convergenza senza esito rework"
                         );
                         let summary = format!(
-                            "Convergenza non raggiunta: {open} task aperti; rapporto precedente rework={reported_rework}. Check deterministico, nessuna approvazione simulata."
+                            "Convergence not reached: tasks still open: {open}; previous report rework={reported_rework}. Deterministic check, no approval simulated."
                         );
                         r.outputs.insert(
                             n.id.clone(),
@@ -1353,7 +1355,7 @@ pub(crate) async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
                         n.outcomes.iter().any(|o| o == "rework"),
                         "Quality gate: riesegui i test deterministici sul workspace corrente"
                     );
-                    let summary="I test del server sono mancanti o non più validi per i file correnti. Conserva le correzioni e ripassa da implementazione, CI e review prima della consegna.".to_string();
+                    let summary="The server's tests are missing or no longer valid for the current files. Keep the fixes and go back through implementation, CI and review before delivery.".to_string();
                     crate::artifacts::snapshot_async(app, uid, &r, &n.id, "", &summary).await?;
                     r.outputs.insert(
                         n.id.clone(),
@@ -1396,8 +1398,9 @@ pub(crate) async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
                             "Il gate ha cambiato i file dopo CI: nuova verifica richiesta"
                         );
                         out.decision = "rework".into();
+                        // On its own paragraph: the interface translates it, the Gate's own summary stays as written.
                         out.summary = format!(
-                            "Il gate ha modificato il workspace dopo i test. Nuova CI e review richieste. {}",
+                            "The gate changed the workspace after the tests: CI and review must run again.\n\n{}",
                             out.summary
                         );
                     }
@@ -1444,7 +1447,7 @@ pub(crate) async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
                 match crate::local_commit::commit(app, uid, &r, commit_digest.as_ref().map(|(digest, _)| digest.as_str())).await? {
                     Some(mut summary) => {
                         if commit_digest.is_none() {
-                            summary.push_str("\nCommit eseguito senza conferma: la run è in modalità non presidiata, quindi nessuno poteva approvarlo.");
+                            summary.push_str("\nCommitted without confirmation: the run is in Unattended mode, so nobody could approve it.");
                         }
                         let out = AgentResult { status: "completed".into(), summary, decision: "pass".into(), ..Default::default() };
                         crate::artifacts::snapshot_async(app, uid, &r, &n.id, "", &out.report()).await?;
@@ -2434,6 +2437,65 @@ printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"<
         assert!(prompts.iter().any(|p| p.contains("REVIEW. Step instructions:\nCheck the plan.")));
         assert!(prompts.iter().any(|p| p.contains("Handoff through Memory") && p.contains("Write a one-line plan in English.")));
     }
+    #[tokio::test]
+    async fn server_written_results_reach_the_next_step_in_english() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let app = crate::tests::app(dir.path());
+        app.store.update_settings(1, |s| {
+            s.agents.insert("codex".into(), AgentConfig { api_key: "test-codex".into(), ..Default::default() });
+            Ok(())
+        }).unwrap();
+        let w: Workflow = serde_json::from_value(serde_json::json!({
+            "id":"server-results", "name":"Server results", "description":"", "entry":"write",
+            "nodes":[{"id":"source","kind":"Source","source_type":"example"},{"id":"author","kind":"Agent","runtime":"codex"},
+                {"id":"write","kind":"Task","agent":"author","prompt":"Write the plan."},
+                {"id":"review","kind":"Review","mode":"human","prompt":"Approve the plan."},
+                {"id":"check","kind":"Task","agent":"author","prompt":"Check the plan."},
+                {"id":"gate","kind":"Gate","agent":"author","prompt":"Is it done?","outcomes":["pass","rework"],"max_rework":2,
+                    "require_tasks_closed":true,"location":"tasks.md","require_tests":true},
+                {"id":"done","kind":"Task","agent":"author","prompt":"Report."}],
+            "edges":[{"from":"source","to":"author","kind":"context"},{"from":"write","to":"review","kind":"control"},
+                {"from":"review","to":"check","kind":"control"},{"from":"check","to":"gate","kind":"control"},
+                {"from":"gate","to":"done","kind":"control","outcome":"pass"},{"from":"gate","to":"check","kind":"rework","outcome":"rework"}]
+        })).unwrap();
+        let r = create(&app, 1, w, "Plan the release".into(), None).await.unwrap();
+        let tasks = Path::new(&r.workspace).join("tasks.md");
+        std::fs::write(&tasks, "- [ ] a\n").unwrap();
+        let tools = crate::distribution::tools(dir.path());
+        std::fs::create_dir_all(&tools).unwrap();
+        // Keeps every prompt it receives and closes the open task once the Gate reports it.
+        std::fs::write(tools.join("codex"), format!(r#"#!/bin/sh
+prompt=$(cat)
+printf '%s' "$prompt" > "$HOME/prompt-$(date +%s%N)-$$.txt"
+case "$prompt" in *"Convergence not reached"*) printf '%s\n' '- [x] a' > '{}';; esac
+printf '%s\n' '{{"type":"thread.started","thread_id":"results-session"}}'
+printf '%s\n' '{{"type":"item.completed","item":{{"type":"agent_message","text":"<nodo_result>{{\"status\":\"completed\",\"summary\":\"Done\",\"decision\":\"pass\"}}</nodo_result>"}}}}'
+"#, tasks.display())).unwrap();
+        std::fs::set_permissions(tools.join("codex"), std::fs::Permissions::from_mode(0o700)).unwrap();
+        drive(&app, 1, &r.id).await.unwrap();
+        assert_eq!(app.store.run(1, &r.id).unwrap().pending.unwrap().node, "review");
+        decide(&app, &User { id: 1, email: "reviewer@test.local".into() }, &r.id, "approve", "Looks right").unwrap();
+        // Review, Gate convergence check, Gate test check, then the rework limit stops the run.
+        assert!(drive(&app, 1, &r.id).await.unwrap_err().to_string().contains("Limite di rework (2)"));
+        let home = crate::agents::user_home(&app, 1).unwrap();
+        let mut prompts: Vec<_> = std::fs::read_dir(&home).unwrap().filter_map(|e| e.ok()).map(|e| e.path())
+            .filter(|p| p.file_name().unwrap().to_string_lossy().starts_with("prompt-")).collect();
+        prompts.sort();
+        let prompts: Vec<String> = prompts.iter().map(|p| std::fs::read_to_string(p).unwrap()).collect();
+        assert_eq!(prompts.len(), 4, "write, then check after the Review and after each Gate check");
+        assert!(prompts[1].contains(r#""summary":"Review approved\nApproval recorded by the server: {"#), "{}", prompts[1]);
+        assert!(prompts[2].contains("Convergence not reached: tasks still open: 1; previous report rework=false. Deterministic check, no approval simulated."), "{}", prompts[2]);
+        assert!(prompts[3].contains("The server's tests are missing or no longer valid for the current files. Keep the fixes and go back through implementation, CI and review before delivery."), "{}", prompts[3]);
+        for prompt in &prompts {
+            for italian in ["Review approvata", "Approvazione registrata", "Convergenza", "I test del server"] {
+                assert!(!prompt.contains(italian), "{italian}");
+            }
+        }
+        let reports = app.store.artifacts(1, &r.id).unwrap();
+        let gate = reports.iter().filter(|a| a.path == ".rightcommit/reports/gate.md").max_by_key(|a| a.version).unwrap();
+        assert!(gate.content.starts_with("The server's tests are missing"), "{}", gate.content);
+    }
     #[test]
     fn accepts_structured_parallel_tasks() {
         validate(&graph()).unwrap();
@@ -2504,6 +2566,8 @@ mod servicenow_approval_tests {
         std::fs::write(&path,p.to_string()).unwrap();
         drive(&app,1,&r.id).await.unwrap();let pending=app.store.run(1,&r.id).unwrap().pending.unwrap();
         assert_eq!(pending.kind,"effect");assert!(pending.questions[0].contains("Original description"));assert!(!pending.questions[0].contains("secret-example"));
+        // The shape web/app.js reads the ServiceNow summary from, in English as the supervisor receives it.
+        assert!(pending.questions[0].starts_with("Authorize apply_ticket_plan on servicenow? {")&&pending.questions[0].ends_with("} Check the target and the artifacts in the settings and in the run."),"{}",pending.questions[0]);
         decide(&app,&User{id:1,email:"test@local".into()},&r.id,"approve","").unwrap();
         p["description"]=serde_json::json!("Changed after approval");std::fs::write(path,p.to_string()).unwrap();
         drive(&app,1,&r.id).await.unwrap();let pending=app.store.run(1,&r.id).unwrap().pending.unwrap();

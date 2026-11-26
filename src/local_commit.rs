@@ -340,16 +340,16 @@ pub(crate) async fn commit(app: &App, uid: i64, r: &Run, approved: Option<&str>)
         agents::git_bytes(app, uid, &root, &commit, 60).await?;
     }
     let head = agents::tool(app, uid, &root, "git", &["rev-parse", "HEAD"], 30).await?;
-    // One sentence per line, each a message the interface translates whole; the hash and the
-    // file names inside it are shown as written.
+    // In English, as the next steps receive it. One sentence per line, each a message the
+    // interface shows whole in its language; the hash and the file names inside it are shown as written.
     let mut lines = vec![
-        format!("Commit locale verificato: {}.", head.trim()),
-        if run.is_empty() { "File della run nel commit: nessuno.".into() } else { format!("File della run nel commit: {}.", shown(&run)) },
+        format!("Local commit verified: {}.", head.trim()),
+        if run.is_empty() { "Files from the run in the commit: none.".into() } else { format!("Files from the run in the commit: {}.", shown(&run)) },
     ];
     if !kept.is_empty() {
-        lines.push(format!("Modifiche già presenti prima della run, lasciate fuori dal commit come erano: {}.", shown(&kept)));
+        lines.push(format!("Changes already there before the run, left out of the commit as they were: {}.", shown(&kept)));
     }
-    lines.push("Nessun push, merge o deploy eseguito.".into());
+    lines.push("Nothing was pushed, merged or deployed.".into());
     Ok(Some(lines.join("\n")))
 }
 
@@ -607,7 +607,7 @@ mod tests {
         write(&ws, "-dash.txt", "leading dash\n");
         std::fs::remove_file(ws.join("old.txt")).unwrap();
         let out = crate::connectors::execute(&a, 1, &r, &commit).await.unwrap();
-        assert!(out.summary.starts_with("Commit locale verificato") && !out.summary.contains("lasciate fuori"), "{}", out.summary);
+        assert!(out.summary.starts_with("Local commit verified") && !out.summary.contains("left out"), "{}", out.summary);
         assert_eq!(committed(&ws), ["-dash.txt", "docs/new file.md", "old.txt", "src/lib.rs"]);
         assert_eq!(git(&ws, &["status", "--porcelain", "--untracked-files=all"]), "");
         assert_eq!(git(&ws, &["log", "-1", "--format=%s"]).trim(), "SDD: verified workflow delivery");
@@ -632,10 +632,10 @@ mod tests {
         // One sentence per line: the interface translates each line as a whole.
         let head = git(&ws, &["rev-parse", "HEAD"]);
         assert_eq!(out.summary.lines().collect::<Vec<_>>(), [
-            format!("Commit locale verificato: {}.", head.trim()).as_str(),
-            "File della run nel commit: a.txt, new.txt.",
-            "Modifiche già presenti prima della run, lasciate fuori dal commit come erano: b.txt, notes/user notes.txt, staged.txt.",
-            "Nessun push, merge o deploy eseguito.",
+            format!("Local commit verified: {}.", head.trim()).as_str(),
+            "Files from the run in the commit: a.txt, new.txt.",
+            "Changes already there before the run, left out of the commit as they were: b.txt, notes/user notes.txt, staged.txt.",
+            "Nothing was pushed, merged or deployed.",
         ]);
         assert_eq!(git(&ws, &["rev-parse", "HEAD~1"]), base);
         assert_eq!(committed(&ws), ["a.txt", "new.txt"]);
@@ -647,7 +647,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(ws.join("staged.txt")).unwrap(), "s\nuser staged\nand unstaged\n");
         // A second commit in the same run finds nothing new and still leaves the edits alone.
         let out = crate::connectors::execute(&a, 1, &r, &commit).await.unwrap();
-        assert!(out.summary.lines().any(|l| l == "File della run nel commit: nessuno."), "{}", out.summary);
+        assert!(out.summary.lines().any(|l| l == "Files from the run in the commit: none."), "{}", out.summary);
         assert_eq!(committed(&ws), ["a.txt", "new.txt"]);
     }
 
@@ -860,7 +860,7 @@ mod tests {
         assert_eq!(committed(&ws), ["a.txt", "new.txt"]);
         assert_eq!(git(&ws, &["show", "HEAD:a.txt"]), "a\nrun\n");
         let report = &done.outputs["commit"].summary;
-        assert!(report.contains(git(&ws, &["rev-parse", "HEAD"]).trim()) && !report.contains("senza conferma"), "{report}");
+        assert!(report.contains(git(&ws, &["rev-parse", "HEAD"]).trim()) && !report.contains("without confirmation"), "{report}");
         assert_eq!(git(&ws, &["ls-files", "--others", "--exclude-standard"]), "mine.txt\n");
         let decisions = a.store.decisions(1, &r.id).unwrap();
         assert_eq!((decisions[0].actor.as_str(), decisions[0].decision.as_str(), decisions[0].node.as_str()), ("human", "approve", "commit"));
@@ -879,7 +879,7 @@ mod tests {
         engine::drive(&a, 1, &r.id).await.unwrap();
         let again = waiting(&a, &r);
         assert!(again.changed && again.files[0].diff.contains("+changed after approval"), "{again:?}");
-        assert!(a.store.run(1, &r.id).unwrap().pending.unwrap().questions[0].starts_with("I file sono cambiati dopo l’approvazione"));
+        assert!(a.store.run(1, &r.id).unwrap().pending.unwrap().questions[0].starts_with("The files changed after the approval. Confirm the local commit (files: "));
         assert_eq!(git(&ws, &["log", "-1", "--format=%s"]).trim(), "base");
         // The commit checks the digest itself too, for a change between the check and the commit.
         let run = a.store.run(1, &r.id).unwrap();
@@ -917,7 +917,7 @@ mod tests {
         let done = a.store.run(1, &r.id).unwrap();
         assert_eq!((done.status.as_str(), done.pending.is_none()), ("completed", true));
         assert_eq!(committed(&ws), ["a.txt"]);
-        assert!(done.outputs["commit"].summary.starts_with("Commit locale verificato") && !done.outputs["commit"].summary.contains("conferma"));
+        assert!(done.outputs["commit"].summary.starts_with("Local commit verified") && !done.outputs["commit"].summary.contains("confirmation"));
         assert!(a.store.decisions(1, &r.id).unwrap().is_empty());
         // Workflows saved before the option have no field: they keep committing without a pause.
         let mut saved = serde_json::to_value(&r.workflow).unwrap();
@@ -943,7 +943,7 @@ mod tests {
         let done = a.store.run(1, &r.id).unwrap();
         assert_eq!((done.status.as_str(), done.pending.is_none()), ("completed", true));
         assert_eq!(committed(&ws), ["a.txt"]);
-        assert_eq!(done.outputs["commit"].summary.lines().last(), Some("Commit eseguito senza conferma: la run è in modalità non presidiata, quindi nessuno poteva approvarlo."), "{}", done.outputs["commit"].summary);
+        assert_eq!(done.outputs["commit"].summary.lines().last(), Some("Committed without confirmation: the run is in Unattended mode, so nobody could approve it."), "{}", done.outputs["commit"].summary);
         assert!(!done.sessions.contains_key(crate::supervision::BINDING));
     }
 
@@ -978,7 +978,7 @@ mod tests {
         engine::drive(&a, 1, &r.id).await.unwrap();
         let done = a.store.run(1, &r.id).unwrap();
         assert_eq!(done.status, "completed");
-        assert!(done.outputs["commit"].summary.contains("nel commit: nessuno"));
+        assert!(done.outputs["commit"].summary.contains("in the commit: none."));
     }
 
     #[tokio::test]

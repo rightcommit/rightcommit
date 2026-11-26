@@ -797,6 +797,7 @@ body.resizing-activity-log,body.resizing-activity-log *{cursor:row-resize!import
 }
 
 .memory-report-warning,
+.supervisor-model-warning,
 .node .node-badge.memory-report-warning {
   color: var(--amber);
 }

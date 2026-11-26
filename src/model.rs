@@ -113,6 +113,12 @@ pub struct ExecutionPolicy {
     pub mode: ExecutionMode,
     pub runtime: String,
     pub model: String,
+    /// The Pi provider the supervisor model was chosen for, recorded by the interface when the
+    /// model is set while the supervisor runs Pi. Empty when unknown (policies saved by 1.10.3
+    /// and earlier, or by hand) or when the model was chosen for Codex or Claude Code: a model
+    /// ID alone does not tell its provider, as several Pi providers use vendor/model IDs too.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub model_provider: String,
     pub instructions: String,
     pub max_decisions: u32,
     pub max_per_node: u32,
@@ -124,6 +130,7 @@ impl Default for ExecutionPolicy {
             mode: ExecutionMode::Interactive,
             runtime: String::new(),
             model: String::new(),
+            model_provider: String::new(),
             instructions: String::new(),
             max_decisions: 50,
             max_per_node: 5,

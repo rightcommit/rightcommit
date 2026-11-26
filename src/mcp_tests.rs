@@ -153,6 +153,63 @@ async fn stdio_client_tool_scopes_sessions_resources_and_revocation() {
     run.workflow.entry = "mcp".into();
     assert!(crate::engine::validate(&run.workflow).is_err());
 }
+#[tokio::test]
+async fn errors_handed_to_an_agent_are_english() {
+    let dir = tempfile::tempdir().unwrap();
+    let (app, run) = fixture_app(dir.path()).await;
+    let prepared = prepare(&app, 1, &run).await.unwrap().unwrap();
+    let bearer = |token: &str| {
+        let mut h = HeaderMap::new();
+        h.insert("authorization", format!("Bearer {token}").parse().unwrap());
+        h
+    };
+    let call = |name: &str| Request {
+        method: "tools/call".into(),
+        params: json!({"name":name}),
+    };
+    // Why a grant is refused stays on the server; the agent gets one English answer.
+    let error = |r: Result<Grant>| r.err().unwrap().to_string();
+    assert_eq!(error(grant(&app, &HeaderMap::new())), "MCP credential missing");
+    assert_eq!(error(grant(&app, &bearer(&"x".repeat(200)))), "Invalid MCP credential");
+    assert_eq!(error(grant(&app, &bearer("unknown"))), "MCP credential revoked");
+    assert_eq!(error(grant(&app, &bearer(prepared.token()))), "MCP agent turn not active");
+    let Err(ApiError(status, message)) =
+        agent(State(app.clone()), bearer(prepared.token()), Json(call("anything"))).await
+    else {
+        panic!("an inactive turn must be refused")
+    };
+    assert_eq!((status, message.as_str()), (StatusCode::UNAUTHORIZED, MCP_ACCESS_ERROR));
+    assert_eq!(MCP_ACCESS_ERROR, "MCP access not valid or expired");
+    app.busy.lock().unwrap().insert(run.id.clone());
+    let g = grant(&app, &bearer(prepared.token())).unwrap();
+    let Err(ApiError(status, message)) =
+        agent(State(app.clone()), bearer(prepared.token()), Json(call(&alias("mcp", "forbidden")))).await
+    else {
+        panic!("a tool outside the grant must be refused")
+    };
+    assert_eq!((status, message.as_str()), (StatusCode::BAD_REQUEST, MCP_REQUEST_ERROR));
+    assert_eq!(
+        MCP_REQUEST_ERROR,
+        "MCP request failed. Check the connection, the allowed tools and the timeout; no automatic retry."
+    );
+    let error = |r: Result<Value>| r.unwrap_err().to_string();
+    assert_eq!(
+        error(dispatch(&app, &g, call(&alias("mcp", "forbidden"))).await),
+        "MCP tool not assigned to the agent"
+    );
+    assert_eq!(
+        error(dispatch(&app, &g, Request { method: "tools/call".into(), params: json!({}) }).await),
+        "Tool name missing"
+    );
+    assert_eq!(
+        error(dispatch(&app, &g, Request { method: "resources/list".into(), params: json!({}) }).await),
+        "Unsupported MCP method"
+    );
+    assert_eq!(
+        error(metadata(&g.servers[0].session, "@unknown", json!({})).await),
+        "Invalid MCP metadata method"
+    );
+}
 #[test]
 fn server_variables_are_named_checked_against_the_command_and_resolved_only_for_the_administrator() {
     let dir = tempfile::tempdir().unwrap();

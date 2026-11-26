@@ -661,6 +661,274 @@ mod tests {
             assert_eq!(resumed.outputs[id].summary, format!("{id} first pass"));
         }
     }
+    /// A completed run of `w`, left as the engine leaves it: `skipped` Tasks are bypassed with
+    /// no result, the Fork has no result of its own, every other step completed.
+    async fn completed_run(app: &App, w: Workflow, done: &[&str], skipped: &[&str]) -> Run {
+        let mut r = engine::create(app, 1, w, "test".into(), None)
+            .await
+            .unwrap();
+        for id in done {
+            r.states.insert((*id).into(), "completed".into());
+            if r.workflow.node(id).unwrap().kind != "Fork" {
+                r.outputs.insert((*id).into(), result(&format!("{id} first pass")));
+            }
+        }
+        for id in skipped {
+            r.states.insert((*id).into(), "bypassed".into());
+        }
+        r.status = "completed".into();
+        app.store.save_run(1, &r).unwrap();
+        r
+    }
+    /// Fork (the first step) → (a1 → a2 | b) → Join → human Review → synthesis.
+    fn fork_first_workflow() -> Workflow {
+        let mut w: Workflow = serde_json::from_value(serde_json::json!({
+            "id":"fork-first-continue", "name":"Fork first continue", "description":"", "entry":"fork",
+            "nodes":[{"id":"source","kind":"Source","source_type":"example"},
+                {"id":"coordinator","kind":"Agent"},{"id":"aa","kind":"Agent"},{"id":"ab","kind":"Agent"},
+                {"id":"fork","kind":"Fork","target":"join"},
+                {"id":"a1","kind":"Task","agent":"aa","prompt":"A1"},
+                {"id":"a2","kind":"Task","agent":"aa","prompt":"A2"},
+                {"id":"b","kind":"Task","agent":"ab","prompt":"B"},
+                {"id":"join","kind":"Join"},
+                {"id":"review","kind":"Review","mode":"human","prompt":"Review"},
+                {"id":"synthesis","kind":"Task","agent":"coordinator","prompt":"Synthesis"}],
+            "edges":[]
+        }))
+        .unwrap();
+        w.edges = vec![
+            edge("source", "coordinator", "context", ""),
+            edge("source", "aa", "context", ""),
+            edge("source", "ab", "context", ""),
+            edge("coordinator", "synthesis", "context", ""),
+            edge("aa", "a1", "context", ""),
+            edge("aa", "a2", "context", ""),
+            edge("ab", "b", "context", ""),
+            edge("fork", "a1", "control", ""),
+            edge("fork", "b", "control", ""),
+            edge("a1", "a2", "control", ""),
+            edge("a2", "join", "control", ""),
+            edge("b", "join", "control", ""),
+            edge("join", "review", "control", ""),
+            edge("review", "synthesis", "control", ""),
+        ];
+        engine::validate(&w).unwrap();
+        w
+    }
+    #[tokio::test]
+    async fn continuation_with_the_fork_as_first_step_arrives_from_no_previous_node() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = crate::tests::app(dir.path());
+        let all = ["fork", "a1", "a2", "b", "join", "review", "synthesis"];
+        let r = completed_run(&app, fork_first_workflow(), &all, &[]).await;
+        let ids = candidates(&app, 1, &r);
+        for id in all {
+            assert!(ids.contains(&id.into()), "{id}");
+        }
+        // A step inside a branch: the Fork runs again, with no step before it to arrive from.
+        let resumed = prepare(&app, 1, &r.id, "a2", true).unwrap();
+        assert_eq!(resumed.current, "fork");
+        assert!(resumed.last_node.is_none());
+        assert!(resumed.last_task.is_none());
+        let shown = resumed.active_edge.clone().expect("the link into the chosen step");
+        assert_eq!((shown.from.as_str(), shown.to.as_str()), ("a1", "a2"));
+        for id in ["a1", "b"] {
+            assert_eq!(resumed.states[id], "completed", "{id}");
+            assert_eq!(resumed.outputs[id].summary, format!("{id} first pass"));
+        }
+        for id in ["fork", "a2", "join", "review", "synthesis"] {
+            assert_eq!(resumed.states[id], "queued", "{id}");
+            assert!(!resumed.outputs.contains_key(id), "{id}");
+        }
+        let mut ran = resumed.clone();
+        ran.states.insert("a2".into(), "completed".into());
+        ran.outputs.insert("a2".into(), result("a2 second pass"));
+        app.store.save_run(1, &ran).unwrap();
+        engine::drive(&app, 1, &r.id).await.unwrap();
+        let saved = app.store.run(1, &r.id).unwrap();
+        assert_eq!(saved.status, "waiting_review");
+        assert_eq!(saved.pending.as_ref().unwrap().node, "review");
+        assert_eq!(saved.states["fork"], "completed");
+        assert_eq!(saved.states["join"], "completed");
+        let results: serde_json::Value =
+            serde_json::from_str(&saved.outputs["join"].summary).unwrap();
+        assert_eq!(results["a1"]["summary"], "a1 first pass");
+        assert_eq!(results["a2"]["summary"], "a2 second pass");
+        assert_eq!(results["b"]["summary"], "b first pass");
+        // The first step of a branch arrives by the Fork's link to it.
+        let mut done = saved;
+        done.pending = None;
+        done.status = "completed".into();
+        app.store.save_run(1, &done).unwrap();
+        let resumed = prepare(&app, 1, &r.id, "b", true).unwrap();
+        assert_eq!(resumed.current, "fork");
+        assert!(resumed.last_node.is_none());
+        let shown = resumed.active_edge.clone().unwrap();
+        assert_eq!((shown.from.as_str(), shown.to.as_str()), ("fork", "b"));
+        assert_eq!(resumed.outputs["a2"].summary, "a2 second pass");
+        // The Join arrives from the Fork; no Task ran before it.
+        let mut done = resumed;
+        for id in ["fork", "b", "join", "review", "synthesis"] {
+            done.states.insert(id.into(), "completed".into());
+            if id != "fork" {
+                done.outputs.insert(id.into(), result(&format!("{id} second pass")));
+            }
+        }
+        done.status = "completed".into();
+        app.store.save_run(1, &done).unwrap();
+        let resumed = prepare(&app, 1, &r.id, "join", true).unwrap();
+        assert_eq!(resumed.current, "join");
+        assert_eq!(resumed.last_node.as_deref(), Some("fork"));
+        assert!(resumed.last_task.is_none());
+        assert!(resumed.active_edge.is_none());
+        engine::drive(&app, 1, &r.id).await.unwrap();
+        let saved = app.store.run(1, &r.id).unwrap();
+        assert_eq!(saved.status, "waiting_review");
+        let results: serde_json::Value =
+            serde_json::from_str(&saved.outputs["join"].summary).unwrap();
+        assert_eq!(results["b"]["summary"], "b second pass");
+        assert_eq!(results["a1"]["summary"], "a1 first pass");
+        // The Fork itself is the first step: continuing from it starts the run again.
+        let mut done = saved;
+        done.pending = None;
+        done.status = "completed".into();
+        app.store.save_run(1, &done).unwrap();
+        let resumed = prepare(&app, 1, &r.id, "fork", true).unwrap();
+        assert_eq!(resumed.current, "fork");
+        assert!(resumed.last_node.is_none());
+        assert!(resumed.active_edge.is_none());
+        for id in all {
+            assert_eq!(resumed.states[id], "queued", "{id}");
+        }
+    }
+    /// plan → Fork → (a1 skipped → a2 | b1 → b2 skipped) → Join → human Review → synthesis.
+    fn skipped_branches_workflow() -> Workflow {
+        let mut w: Workflow = serde_json::from_value(serde_json::json!({
+            "id":"skipped-continue", "name":"Skipped continue", "description":"", "entry":"plan",
+            "nodes":[{"id":"source","kind":"Source","source_type":"example"},
+                {"id":"coordinator","kind":"Agent"},{"id":"aa","kind":"Agent"},{"id":"ab","kind":"Agent"},
+                {"id":"plan","kind":"Task","agent":"coordinator","prompt":"Plan"},
+                {"id":"fork","kind":"Fork","target":"join"},
+                {"id":"a1","kind":"Task","agent":"aa","skip":true},
+                {"id":"a2","kind":"Task","agent":"aa","prompt":"A2"},
+                {"id":"b1","kind":"Task","agent":"ab","prompt":"B1"},
+                {"id":"b2","kind":"Task","agent":"ab","skip":true},
+                {"id":"join","kind":"Join"},
+                {"id":"review","kind":"Review","mode":"human","prompt":"Review"},
+                {"id":"synthesis","kind":"Task","agent":"coordinator","prompt":"Synthesis"}],
+            "edges":[]
+        }))
+        .unwrap();
+        w.edges = vec![
+            edge("source", "coordinator", "context", ""),
+            edge("coordinator", "plan", "context", ""),
+            edge("coordinator", "synthesis", "context", ""),
+            edge("aa", "a1", "context", ""),
+            edge("aa", "a2", "context", ""),
+            edge("ab", "b1", "context", ""),
+            edge("ab", "b2", "context", ""),
+            edge("plan", "fork", "control", ""),
+            edge("fork", "a1", "control", ""),
+            edge("fork", "b1", "control", ""),
+            edge("a1", "a2", "control", ""),
+            edge("a2", "join", "control", ""),
+            edge("b1", "b2", "control", ""),
+            edge("b2", "join", "control", ""),
+            edge("join", "review", "control", ""),
+            edge("review", "synthesis", "control", ""),
+        ];
+        engine::validate(&w).unwrap();
+        w
+    }
+    #[tokio::test]
+    async fn continuation_counts_skipped_branch_tasks_as_done() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = crate::tests::app(dir.path());
+        let done = ["plan", "fork", "a2", "b1", "join", "review", "synthesis"];
+        let r = completed_run(&app, skipped_branches_workflow(), &done, &["a1", "b2"]).await;
+        let ids = candidates(&app, 1, &r);
+        for id in ["fork", "a1", "a2", "b1", "b2", "join", "review", "synthesis"] {
+            assert!(ids.contains(&id.into()), "{id}");
+        }
+        let joined = |run: &Run| -> serde_json::Value {
+            serde_json::from_str(&run.outputs["join"].summary).unwrap()
+        };
+        let settle = |run: Run| {
+            let mut run = run;
+            run.pending = None;
+            run.status = "completed".into();
+            app.store.save_run(1, &run).unwrap();
+        };
+        // From the Join: the skipped Tasks stay bypassed and contribute nothing.
+        let resumed = prepare(&app, 1, &r.id, "join", true).unwrap();
+        assert_eq!(resumed.current, "join");
+        assert_eq!(resumed.last_node.as_deref(), Some("fork"));
+        for id in ["a1", "b2"] {
+            assert_eq!(resumed.states[id], "bypassed", "{id}");
+        }
+        engine::drive(&app, 1, &r.id).await.unwrap();
+        let saved = app.store.run(1, &r.id).unwrap();
+        assert_eq!(saved.status, "waiting_review");
+        assert_eq!(saved.states["join"], "completed");
+        let results = joined(&saved);
+        assert_eq!(results["a2"]["summary"], "a2 first pass");
+        assert_eq!(results["b1"]["summary"], "b1 first pass");
+        assert!(results.get("a1").is_none() && results.get("b2").is_none(), "{results}");
+        settle(saved);
+        // From the step after a skipped Task: the skipped one counts as done and is not run.
+        let resumed = prepare(&app, 1, &r.id, "a2", true).unwrap();
+        assert_eq!(resumed.current, "fork");
+        assert_eq!(resumed.last_node.as_deref(), Some("plan"));
+        let shown = resumed.active_edge.clone().expect("the link into the chosen step");
+        assert_eq!((shown.from.as_str(), shown.to.as_str()), ("a1", "a2"));
+        assert_eq!(resumed.states["a1"], "bypassed");
+        assert_eq!(resumed.states["b2"], "bypassed");
+        assert_eq!(resumed.states["a2"], "queued");
+        let mut ran = resumed.clone();
+        ran.states.insert("a2".into(), "completed".into());
+        ran.outputs.insert("a2".into(), result("a2 second pass"));
+        app.store.save_run(1, &ran).unwrap();
+        engine::drive(&app, 1, &r.id).await.unwrap();
+        let saved = app.store.run(1, &r.id).unwrap();
+        assert_eq!(saved.status, "waiting_review");
+        assert_eq!(saved.states["fork"], "completed");
+        assert!(!saved.attempts.contains_key("a1") && !saved.attempts.contains_key("b2"));
+        let results = joined(&saved);
+        assert_eq!(results["a2"]["summary"], "a2 second pass");
+        assert_eq!(results["b1"]["summary"], "b1 first pass");
+        assert!(results.get("a1").is_none() && results.get("b2").is_none(), "{results}");
+        settle(saved);
+        // From the step before a skipped Task: the skipped one is queued, then bypassed again.
+        let resumed = prepare(&app, 1, &r.id, "b1", true).unwrap();
+        assert_eq!(resumed.current, "fork");
+        let shown = resumed.active_edge.clone().unwrap();
+        assert_eq!((shown.from.as_str(), shown.to.as_str()), ("fork", "b1"));
+        assert_eq!(resumed.states["b2"], "queued");
+        assert_eq!(resumed.states["a1"], "bypassed");
+        let mut ran = resumed.clone();
+        ran.states.insert("b1".into(), "completed".into());
+        ran.outputs.insert("b1".into(), result("b1 second pass"));
+        app.store.save_run(1, &ran).unwrap();
+        engine::drive(&app, 1, &r.id).await.unwrap();
+        let saved = app.store.run(1, &r.id).unwrap();
+        assert_eq!(saved.status, "waiting_review");
+        assert_eq!(saved.states["b2"], "bypassed");
+        assert!(!saved.outputs.contains_key("b2"));
+        let results = joined(&saved);
+        assert_eq!(results["a2"]["summary"], "a2 second pass");
+        assert_eq!(results["b1"]["summary"], "b1 second pass");
+        settle(saved);
+        // From the skipped Task itself: the Fork bypasses it again.
+        let resumed = prepare(&app, 1, &r.id, "b2", true).unwrap();
+        assert_eq!(resumed.current, "fork");
+        let shown = resumed.active_edge.clone().unwrap();
+        assert_eq!((shown.from.as_str(), shown.to.as_str()), ("b1", "b2"));
+        engine::drive(&app, 1, &r.id).await.unwrap();
+        let saved = app.store.run(1, &r.id).unwrap();
+        assert_eq!(saved.status, "waiting_review");
+        assert_eq!(saved.states["b2"], "bypassed");
+        assert_eq!(joined(&saved)["b1"]["summary"], "b1 second pass");
+    }
     #[tokio::test]
     async fn continuation_gives_back_the_rework_budget_of_the_steps_that_run_again() {
         let dir = tempfile::tempdir().unwrap();

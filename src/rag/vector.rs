@@ -66,22 +66,22 @@ pub fn decode(batches: Vec<RecordBatch>) -> Result<Vec<Chunk>> {
     for batch in batches {
         let payload = batch
             .column_by_name("payload")
-            .context("Payload indice mancante")?
+            .context("Index payload missing")?
             .as_any()
             .downcast_ref::<StringArray>()
-            .context("Payload non valido")?;
+            .context("Invalid payload")?;
         for i in 0..batch.num_rows() {
             let mut c: Chunk = serde_json::from_str(payload.value(i))?;
             if let Some(v) = batch.column_by_name("vector") {
                 let a = v
                     .as_any()
                     .downcast_ref::<FixedSizeListArray>()
-                    .context("Vettore non valido")?
+                    .context("Invalid vector")?
                     .value(i);
                 c.vector = a
                     .as_any()
                     .downcast_ref::<Float32Array>()
-                    .context("Vettore non valido")?
+                    .context("Invalid vector")?
                     .values()
                     .to_vec();
             }
@@ -91,7 +91,7 @@ pub fn decode(batches: Vec<RecordBatch>) -> Result<Vec<Chunk>> {
     Ok(out)
 }
 pub async fn all(dir: &Path) -> Result<Vec<Chunk>> {
-    let db = lancedb::connect(dir.to_str().context("Percorso non valido")?)
+    let db = lancedb::connect(dir.to_str().context("Invalid path")?)
         .execute()
         .await?;
     let table = db.open_table("chunks").execute().await?;
@@ -111,7 +111,7 @@ pub async fn search(
     mode: &str,
     vector: Option<Vec<f32>>,
 ) -> Result<serde_json::Value> {
-    let db = lancedb::connect(dir.to_str().context("Percorso non valido")?)
+    let db = lancedb::connect(dir.to_str().context("Invalid path")?)
         .execute()
         .await?;
     let table = db.open_table("chunks").execute().await?;
@@ -143,7 +143,7 @@ pub async fn search(
         }
         "semantic" => {
             query
-                .nearest_to(vector.context("Embedding mancante")?)?
+                .nearest_to(vector.context("Embedding missing")?)?
                 .distance_type(lancedb::DistanceType::Cosine)
                 .execute()
                 .await?
@@ -153,7 +153,7 @@ pub async fn search(
         _ => {
             query
                 .full_text_search(FullTextSearchQuery::new(q.query.clone()))
-                .nearest_to(vector.context("Embedding mancante")?)?
+                .nearest_to(vector.context("Embedding missing")?)?
                 .distance_type(lancedb::DistanceType::Cosine)
                 .execute()
                 .await?
@@ -182,9 +182,9 @@ pub async fn search(
 pub async fn chunk(dir: &Path, id: &str) -> Result<Chunk> {
     anyhow::ensure!(
         id.len() == 64 && id.bytes().all(|b| b.is_ascii_hexdigit()),
-        "ID chunk non valido"
+        "Invalid chunk ID"
     );
-    let db = lancedb::connect(dir.to_str().context("Percorso non valido")?)
+    let db = lancedb::connect(dir.to_str().context("Invalid path")?)
         .execute()
         .await?;
     let table = db.open_table("chunks").execute().await?;
@@ -201,5 +201,5 @@ pub async fn chunk(dir: &Path, id: &str) -> Result<Chunk> {
     )?
     .into_iter()
     .next()
-    .context("Chunk non trovato nell’indice associato")
+    .context("Chunk not found in the linked index")
 }

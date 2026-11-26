@@ -168,6 +168,44 @@ rightcommit 支持个人使用，也支持在组织内部部署并使用独立�
 | 将 Pi 与 OpenRouter 搭配使用 | 账户中有余额的 OpenRouter API 密钥。 | [HOW_TO_CONFIGURE_PI_OPENROUTER.md](HOW_TO_CONFIGURE_PI_OPENROUTER.md) |
 | 在 Pi 中使用本地模型 | 在本机运行的模型服务器（Ollama、LM Studio、vLLM），无需 API 密钥。 | [HOW_TO_CONFIGURE_PI_LOCAL.md](HOW_TO_CONFIGURE_PI_LOCAL.md) |
 
+<a name="agents-and-the-server-environment"></a>
+
+### 智能体与服务器环境
+
+工作流运行中的智能体、Test connection 和 stdio MCP 服务器都在干净的环境中启动：只有 rightcommit 自己的基础变量（例如 `HOME`、`PATH` 和智能体的配置文件夹），以及各智能体指南中说明的服务提供方变量。stdio MCP 服务器还会获得其自身配置中的变量；对于首个管理员，还会获得其配置中按名称列出的服务器变量（见下文）。除此之外没有其他变量。
+
+**首个管理员（ID 1）的 Project Manager** 还会继承 rightcommit 服务器进程的其余环境，包括从 `.env` 加载的变量，这样它编写的 MCP 服务器和脚本就可以用这些变量进行测试。它不会继承：
+
+- rightcommit 自己设置的变量及其同族变量（`HOME`、`USER`、`PATH`、`TMPDIR`、`LANG` 和 `LC_*`、`XDG_*`、`GIT_*`、`CARGO_*`、`RUSTUP_*`、`CODEX_*`、`CLAUDE_*`、`PI_*`、`SPECKIT_*`），以及服务器的 `PWD`；
+- Project Manager 所用智能体的认证和路由变量，这些变量仍按该智能体指南中的规则处理：Claude Code 为 `ANTHROPIC_*`、`CLAUDE_*` 以及 AWS、Vertex 和 Foundry 相关变量；Codex 为 `OPENAI_*`、`CODEX_*` 以及 AWS 相关变量；Pi 为其服务提供方目录中的所有变量。因此，个人 API 密钥仍会排除全局网关或订阅令牌，Pi 也始终不会获得 Claude 订阅令牌；
+- 代理和证书变量（`HTTP_PROXY`、`SSL_CERT_FILE`...），每个智能体本来就会原样收到这些变量。
+
+其他服务提供方的密钥会被继承：如果服务器上有 `GEMINI_API_KEY`，运行在 Codex 上的 Project Manager 就能看到它。名称包含 `KEY`、`TOKEN`、`SECRET`、`PASSWORD`、`PASSWD` 或 `CREDENTIAL` 的服务器变量，其值（长度不少于 8 个字符）在 Project Manager 的回复中会被替换为 `[redacted]`。其他账户的 Project Manager 仍使用干净的环境。使用 Docker 或 Podman 时，只有传入容器的变量才存在：`compose.yaml` 列出了这些变量，你自己的变量需要添加 `environment:` 条目或 `env_file`。Codex 还可以通过账户 `config.toml` 中的 `shell_environment_policy` 进一步过滤其 shell 命令能看到的变量。
+
+Project Manager 可以运行命令，因此服务器环境中的任何内容都可能被发送给模型服务提供方，或被写入它生成的文件。启动 rightcommit 时，只提供你愿意向它公开的变量。
+
+<a name="mcp-servers-that-take-variables-from-the-server-environment"></a>
+
+#### 从服务器环境获取变量的 MCP 服务器
+
+首个管理员可以按名称，把 rightcommit 服务器自身环境中的变量提供给 stdio MCP 服务器，这样在 `.env`（或容器环境）中设置的令牌永远不会被复制到设置中。在 **Personal settings → MCP** 中编辑该服务器，在 **Variables from the server environment** 中填写变量名称，每行一个。该字段只对 ID 为 1 的账户显示。
+
+- rightcommit 每次启动该服务器时（在工作流运行中以及执行 Test connection 时）读取这些值，且从不保存。设置中只显示名称。在使用该服务器的运行输出中，长度不少于 8 个字符的值会被替换为 `[redacted]`。
+- 如果某个变量缺失或为空，启动会停止，并报错指出该变量的名称。请将它添加到服务器环境中，然后重启 rightcommit。
+- 名称只能包含字母、数字和 `_`，不能以数字开头，每个服务器最多 20 个。同一个名称只能写在 **Environment variables** 或此字段中的一处，不能同时写在两处。
+- rightcommit 为服务器进程设置的变量及其同族变量会被拒绝：`HOME`、`USER`、`PATH`、`TMPDIR`、`LANG` 和 `LC_*`、`PWD`、`XDG_*`、`GIT_*`、`CARGO_*`、`RUSTUP_*`、`CODEX_*`、`CLAUDE_*`、`PI_*`、`SPECKIT_*`，以及加载器变量（`LD_*`、`DYLD_*` ...）。当命令为 `codex`、`claude` 或 `pi` 时，该智能体的服务提供方变量也会被拒绝。
+- 其他账户无法保存这类名称；通过其他方式写入其设置的名称，会在服务器启动时被拒绝。
+
+使用 Docker 或 Podman 时，只有传入容器的变量才存在（见上文）。
+
+<a name="mcp-servers-the-project-manager-writes"></a>
+
+#### 由 Project Manager 编写的 MCP 服务器
+
+Project Manager 在你账户的文件夹中编写了 MCP 服务器并确认它能够启动后，可以提议注册该服务器。聊天中会显示 **Proposed MCP server registration**；点击 **Review and register** 会显示将要保存的确切内容：ID、名称、命令、参数、字面值环境变量，以及从服务器环境获取的变量名称。在你选择 **Register server** 之前，不会保存任何内容。随后，该条目会经过与在 Personal settings 中添加的服务器相同的检查，例如最多 30 个服务器的限制和设置修订版本检查。如果已存在相同 ID 的服务器，审查界面会说明这一点，按钮会变为 **Replace server**；未经此确认，现有服务器绝不会被替换。
+
+提议中绝不会包含机密值：如果某个提议的字面值变量看起来像机密信息（名称包含 `KEY`、`TOKEN`、`SECRET`、`PASSWORD`、`PASSWD` 或 `CREDENTIAL`），该提议会被拒绝，并要求 Project Manager 修正。对于首个管理员，Project Manager 会把这些变量列在从服务器环境获取的变量中；对于其他账户，它会将这些变量留空，并告诉你注册后需要在 Personal settings → MCP 中填写哪些变量。
+
 <a name="documentation"></a>
 
 ## 文档
@@ -182,7 +220,7 @@ rightcommit 支持个人使用，也支持在组织内部部署并使用独立�
 | [ADD-A-FRAMEWORK.md](ADD-A-FRAMEWORK.md) | 在自己的项目中使用 Spec Kit、OpenSpec 或其他框架 |
 | [ADD-OPENSPEC.md](ADD-OPENSPEC.md) | 在工作流中使用 OpenSpec |
 | [UPDATE-PI-DEFAULT-PACKAGES.md](UPDATE-PI-DEFAULT-PACKAGES.md) | 更新 rightcommit 随附的 Pi 工具（面向维护者） |
-| [配置指南](guides/README.md) | 配置访问权限并运行工作流示例，涵盖 ServiceNow（ITSM、目录请求和 Spec Kit）、Atlassian（Jira、Bitbucket 和 Confluence）GitHub（Issue 和 CI）以及 Local CI 测试 |
+| [配置指南](guides/README.md) | 配置访问权限并运行工作流示例，涵盖 ServiceNow（ITSM、目录请求和 Spec Kit）、Atlassian（Jira、Bitbucket 和 Confluence）、GitHub（Issue 和 CI）以及 Local CI 测试 |
 
 <a name="license"></a>
 

@@ -12,6 +12,9 @@ fn bounded_json(value: &impl serde::Serialize, limit: usize) -> Result<String> {
 }
 
 pub const BINDING: &str = "supervisor:run";
+/// Who the supervisor's decisions are recorded as. In English like the rest of a run's data that
+/// agents receive; the interface shows it in its language, and older runs keep "Supervisore AI".
+const SUPERVISOR: &str = "AI supervisor";
 
 pub fn validate(policy: &ExecutionPolicy) -> Result<()> {
     ensure!(
@@ -19,13 +22,80 @@ pub fn validate(policy: &ExecutionPolicy) -> Result<()> {
         "Runtime supervisore non supportato"
     );
     ensure!(
-        policy.model.len() <= 200 && policy.instructions.len() <= 32000,
+        policy.model.len() <= 200
+            && policy.model_provider.len() <= 100
+            && policy.instructions.len() <= 32000,
         "Configurazione supervisore troppo lunga"
     );
     ensure!(
         (1..=200).contains(&policy.max_decisions) && (1..=20).contains(&policy.max_per_node),
         "Limiti supervisore non validi (1–200 decisioni, 1–20 per nodo)"
     );
+    Ok(())
+}
+
+// How an error names a Pi provider: its catalog label, or its id when the catalog lacks it.
+fn pi_label(provider: &str) -> String {
+    let label = crate::pi_providers::catalog()
+        .iter()
+        .find(|p| p.id == provider)
+        .map_or(provider, |p| p.label.as_str());
+    format!("Pi ({label})")
+}
+
+/// When the policy's supervisor model was chosen for a Pi provider other than the one the
+/// supervisor runs with now, returns (model, what it was chosen for, what runs now). The
+/// supervisor runs the policy's runtime, or the Default agent when it is empty, and Pi always
+/// with the personal provider (the default provider in Multi-provider mode), as in `resolve`.
+/// Only the provider recorded with the model counts: an ID such as vendor/model is not proof
+/// of OpenRouter, since Groq, Together, Hugging Face and others name models that way too. An
+/// Interactive run never calls the supervisor, and an empty model uses the personal one.
+pub fn model_mismatch(
+    settings: &Settings,
+    policy: &ExecutionPolicy,
+) -> Option<(String, String, String)> {
+    if policy.mode == ExecutionMode::Interactive
+        || policy.model.trim().is_empty()
+        || policy.model_provider.is_empty()
+    {
+        return None;
+    }
+    let runtime = if policy.runtime.is_empty() {
+        settings.default_runtime.as_str()
+    } else {
+        policy.runtime.as_str()
+    };
+    let current = match runtime {
+        "pi" => {
+            let provider = settings
+                .agents
+                .get("pi")
+                .map(|c| c.provider.as_str())
+                .unwrap_or_default();
+            if provider == policy.model_provider {
+                return None;
+            }
+            pi_label(provider)
+        }
+        "claude" => "Claude Code".into(),
+        "codex" => "Codex".into(),
+        other => other.into(),
+    };
+    Some((
+        policy.model.clone(),
+        pi_label(&policy.model_provider),
+        current,
+    ))
+}
+
+/// Stops a supervised run before any agent call when its supervisor model belongs to another
+/// provider: the provider would reject the ID, or worse, run a model nobody chose.
+pub fn ensure_model_matches(settings: &Settings, policy: &ExecutionPolicy) -> Result<()> {
+    if let Some((model, chosen, current)) = model_mismatch(settings, policy) {
+        anyhow::bail!(
+            "Il modello supervisore {model} è stato scelto per {chosen}, ma ora il supervisore usa {current}: correggi il campo Modello supervisore della modalità di esecuzione o lascialo vuoto per usare il modello delle Impostazioni personali"
+        );
+    }
     Ok(())
 }
 
@@ -81,6 +151,9 @@ pub async fn resolve(app: &App, uid: i64, rid: &str) -> Result<bool> {
     let mut p = r.pending.clone().unwrap();
     if p.proposal.is_none() {
         validate(&r.execution)?;
+        // The run start checks this too; the provider may have changed since (a paused run,
+        // a child or continued run, a resume after a restart).
+        ensure_model_matches(&app.store.settings(uid)?, &r.execution)?;
         let total = r
             .context
             .get("supervisor:count")
@@ -194,7 +267,7 @@ pub async fn resolve(app: &App, uid: i64, rid: &str) -> Result<bool> {
             node: p.node.clone(),
             decision: format!("recommend:{}", proposed.action),
             answer: proposed.answer.clone(),
-            user: "Supervisore AI".into(),
+            user: SUPERVISOR.into(),
             created: now(),
             artifacts: artifacts.iter().map(|a| a.id.clone()).collect(),
         };
@@ -221,7 +294,7 @@ pub async fn resolve(app: &App, uid: i64, rid: &str) -> Result<bool> {
     let proposed = p.proposal.context("Proposta supervisore mancante")?;
     let user = User {
         id: uid,
-        email: "Supervisore AI".into(),
+        email: SUPERVISOR.into(),
     };
     let result = engine::apply_decision(
         app,
@@ -320,6 +393,7 @@ runtime: "codex".into(),
         let decisions = app.store.decisions(1, &r.id).unwrap();
         assert_eq!(decisions.len(), 1);
         assert_eq!(decisions[0].actor, "ai");
+        assert_eq!(decisions[0].user, "AI supervisor");
         assert_eq!(
             decisions[0].supervisor.as_ref().unwrap().session,
             "persisted-supervisor-session"
@@ -412,5 +486,103 @@ runtime: "codex".into(),
             updated.sessions[BINDING].native_id,
             "persisted-supervisor-session"
         );
+    }
+    fn pi_settings(default_runtime: &str, provider: &str) -> Settings {
+        let mut settings = Settings::default();
+        settings.default_runtime = default_runtime.into();
+        settings.agents.insert("pi".into(), AgentConfig {provider: provider.into(), api_key: "supervisor-test-key".into(), ..Default::default()});
+        settings
+    }
+    fn chosen_for(provider: &str) -> ExecutionPolicy {
+        ExecutionPolicy {
+            mode: ExecutionMode::Unattended,
+            model: "vendor/model".into(),
+            model_provider: provider.into(),
+            ..Default::default()
+        }
+    }
+    #[test]
+    fn supervisor_model_is_checked_against_the_provider_it_was_chosen_for() {
+        let mut settings = pi_settings("pi", "openrouter");
+        let mut policy = chosen_for("openrouter");
+        assert_eq!(model_mismatch(&settings, &policy), None);
+        ensure_model_matches(&settings, &policy).unwrap();
+        // Hugging Face names models vendor/model too: only the recorded provider tells them apart.
+        settings.agents.get_mut("pi").unwrap().provider = "huggingface".into();
+        assert_eq!(
+            model_mismatch(&settings, &policy),
+            Some(("vendor/model".into(), "Pi (OpenRouter)".into(), "Pi (Hugging Face)".into()))
+        );
+        let error = ensure_model_matches(&settings, &policy).unwrap_err().to_string();
+        assert_eq!(error, "Il modello supervisore vendor/model è stato scelto per Pi (OpenRouter), ma ora il supervisore usa Pi (Hugging Face): correggi il campo Modello supervisore della modalità di esecuzione o lascialo vuoto per usare il modello delle Impostazioni personali");
+        // In Multi-provider mode the supervisor uses the default provider, as at run time.
+        settings.agents.get_mut("pi").unwrap().multi_provider = true;
+        settings.agents.get_mut("pi").unwrap().provider = "openrouter".into();
+        assert_eq!(model_mismatch(&settings, &policy), None);
+        // The Default agent is no longer Pi.
+        settings.default_runtime = "codex".into();
+        assert_eq!(model_mismatch(&settings, &policy).unwrap().2, "Codex");
+        policy.runtime = "pi".into();
+        assert_eq!(model_mismatch(&settings, &policy), None);
+        policy.runtime = "claude".into();
+        assert_eq!(model_mismatch(&settings, &policy).unwrap().2, "Claude Code");
+        // No recorded provider (earlier versions, a model for Codex or Claude Code), an empty
+        // model, or an Interactive run: nothing to compare, the run starts as before.
+        policy.runtime = "pi".into();
+        settings.agents.get_mut("pi").unwrap().provider = "groq".into();
+        assert!(model_mismatch(&settings, &policy).is_some());
+        for change in [
+            (|p: &mut ExecutionPolicy| p.model_provider.clear()) as fn(&mut ExecutionPolicy),
+            |p| p.model = " ".into(),
+            |p| p.mode = ExecutionMode::Interactive,
+        ] {
+            let mut unchecked = policy.clone();
+            change(&mut unchecked);
+            assert_eq!(model_mismatch(&settings, &unchecked), None);
+        }
+        // Stored only when known, so policies saved by earlier versions read and write the same JSON.
+        let legacy: ExecutionPolicy = serde_json::from_str(r#"{"mode":"unattended","model":"vendor/model"}"#).unwrap();
+        assert!(legacy.model_provider.is_empty());
+        assert!(!serde_json::to_string(&legacy).unwrap().contains("model_provider"));
+        assert!(serde_json::to_string(&policy).unwrap().contains(r#""model_provider":"openrouter""#));
+        policy.model_provider = "x".repeat(101);
+        assert!(validate(&policy).is_err());
+    }
+    #[tokio::test]
+    async fn run_start_rejects_a_supervisor_model_for_another_provider() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = crate::tests::app(dir.path());
+        let w = crate::presets::all().remove(0);
+        app.store.save_workflow(1, &w).unwrap();
+        app.store.save_settings(1, &pi_settings("pi", "groq")).unwrap();
+        let start = |execution| crate::api::StartRun {
+            workflow_id: w.id.clone(),
+            locale: None,
+            input: "test supervision".into(),
+            base_run: None,
+            allow_large_source_copy: false,
+            execution: Some(execution),
+        };
+        let error = crate::api::prepare_run(&app, 1, start(chosen_for("openrouter")), None).await.unwrap_err().to_string();
+        assert!(error.contains("scelto per Pi (OpenRouter), ma ora il supervisore usa Pi (Groq)"), "{error}");
+        assert!(app.store.runs(1).unwrap().is_empty());
+        assert!(!dir.path().join("users/1/workspaces").exists());
+    }
+    #[tokio::test]
+    async fn supervisor_turn_is_not_opened_with_a_model_for_another_provider() {
+        let (_dir, app, mut r) = fixture(ExecutionMode::Unattended, "review").await;
+        r.pending.as_mut().unwrap().proposal = None;
+        r.execution.runtime = "pi".into();
+        r.execution.model = "vendor/model".into();
+        r.execution.model_provider = "openrouter".into();
+        app.store.save_run(1, &r).unwrap();
+        // The provider changed after the run started.
+        app.store.save_settings(1, &pi_settings("codex", "groq")).unwrap();
+        let error = resolve(&app, 1, &r.id).await.unwrap_err().to_string();
+        assert!(error.contains("Pi (OpenRouter), ma ora il supervisore usa Pi (Groq)"), "{error}");
+        let after = app.store.run(1, &r.id).unwrap();
+        assert!(!after.context.contains_key("supervisor:count"));
+        assert_eq!(after.sessions[BINDING].turns, 3);
+        assert!(app.store.decisions(1, &r.id).unwrap().is_empty());
     }
 }

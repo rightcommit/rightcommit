@@ -905,6 +905,7 @@ pub(crate) async fn prepare_run(a: &App, uid: i64, b: StartRun, reserved_id: Opt
         crate::supervision::validate(&policy)?;
         w.execution = policy;
     }
+    crate::supervision::ensure_model_matches(&a.store.settings(uid)?, &w.execution)?;
     crate::templates::resolve_report_language(&mut w, b.locale.as_deref())?;
     engine::validate_start(a, uid, &w)?;
     crate::agent_auth::ensure_agents_configured(a, uid, &w).await?;

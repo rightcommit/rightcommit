@@ -7,6 +7,9 @@ use std::{
     path::{Component, Path, PathBuf},
     sync::Arc,
 };
+/// The tool result an agent receives for any failed call, in English like every text rightcommit
+/// hands to an agent.
+const UNAVAILABLE: &str = "Workspace MCP: file or path not available";
 #[derive(Clone)]
 pub struct Workspace {
     root: Arc<PathBuf>,
@@ -18,12 +21,12 @@ impl Workspace {
             !path.is_absolute()
                 && !path.components().any(|c| matches!(c, Component::ParentDir)
                     || [".git", ".nodo", ".rightcommit"].iter().any(|name| c.as_os_str() == *name)),
-            "Percorso non consentito"
+            "Path not allowed"
         );
         let p = std::fs::canonicalize(self.root.join(path))?;
         anyhow::ensure!(
             p.starts_with(self.root.as_path()),
-            "Percorso fuori workspace"
+            "Path outside the workspace"
         );
         Ok(p)
     }
@@ -82,16 +85,16 @@ impl ServerHandler for Workspace {
                     Ok(serde_json::to_string(&names)?)
                 }
                 "read_file" => {
-                    anyhow::ensure!(path.metadata()?.len() <= 256 * 1024, "File troppo grande");
+                    anyhow::ensure!(path.metadata()?.len() <= 256 * 1024, "File too large");
                     Ok(std::fs::read_to_string(path)?)
                 }
-                _ => anyhow::bail!("Tool sconosciuto"),
+                _ => anyhow::bail!("Unknown tool"),
             }
         })();
         Ok(match result {
             Ok(text) => CallToolResult::success(vec![ContentBlock::text(text)]),
             Err(_) => CallToolResult::error(vec![ContentBlock::text(
-                "Workspace MCP: file o percorso non disponibile",
+                UNAVAILABLE,
             )]),
         }
         .into())
@@ -105,4 +108,49 @@ pub async fn run() -> anyhow::Result<()> {
     .await?;
     server.waiting().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rmcp::model::ClientConfig;
+    #[tokio::test]
+    async fn failed_calls_reach_the_agent_in_english() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::write(root.join("notes.md"), "Workspace notes").unwrap();
+        let workspace = Workspace { root: Arc::new(root.clone()) };
+        for value in ["../outside", "/etc", ".git/config"] {
+            assert_eq!(workspace.path(value).unwrap_err().to_string(), "Path not allowed");
+        }
+        #[cfg(unix)]
+        {
+            let outside = tempfile::tempdir().unwrap();
+            std::os::unix::fs::symlink(outside.path(), root.join("elsewhere")).unwrap();
+            assert_eq!(
+                workspace.path("elsewhere").unwrap_err().to_string(),
+                "Path outside the workspace"
+            );
+        }
+        let (server_io, client_io) = tokio::io::duplex(65536);
+        let (server, client) = tokio::join!(
+            workspace.serve(tokio::io::split(server_io)),
+            ClientConfig::default().serve(tokio::io::split(client_io))
+        );
+        let (server, client) = (server.unwrap(), client.unwrap());
+        let read = |path: &str| {
+            CallToolRequestParams::new("read_file")
+                .with_arguments(serde_json::from_value(json!({"path":path})).unwrap())
+        };
+        let found = client.call_tool(read("notes.md")).await.unwrap();
+        assert!(serde_json::to_string(&found).unwrap().contains("Workspace notes"));
+        for params in [read("../outside"), read("missing.md"), CallToolRequestParams::new("write_file")] {
+            let result = serde_json::to_value(client.call_tool(params).await.unwrap()).unwrap();
+            assert_eq!(result["isError"], true);
+            assert_eq!(result["content"][0]["text"], UNAVAILABLE);
+        }
+        assert_eq!(UNAVAILABLE, "Workspace MCP: file or path not available");
+        client.cancel().await.unwrap();
+        server.waiting().await.unwrap();
+    }
 }

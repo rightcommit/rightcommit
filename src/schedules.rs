@@ -385,6 +385,19 @@ fn record(
         params![sid, uid, due, rid, state, message],
     )? == 1)
 }
+/// The supervisor model is saved with the schedule, while the supervisor's agent and Pi provider
+/// come from Personal settings at each start: a model chosen for another provider stops the
+/// occurrence before any run or agent call, with an error that names the schedule and the field.
+/// A schedule without its own execution policy uses the workflow's, checked when the run starts.
+fn supervisor_model_error(app: &App, uid: i64, c: &Config) -> Option<String> {
+    let policy = c.execution.as_ref()?;
+    let settings = app.store.settings(uid).ok()?;
+    let (model, chosen, current) = crate::supervision::model_mismatch(&settings, policy)?;
+    Some(format!(
+        "Pianificazione {}: il modello supervisore {model} è stato scelto per {chosen}, ma ora il supervisore usa {current}. Modifica la pianificazione e correggi il campo Modello supervisore in Opzioni avanzate, o lascialo vuoto per usare il modello delle Impostazioni personali",
+        c.name
+    ))
+}
 async fn tick(app: &App, recovery: bool) -> Result<()> {
     // Same lifecycle lock as manual creation, schedule edits, account revocation and deletion.
     let _guard = app.lifecycle.write().await;
@@ -409,20 +422,25 @@ async fn tick(app: &App, recovery: bool) -> Result<()> {
         } else {
             let rid = id();
             if record(app, uid, &s.id, due, Some(&rid), "preparing", "")? {
-                let result = crate::api::prepare_run(
-                    app,
-                    uid,
-                    StartRun {
-                        workflow_id: s.config.workflow_id.clone(),
-                        locale: s.config.locale.clone(),
-                        input: s.config.input.clone(),
-                        base_run: s.config.base_run.clone(),
-                        execution: s.config.execution.clone(),
-                        allow_large_source_copy: s.config.allow_large_source_copy,
-                    },
-                    Some(rid),
-                )
-                .await;
+                let result = match supervisor_model_error(app, uid, &s.config) {
+                    Some(message) => Err(anyhow::anyhow!(message)),
+                    None => {
+                        crate::api::prepare_run(
+                            app,
+                            uid,
+                            StartRun {
+                                workflow_id: s.config.workflow_id.clone(),
+                                locale: s.config.locale.clone(),
+                                input: s.config.input.clone(),
+                                base_run: s.config.base_run.clone(),
+                                execution: s.config.execution.clone(),
+                                allow_large_source_copy: s.config.allow_large_source_copy,
+                            },
+                            Some(rid),
+                        )
+                        .await
+                    }
+                };
                 let (state, message) = match result {
                     Ok(_) => ("started", String::new()),
                     Err(e) => ("error", e.to_string()),
@@ -691,6 +709,43 @@ mod tests {
             .unwrap();
         assert_eq!(app.store.run(1, &r.id).unwrap().status, "waiting_review");
         assert_eq!(run_schedule(&app, 1, &r.id).unwrap(), Some(s.id));
+    }
+    #[tokio::test]
+    async fn supervisor_model_chosen_for_another_pi_provider_stops_before_the_run() {
+        let (_dir, app, mut s) = setup().await;
+        let mut settings = app.store.settings(1).unwrap();
+        settings.agents.insert("pi".into(), AgentConfig {provider: "groq".into(), api_key: "scheduled-pi-key".into(), ..Default::default()});
+        app.store.save_settings(1, &settings).unwrap();
+        // Saved while the personal Pi provider was OpenRouter; the provider is Groq now.
+        s.config.execution = Some(ExecutionPolicy {
+            mode: ExecutionMode::Unattended,
+            runtime: "pi".into(),
+            model: "vendor/model".into(),
+            model_provider: "openrouter".into(),
+            ..Default::default()
+        });
+        due(&app, &mut s).await;
+        tick(&app, false).await.unwrap();
+        assert!(app.store.runs(1).unwrap().is_empty());
+        let history = entries(&app, 1, &s.id, 10).unwrap();
+        assert_eq!(history[0]["state"], "error");
+        assert_eq!(history[0]["run_id"], Value::Null);
+        let message = history[0]["message"].as_str().unwrap();
+        assert!(message.starts_with(&format!("Pianificazione {}: il modello supervisore vendor/model è stato scelto per Pi (OpenRouter), ma ora il supervisore usa Pi (Groq).", s.config.name)), "{message}");
+        assert!(message.contains("campo Modello supervisore"), "{message}");
+        // The schedule stays active; the next occurrence starts once the model fits the provider.
+        s = get(&app, 1, &s.id).unwrap();
+        assert!(s.config.active && s.next.is_some());
+        // An Interactive policy never calls the supervisor, so the model is not checked.
+        s.config.execution.as_mut().unwrap().mode = ExecutionMode::Interactive;
+        s.config.execution.as_mut().unwrap().model_provider = "openrouter".into();
+        assert_eq!(supervisor_model_error(&app, 1, &s.config), None);
+        s.config.execution.as_mut().unwrap().mode = ExecutionMode::Unattended;
+        s.config.execution.as_mut().unwrap().model_provider = "groq".into();
+        assert_eq!(supervisor_model_error(&app, 1, &s.config), None);
+        // Schedules saved by earlier versions have no recorded provider and start as before.
+        s.config.execution.as_mut().unwrap().model_provider.clear();
+        assert_eq!(supervisor_model_error(&app, 1, &s.config), None);
     }
     #[tokio::test]
     async fn pause_resume_delete_and_restart_never_replay_missed_occurrences() {

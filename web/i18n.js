@@ -1694,15 +1694,6 @@ Object.assign(en,{
  "Commit locale fermato: la run ha cambiato sottomoduli, repository Git annidati o file in conflitto, che il commit locale non gestisce: {t1}. Controllali e fai il commit a mano": "Local commit stopped: the run changed submodules, nested Git repositories or conflicted files, which the local commit does not handle: {t1}. Review them and commit manually",
  "Commit locale rifiutato: nessun commit creato, i file restano nel workspace come li ha lasciati la run": "Local commit rejected: no commit was created, the files stay in the workspace as the run left them",
  "Commit locale non eseguito": "Local commit not created",
- // The local commit step's report, one sentence per line. The one-line report of earlier
- // versions comes first: the shorter first-line template below would also match it.
- "Commit locale verificato: {t1}. Nessun push, merge o deploy eseguito.": "Local commit verified: {t1}. Nothing was pushed, merged or deployed.",
- "Commit locale verificato: {t1}.": "Local commit verified: {t1}.",
- "File della run nel commit: nessuno.": "Files from the run in the commit: none.",
- "File della run nel commit: {t1}.": "Files from the run in the commit: {t1}.",
- "Modifiche già presenti prima della run, lasciate fuori dal commit come erano: {t1}.": "Changes already there before the run, left out of the commit as they were: {t1}.",
- "Nessun push, merge o deploy eseguito.": "Nothing was pushed, merged or deployed.",
- "Commit eseguito senza conferma: la run è in modalità non presidiata, quindi nessuno poteva approvarlo.": "Committed without confirmation: the run is in Unattended mode, so nobody could approve it.",
  "Differenze Git non riconosciute": "Unrecognized Git diff",
  "Output git non disponibile": "Git output not available",
  "Conferma prima del commit": "Confirm before commit",
@@ -1813,6 +1804,13 @@ Object.assign(en,{
  "Handoff: output sorgente assente": "Handoff: source output missing",
  "Join: risultato di un ramo assente": "Join: a branch result is missing",
  "Review rifiutata senza ramo rework configurato": "Review rejected with no rework branch configured",
+ // Run errors shown above the steps and in the Activity log; the agent's or branch's own words as written.
+ "Review rifiutata. Correggi il workflow o avvia una nuova esecuzione.": "Review rejected. Fix the workflow or start a new run.",
+ "Operazione remota rifiutata; nessuna scrittura eseguita": "Remote operation rejected; nothing was written",
+ "Stop richiesto dall’utente. Verifica gli effetti del turno interrotto prima di riprendere.": "Stop requested by the user. Check the effects of the interrupted turn before resuming.",
+ "Agente bloccato: {t1}": "Agent blocked: {t1}",
+ "Review bloccata: {t1}": "Review blocked: {t1}",
+ "Rami paralleli falliti: {t1}": "Parallel branches failed: {t1}",
  "Attendi la chiusura del turno attivo": "Wait for the active turn to end",
  "Decisione automatica non autorizzata": "Automatic decision not authorized",
  "Metti il run in pausa prima di aggiungere contesto": "Pause the run before adding context",
@@ -1872,6 +1870,33 @@ Object.assign(en,{
  "Tool MCP non associato all'agente": "MCP tool not assigned to the agent",
  "Metodo MCP non supportato": "Unsupported MCP method",
  "Percorso fuori workspace": "Path outside the workspace",
+ // Errors of the MCP and RAG tools rightcommit hands to agents: the server writes them in English,
+ // versions up to 1.10.3 in Italian. Where a person sees one (the RAG search, a run error, a toast)
+ // it follows the interface language either way.
+ "Accesso MCP non valido o scaduto": "MCP access not valid or expired",
+ "Richiesta MCP fallita. Verifica connessione, tool consentiti e timeout; nessun retry automatico.": "MCP request failed. Check the connection, the allowed tools and the timeout; no automatic retry.",
+ "Credenziale MCP mancante": "MCP credential missing",
+ "Credenziale MCP revocata": "MCP credential revoked",
+ "Tool mancante": "Tool name missing",
+ "Timeout metadati MCP": "MCP metadata timeout",
+ "Percorso non consentito": "Path not allowed",
+ "Tool sconosciuto": "Unknown tool",
+ "Workspace MCP: file o percorso non disponibile": "Workspace MCP: file or path not available",
+ "Indice RAG non trovato": "RAG index not found",
+ "Indice non ancora disponibile": "Index not available yet",
+ "Indice non disponibile": "Index not available",
+ "Query: 1–4096 caratteri": "Query: 1–4096 characters",
+ "Risultati: 1–30": "Results: 1–30",
+ "Modalità non valida": "Invalid search mode",
+ "Indice keyword: rigenera con embedding per la ricerca semantica": "Keyword index: rebuild it with embeddings for semantic search",
+ "chunk_id richiesto": "chunk_id required",
+ "La query supera il limite encoder di {t1} token; usa una domanda più breve": "The query exceeds the encoder limit of {t1} tokens; use a shorter question",
+ "Embedding mancante": "Embedding missing",
+ "ID chunk non valido": "Invalid chunk ID",
+ "Chunk non trovato nell’indice associato": "Chunk not found in the linked index",
+ "Payload indice mancante": "Index payload missing",
+ "Payload non valido": "Invalid payload",
+ "Vettore non valido": "Invalid vector",
  "Il limite copia sorgenti deve essere almeno 1 MiB": "The source copy limit must be at least 1 MiB",
  "Directory provider Pi non valida": "Invalid Pi provider directory",
  "File credenziali Pi non valido": "Invalid Pi credentials file",
@@ -2045,6 +2070,46 @@ Object.assign(en,{
  "Proposta di registrazione MCP non leggibile": "The MCP registration proposal cannot be read",
  "La proposta di registrazione MCP contiene un valore per {t1}, che sembra un segreto: indica solo il nome della variabile": "The MCP registration proposal contains a value for {t1}, which looks like a secret: give only the variable name"
 });
+// A supervisor model saved for one Pi provider while the supervisor now runs another provider or
+// agent: {t1}… hold the model ID and labels such as "Pi (OpenRouter)" or "Codex", as written.
+// The run start error, the scheduled start error kept in the schedule history, and the warnings
+// of the execution mode form and of the schedule details.
+Object.assign(en,{
+ "Il modello supervisore {t1} è stato scelto per {t2}, ma ora il supervisore usa {t3}: correggi il campo Modello supervisore della modalità di esecuzione o lascialo vuoto per usare il modello delle Impostazioni personali": "The supervisor model {t1} was chosen for {t2}, but the supervisor now runs with {t3}: correct the Supervisor model field of the execution mode, or leave it empty to use the model from Personal settings",
+ "Pianificazione {t1}: il modello supervisore {t2} è stato scelto per {t3}, ma ora il supervisore usa {t4}. Modifica la pianificazione e correggi il campo Modello supervisore in Opzioni avanzate, o lascialo vuoto per usare il modello delle Impostazioni personali": "Schedule {t1}: the supervisor model {t2} was chosen for {t3}, but the supervisor now runs with {t4}. Edit the schedule and correct the Supervisor model field under Advanced options, or leave it empty to use the model from Personal settings",
+ "Questo modello è stato scelto per {t1}, ma ora il supervisore usa {t2}. Le esecuzioni non partiranno finché non scegli di nuovo il modello o lasci il campo vuoto.": "This model was chosen for {t1}, but the supervisor now runs with {t2}. Runs will not start until you choose the model again or leave the field empty.",
+ "Il modello supervisore {t1} è stato scelto per {t2}, ma ora il supervisore usa {t3}. I prossimi avvii non partiranno: modifica la pianificazione e scegli di nuovo il modello o lascia il campo vuoto.": "The supervisor model {t1} was chosen for {t2}, but the supervisor now runs with {t3}. The next starts will not run: edit the schedule and choose the model again, or leave the field empty."
+});
+// Results the server writes into a run itself: an approved Review, the deterministic Gate checks,
+// the local commit report, confirmation requests, the supervisor's name in decisions. The server
+// stores them in English, as the next agents receive them; runs from 1.10.3 and earlier keep the
+// Italian. uiServerText shows either in the interface language, with hashes, counts, file names
+// and receipts ({t1}…) as written. Order matters where a shorter template would also match a
+// longer text: the one-line commit report of earlier versions comes first.
+const serverResults={
+ "Commit locale verificato: {t1}. Nessun push, merge o deploy eseguito.": "Local commit verified: {t1}. Nothing was pushed, merged or deployed.",
+ "Commit locale verificato: {t1}.": "Local commit verified: {t1}.",
+ "File della run nel commit: nessuno.": "Files from the run in the commit: none.",
+ "File della run nel commit: {t1}.": "Files from the run in the commit: {t1}.",
+ "Modifiche già presenti prima della run, lasciate fuori dal commit come erano: {t1}.": "Changes already there before the run, left out of the commit as they were: {t1}.",
+ "Nessun push, merge o deploy eseguito.": "Nothing was pushed, merged or deployed.",
+ "Commit eseguito senza conferma: la run è in modalità non presidiata, quindi nessuno poteva approvarlo.": "Committed without confirmation: the run is in Unattended mode, so nobody could approve it.",
+ "Review approvata": "Review approved",
+ "Approvazione registrata dal server: {t1}": "Approval recorded by the server: {t1}",
+ "Convergenza non raggiunta: {t1} task aperti; rapporto precedente rework={t2}. Check deterministico, nessuna approvazione simulata.": "Convergence not reached: tasks still open: {t1}; previous report rework={t2}. Deterministic check, no approval simulated.",
+ "I test del server sono mancanti o non più validi per i file correnti. Conserva le correzioni e ripassa da implementazione, CI e review prima della consegna.": "The server's tests are missing or no longer valid for the current files. Keep the fixes and go back through implementation, CI and review before delivery.",
+ // Earlier versions put the Gate's own summary on the same line.
+ "Il gate ha modificato il workspace dopo i test. Nuova CI e review richieste.": "The gate changed the workspace after the tests: CI and review must run again.",
+ "Il gate ha modificato il workspace dopo i test. Nuova CI e review richieste. {t1}": "The gate changed the workspace after the tests: CI and review must run again. {t1}",
+ "I file sono cambiati dopo l’approvazione. Confermare il commit locale di {t1} file? Controlla file, differenze e test prima di approvare.": "The files changed after the approval. Confirm the local commit (files: {t1})? Check the files, the changes and the tests before approving.",
+ "Confermare il commit locale di {t1} file? Controlla file, differenze e test prima di approvare.": "Confirm the local commit (files: {t1})? Check the files, the changes and the tests before approving.",
+ // Earlier versions left two spaces when the request had no preview.
+ "Autorizzare {t1} su {t2}? {t3} Controlla target e artefatti nelle impostazioni e nel run.": "Authorize {t1} on {t2}? {t3} Check the target and the artifacts in the settings and in the run.",
+ "Autorizzare {t1} su {t2}?  Controlla target e artefatti nelle impostazioni e nel run.": "Authorize {t1} on {t2}? Check the target and the artifacts in the settings and in the run.",
+ "Il servizio A2A richiede un chiarimento": "The A2A service asks for a clarification",
+ "Supervisore AI": "AI supervisor"
+};
+Object.assign(en,serverResults);
 // Keys with {name} placeholders, such as server errors that include a node title or a path.
 // A {t1}, {t2}… placeholder holds the user's own text, such as a node title: it is shown as written, never translated.
 const escapeRegExp=v=>v.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
@@ -2052,6 +2117,15 @@ function templates(pairs){return pairs.filter(([from])=>/\{\w+\}/.test(from)).ma
 function fillTemplate(list,value,inner){for(const t of list){if(!value.startsWith(t.prefix))continue;const m=value.match(t.pattern);if(m)return t.to.replace(/\{(\w+)\}/g,(all,name)=>{const i=t.names.indexOf(name);return i<0?all:/^t\d+$/.test(name)?m[i+1]:inner(m[i+1])})}return null}
 const englishTemplates=templates(Object.entries(en)),italianTemplates=templates(Object.entries(en).map(([it,english])=>[english,it]));
 const italianByEnglish=new Map(Object.entries(en).filter(([it,english])=>it!==english).map(([it,english])=>[english,it]));
+const serverPairs=Object.entries(serverResults),serverToEnglish=templates(serverPairs),serverToItalian=templates(serverPairs.map(([it,english])=>[english,it])),serverItalian=new Map(serverPairs.map(([it,english])=>[english,it]));
+// A server result line in the interface language, or null for any other text, such as an agent's own words.
+function serverText(value){
+ const key=String(value??'').trim();if(!key)return null;
+ let it=Object.hasOwn(serverResults,key)?key:serverItalian.get(key)??fillTemplate(serverToItalian,key,v=>v);
+ if(it===null&&fillTemplate(serverToEnglish,key,v=>v)!==null)it=key;
+ if(it===null)return null;
+ return language==='en'?serverResults[it]??fillTemplate(serverToEnglish,it,v=>v):it;
+}
 function canonical(value){
  const key=value.trim();
  if(italianByEnglish.has(key))return value.replace(key,italianByEnglish.get(key));
@@ -2158,7 +2232,7 @@ document.addEventListener('reset',e=>queueMicrotask(()=>{
  }
 }),true);
 function apply(){document.documentElement.lang=language;document.querySelectorAll('[data-language]').forEach(s=>s.value=language);update(document.body);document.querySelectorAll('input,textarea,select').forEach(field=>{if(validationMessages.has(field))localizeValidation(field)});window.dispatchEvent(new Event('nodo-language-changed'))}
-window.nodoLocale=()=>language==='en'?'en-US':'it-IT';window.uiText=text;window.uiHasTranslation=value=>Object.hasOwn(en,value.trim());window.uiHasTemplate=value=>fillTemplate(englishTemplates,value.trim(),v=>v)!==null;window.uiLocalizedText=value=>text(canonical(value));
+window.nodoLocale=()=>language==='en'?'en-US':'it-IT';window.uiText=text;window.uiHasTranslation=value=>Object.hasOwn(en,value.trim());window.uiHasTemplate=value=>fillTemplate(englishTemplates,value.trim(),v=>v)!==null;window.uiLocalizedText=value=>text(canonical(value));window.uiServerText=serverText;
 const validationObserver=new MutationObserver(records=>{for(const {target} of records)if(validationMessages.has(target))localizeValidation(target)});
 validationObserver.observe(document.body,{subtree:true,attributes:true,attributeFilter:['required','disabled','readonly','type','min','max','step','minlength','maxlength','pattern','multiple','value']});
 const observer=new MutationObserver(records=>{for(const record of records){if(record.type==='childList')for(const n of record.addedNodes)update(n);else if(record.type==='characterData'||record.type==='attributes')update(record.target)}});

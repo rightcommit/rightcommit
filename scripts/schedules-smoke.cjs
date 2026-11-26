@@ -61,6 +61,38 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   await page.evaluate(()=>closeModal());await page.evaluate(id=>scheduleDetails(id),id);
   await page.locator('#schedule-delete').click();await page.locator('[data-confirm-accept]').click();await page.waitForFunction(()=>!!document.querySelector('#executions-rows'));
   assert.equal((await(await page.request.get(base+'/api/schedules')).json()).length,0);assert.equal((await(await page.request.get(base+'/api/runs')).json()).length,1);
+  // A supervisor model chosen while the Pi provider was OpenRouter, after switching the provider to Groq:
+  // the scheduled start stops before any run or agent call, a manual start is refused, the UI warns.
+  console.log('supervisor model provider');
+  const current=await(await page.request.get(base+'/api/settings')).json();r=await page.request.patch(base+'/api/settings',{headers,data:{revision:current._revision,changes:{agents:{pi:{provider:'groq',api_key:'dummy-groq-key'}}}}});assert(r.ok(),await r.text());
+  await page.evaluate(async()=>{app.settings=await api('/settings')});
+  const stale={mode:'unattended',runtime:'pi',model:'vendor/model',model_provider:'openrouter',instructions:'',max_decisions:50,max_per_node:5,allow_external_writes:false};
+  r=await page.request.post(base+'/api/runs',{headers,data:{workflow_id:'schedule-ui-test',input:'manual',base_run:null,execution:stale}});assert.equal(r.status(),400);
+  const manualError=(await r.json()).error;
+  assert.equal(manualError,'Il modello supervisore vendor/model è stato scelto per Pi (OpenRouter), ma ora il supervisore usa Pi (Groq): correggi il campo Modello supervisore della modalità di esecuzione o lascialo vuoto per usare il modello delle Impostazioni personali');
+  assert.equal(await page.evaluate(m=>uiText(m),manualError),'The supervisor model vendor/model was chosen for Pi (OpenRouter), but the supervisor now runs with Pi (Groq): correct the Supervisor model field of the execution mode, or leave it empty to use the model from Personal settings');
+  const start=new Date(Date.now()+3600000),pad=n=>String(n).padStart(2,'0'),local=`${start.getFullYear()}-${pad(start.getMonth()+1)}-${pad(start.getDate())}T${pad(start.getHours())}:${pad(start.getMinutes())}`;
+  r=await page.request.post(base+'/api/schedules',{headers,data:{workflow_id:'schedule-ui-test',name:'Stale supervisor',kind:'daily',start:local,end:null,timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,every:1,weekdays:[],input:'',execution:stale,base_run:null,active:true}});assert(r.ok(),await r.text());
+  const staleId=(await r.json()).id;
+  const advanceStale=spawnSync('python3',['-c',"import sqlite3,json,sys,time; db=sqlite3.connect(sys.argv[1]); raw=db.execute('SELECT json FROM schedules WHERE id=?',(sys.argv[2],)).fetchone()[0]; s=json.loads(raw); s['next']=int(time.time())+2; db.execute('UPDATE schedules SET json=? WHERE id=?',(json.dumps(s),sys.argv[2])); db.commit()",path.join(dir,'system/nodo.sqlite'),staleId],{encoding:'utf8'});assert.equal(advanceStale.status,0,advanceStale.stderr);
+  let staleHistory=[];
+  for(let i=0;i<40&&!staleHistory.length;i++){await page.waitForTimeout(250);staleHistory=await(await page.request.get(base+'/api/schedules/'+staleId+'/history')).json()}
+  assert.equal(staleHistory.length,1,JSON.stringify(staleHistory));assert.equal(staleHistory[0].state,'error');assert.equal(staleHistory[0].run_id,null);
+  assert.equal(staleHistory[0].message,'Pianificazione Stale supervisor: il modello supervisore vendor/model è stato scelto per Pi (OpenRouter), ma ora il supervisore usa Pi (Groq). Modifica la pianificazione e correggi il campo Modello supervisore in Opzioni avanzate, o lascialo vuoto per usare il modello delle Impostazioni personali');
+  assert.equal((await(await page.request.get(base+'/api/runs')).json()).length,1);
+  // The interface is in English here: the stored Italian error and the warnings show in English.
+  await page.evaluate(id=>scheduleDetails(id),staleId);await page.locator('[data-schedule-model-warning]').waitFor();
+  assert.equal(await page.locator('[data-schedule-model-warning]').textContent(),'The supervisor model vendor/model was chosen for Pi (OpenRouter), but the supervisor now runs with Pi (Groq). The next starts will not run: edit the schedule and choose the model again, or leave the field empty.');
+  assert((await page.locator('#schedule-live').textContent()).includes('Schedule Stale supervisor: the supervisor model vendor/model was chosen for Pi (OpenRouter), but the supervisor now runs with Pi (Groq). Edit the schedule and correct the Supervisor model field under Advanced options'));
+  await page.locator('#schedule-edit').click();await page.locator('#schedule-form').waitFor();
+  assert(await page.locator('#schedule-form details').evaluate(el=>el.open));const formWarning=page.locator('#schedule-form [data-supervisor-model-warning]');assert(await formWarning.isVisible());
+  assert.equal(await formWarning.textContent(),'This model was chosen for Pi (OpenRouter), but the supervisor now runs with Pi (Groq). Runs will not start until you choose the model again or leave the field empty.');
+  // Choosing the model again records the current provider and clears the warning; saving starts working again.
+  await page.locator('#schedule-form [name=supervisor_model]').fill('vendor/model');assert(await formWarning.isHidden());
+  await page.waitForFunction(()=>!document.querySelector('#schedule-save').disabled);await page.locator('#schedule-save').click();await page.locator('[data-schedule-detail]').waitFor();
+  const saved=(await(await page.request.get(base+'/api/schedules')).json()).find(row=>row.schedule.id===staleId).schedule.config.execution;
+  assert.deepEqual([saved.model,saved.model_provider],['vendor/model','groq']);assert.equal(await page.locator('[data-schedule-model-warning]').count(),0);
+  await page.evaluate(()=>closeModal());
   assert.deepEqual(errors,[]);console.log('Schedule UI smoke passed; screenshots: '+dir);
  }finally{if(browser)await browser.close();server.kill('SIGTERM');}
 })().catch(e=>{console.error(e);process.exitCode=1});

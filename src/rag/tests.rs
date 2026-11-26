@@ -348,4 +348,55 @@ async fn rag_internal_tools_add_to_native_agent_inventory_with_scopes() {
             .unwrap()
             .is_none()
     );
+    // The errors an agent's RAG tool call can meet are in English, whatever the workflow's language.
+    let error = |r: Result<Option<Value>>| r.unwrap_err().to_string();
+    assert_eq!(
+        error(call(&app, 2, &node, &search.name, json!({"query":"invoice"})).await),
+        "RAG index not found"
+    );
+    assert_eq!(
+        error(call(&app, 1, &node, &search.name, json!({"query":" "})).await),
+        "Query: 1–4096 characters"
+    );
+    let semantic = crate::model::Node {
+        rag_mode: "semantic".into(),
+        ..node.clone()
+    };
+    assert_eq!(
+        error(call(&app, 1, &semantic, &search.name, json!({"query":"invoice"})).await),
+        "Keyword index: rebuild it with embeddings for semantic search"
+    );
+    let unknown = crate::model::Node {
+        rag_mode: "fuzzy".into(),
+        ..node.clone()
+    };
+    assert_eq!(
+        error(call(&app, 1, &unknown, &search.name, json!({"query":"invoice"})).await),
+        "Invalid search mode"
+    );
+    let many = crate::model::Node {
+        rag_top_k: 31,
+        ..node.clone()
+    };
+    assert_eq!(
+        error(call(&app, 1, &many, &search.name, json!({"query":"invoice"})).await),
+        "Results: 1–30"
+    );
+    let read = prepared
+        .tools
+        .iter()
+        .find(|t| t.name.ends_with("rag_read_chunk"))
+        .unwrap();
+    assert_eq!(
+        error(call(&app, 1, &node, &read.name, json!({})).await),
+        "chunk_id required"
+    );
+    assert_eq!(
+        error(call(&app, 1, &node, &read.name, json!({"chunk_id":"not-a-chunk"})).await),
+        "Invalid chunk ID"
+    );
+    assert_eq!(
+        error(call(&app, 1, &node, &read.name, json!({"chunk_id":"0".repeat(64)})).await),
+        "Chunk not found in the linked index"
+    );
 }

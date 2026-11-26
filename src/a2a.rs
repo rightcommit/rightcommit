@@ -349,7 +349,7 @@ fn task_value(a: &App, uid: i64, tid: &str, rid: &str, _p: &Publication) -> Resu
         .map(|x| x.questions.join("\n"))
         .unwrap_or_else(|| {
             if active.pending.is_some() {
-                "In attesa di approvazione locale".into()
+                "Waiting for a local approval".into()
             } else {
                 String::new()
             }
@@ -558,7 +558,7 @@ pub async fn execute(a: &App, uid: i64, r: &mut Run, n: &Node) -> Result<AgentRe
                                     .collect::<Vec<_>>()
                                     .join("\n")
                             })
-                            .unwrap_or_else(|| "Il servizio A2A richiede un chiarimento".into()),
+                            .unwrap_or_else(|| "The A2A service asks for a clarification".into()),
                     ],
                     ..Default::default()
                 });

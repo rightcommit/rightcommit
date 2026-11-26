@@ -635,6 +635,47 @@ mod tests {
         }
     }
     #[test]
+    fn every_catalog_entry_has_its_own_italian_and_english_title_and_description() {
+        // Titles made only of product names and symbols read the same in both languages.
+        const SAME_IN_BOTH: &[&str] = &["Jira + GitHub → SDD", "Jira + Bitbucket → SDD"];
+        let c = seed();
+        let mut entries: Vec<(String, &BTreeMap<String, Text>)> = vec![];
+        for s in &c.sections {
+            entries.push((format!("section {}", s.content.id), &s.content.locales));
+            if let Some(p) = &s.published {
+                entries.push((format!("section {} (published)", p.id), &p.locales));
+            }
+        }
+        for t in &c.templates {
+            entries.push((format!("template {}", t.content.id), &t.content.locales));
+            if let Some(p) = &t.published {
+                entries.push((format!("template {} (published)", p.id), &p.locales));
+            }
+        }
+        let mut problems = vec![];
+        for (entry, locales) in entries {
+            for lang in ["it", "en"] {
+                let Some(text) = locales.get(lang) else {
+                    problems.push(format!("{entry}: no {lang} text"));
+                    continue;
+                };
+                for (field, value) in [("title", &text.title), ("description", &text.description)] {
+                    if value.trim().is_empty() {
+                        problems.push(format!("{entry}: empty {lang} {field}"));
+                    }
+                }
+            }
+            let (Some(it), Some(en)) = (locales.get("it"), locales.get("en")) else { continue };
+            // An Italian text equal to the English one is an untranslated copy.
+            for (field, it, en) in [("title", &it.title, &en.title), ("description", &it.description, &en.description)] {
+                if !it.trim().is_empty() && it == en && !SAME_IN_BOTH.contains(&it.as_str()) {
+                    problems.push(format!("{entry}: {field} is not translated: {it}"));
+                }
+            }
+        }
+        assert!(problems.is_empty(), "Catalog entries missing a language:\n{}", problems.join("\n"));
+    }
+    #[test]
     fn feature_card_says_to_rewrite_the_prompts_written_for_the_example() {
         let c = seed();
         let t = c.templates.iter().find(|t| t.content.id == "feature-sdd").unwrap().published.as_ref().unwrap();

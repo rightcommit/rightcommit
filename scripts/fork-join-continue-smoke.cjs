@@ -1,4 +1,5 @@
-// Real browser regression: Continue run from a Join, from a step inside a parallel branch and from a Fork.
+// Real browser regression: Continue run from a Join, from a step inside a parallel branch and from a Fork,
+// with the Fork as the first step of the workflow and with skipped Tasks inside the branches.
 // An offline fixture stands in for Claude Code: no models or external services.
 const fs=require('fs'),os=require('os'),path=require('path'),assert=require('node:assert/strict'),{spawn}=require('child_process');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
@@ -6,7 +7,8 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
  const port=process.env.SMOKE_PORT||'18353',dir=fs.mkdtempSync(path.join(os.tmpdir(),'fork-join-continue-')),base='http://127.0.0.1:'+port,bin=path.join(dir,'bin'),counts=path.join(dir,'counts'),flags=path.join(dir,'flags');
  for(const d of [bin,counts,flags])fs.mkdirSync(d);
  // Each turn takes a few seconds so its running state, and the edge shown with it, can be observed.
- // A step's summary counts its turns; the step after the Join reports the branch outputs it received.
+ // A step's summary counts its turns; the step after the Join (tag ending in SYN) reports the branch outputs
+// it received, those whose tag has the same prefix.
  fs.writeFileSync(path.join(bin,'claude'),`#!/usr/bin/env python3
 import sys,json,re,time,pathlib
 prompt=sys.stdin.read();args=sys.argv
@@ -18,7 +20,7 @@ count.write_text(str(n))
 time.sleep(2.5)
 failed=pathlib.Path(${JSON.stringify(flags)}).joinpath('fail-'+tag).exists()
 summary='OUT-%s-%d'%(tag,n)
-if tag=='SYN':summary+=' SAW '+' '.join(sorted(set(re.findall(r'OUT-(?:A1|A2|B)-\\d+',prompt))))
+if tag.endswith('SYN'):summary+=' SAW '+' '.join(sorted(set(re.findall(r'OUT-%s(?:A1|A2|B1|B2|B)-\\d+'%tag[:-3],prompt))))
 print(json.dumps(dict(type='system',subtype='init',session_id=sid)),flush=True)
 print(json.dumps(dict(type='result',result='<nodo_result>'+json.dumps(dict(status='failed' if failed else 'completed',summary=summary,artifacts=[],questions=[]))+'</nodo_result>',is_error=False)),flush=True)
 `,{mode:0o755});
@@ -48,7 +50,7 @@ print(json.dumps(dict(type='result',result='<nodo_result>'+json.dumps(dict(statu
   const settled=()=>page.waitForFunction(()=>['completed','failed'].includes(app.run?.status),null,{timeout:60000});
   const started=()=>page.waitForFunction(()=>['starting','running'].includes(app.run?.status),null,{timeout:30000});
   const continueFrom=async node=>{await page.locator('#fit').click();await page.locator(`.node-main[data-id="${node}"]`).click({button:'right'});await page.locator('[data-action=continue-run-node]:enabled').click();await page.locator('.app-confirm [data-confirm-accept]').click();await started()};
-  const run=await call('/runs',{workflow_id:w.id});await page.evaluate(id=>loadRun(id),run.id);
+  let run=await call('/runs',{workflow_id:w.id});await page.evaluate(id=>loadRun(id),run.id);
   const state=async()=>{const d=await call('/runs/'+run.id);assert.equal(d.run.status,'completed',d.run.error);return d};
   const attempts=(d,expected)=>assert.deepEqual(Object.fromEntries(Object.keys(expected).map(id=>[id,d.run.attempts[id]])),expected);
   // First run: while the branches run, the link into the Fork shows the signal.
@@ -73,7 +75,48 @@ print(json.dumps(dict(type='result',result='<nodo_result>'+json.dumps(dict(statu
   const refused=await call('/runs/'+run.id+'/continue',{node:'join',acknowledge:true},400);assert.match(JSON.stringify(refused),/continua dal Fork/);
   fs.rmSync(path.join(flags,'fail-B'));await continueFrom('b');await settled();
   d=await state();attempts(d,{plan:1,a1:2,a2:3,b:5,syn:6});assert.equal(d.run.outputs.syn.summary,'OUT-SYN-6 SAW OUT-A1-2 OUT-A2-3 OUT-B-5');
+  // The Fork as the first step: nothing runs before it, so a branch step runs again through the Fork
+  // without a previous node to arrive from.
+  const fork1={id:'fork-first-continue',name:'Fork first continue',description:'',entry:'fork',nodes:[
+   {id:'source',kind:'Source',title:'Source',source_type:'example',x:60,y:100},agent('coord',260),agent('aa',660),agent('ab',860),
+   {id:'fork',kind:'Fork',title:'fork',target:'join',x:460,y:100},
+   task('a1','aa','FA1',660,0),task('a2','aa','FA2',860,0),task('b','ab','FB',760,200),
+   {id:'join',kind:'Join',title:'join',x:1060,y:100},task('syn','coord','FSYN',1260,100)],
+   edges:[context('source','coord'),context('coord','syn'),context('aa','a1'),context('aa','a2'),context('ab','b'),
+    control('fork','a1'),control('fork','b'),control('a1','a2'),control('a2','join'),control('b','join'),control('join','syn')]};
+  await call('/workflows',fork1);
+  run=await call('/runs',{workflow_id:fork1.id});await page.evaluate(id=>loadRun(id),run.id);
+  await signal('a1');await settled();
+  d=await state();assert.equal(d.run.outputs.syn.summary,'OUT-FSYN-1 SAW OUT-FA1-1 OUT-FA2-1 OUT-FB-1');
+  for(const id of ['fork','a1','a2','b','join','syn'])assert(d.continue_nodes.includes(id),'Fork first: '+id);
+  await continueFrom('a2');assert.equal(await signal('a2'),'a1->a2:control','Fork first, continue inside a branch');await settled();
+  d=await state();attempts(d,{a1:1,a2:2,b:1,join:2,syn:2});assert.equal(d.run.outputs.syn.summary,'OUT-FSYN-2 SAW OUT-FA1-1 OUT-FA2-2 OUT-FB-1');
+  await continueFrom('b');assert.equal(await signal('b'),'fork->b:control','Fork first, continue from the first step of a branch');await settled();
+  d=await state();attempts(d,{a1:1,a2:2,b:2,join:3,syn:3});assert.equal(d.run.outputs.syn.summary,'OUT-FSYN-3 SAW OUT-FA1-1 OUT-FA2-2 OUT-FB-2');
+  await continueFrom('join');assert.equal(await signal('syn'),'join->syn:control','Fork first, continue from the Join');await settled();
+  d=await state();attempts(d,{a1:1,a2:2,b:2,join:4,syn:4});assert.equal(d.run.outputs.syn.summary,'OUT-FSYN-4 SAW OUT-FA1-1 OUT-FA2-2 OUT-FB-2');
+  // Skipped Tasks inside the branches: they count as done for the Join, are never run and contribute nothing.
+  const skipped=(id,agent,tag,x,y)=>({...task(id,agent,tag,x,y),skip:true});
+  const skips={id:'skipped-branches-continue',name:'Skipped branches continue',description:'',entry:'plan',nodes:[
+   {id:'source',kind:'Source',title:'Source',source_type:'example',x:60,y:100},agent('coord',260),agent('aa',660),agent('ab',860),
+   task('plan','coord','SPLAN',260,100),{id:'fork',kind:'Fork',title:'fork',target:'join',x:460,y:100},
+   skipped('a1','aa','SA1',660,0),task('a2','aa','SA2',860,0),task('b1','ab','SB1',660,200),skipped('b2','ab','SB2',860,200),
+   {id:'join',kind:'Join',title:'join',x:1060,y:100},task('syn','coord','SSYN',1260,100)],
+   edges:[context('source','coord'),context('coord','plan'),context('coord','syn'),context('aa','a1'),context('aa','a2'),context('ab','b1'),context('ab','b2'),
+    control('plan','fork'),control('fork','a1'),control('fork','b1'),control('a1','a2'),control('a2','join'),control('b1','b2'),control('b2','join'),control('join','syn')]};
+  await call('/workflows',skips);
+  run=await call('/runs',{workflow_id:skips.id});await page.evaluate(id=>loadRun(id),run.id);
+  await signal('a2');await settled();
+  const bypassed=d=>{for(const id of ['a1','b2'])assert.equal(d.run.states[id],'bypassed',id);assert(!fs.existsSync(path.join(counts,'SA1'))&&!fs.existsSync(path.join(counts,'SB2')),'a skipped Task ran')};
+  d=await state();bypassed(d);assert.equal(d.run.outputs.syn.summary,'OUT-SSYN-1 SAW OUT-SA2-1 OUT-SB1-1');
+  for(const id of ['fork','a1','a2','b1','b2','join','syn'])assert(d.continue_nodes.includes(id),'skipped: '+id);
+  await continueFrom('join');assert.equal(await signal('syn'),'join->syn:control','skipped, continue from the Join');await settled();
+  d=await state();bypassed(d);attempts(d,{plan:1,a1:undefined,a2:1,b1:1,b2:undefined,join:2,syn:2});assert.equal(d.run.outputs.syn.summary,'OUT-SSYN-2 SAW OUT-SA2-1 OUT-SB1-1');
+  await continueFrom('a2');assert.equal(await signal('a2'),'a1->a2:control','skipped, continue from the step after a skipped Task');await settled();
+  d=await state();bypassed(d);attempts(d,{plan:1,a1:undefined,a2:2,b1:1,b2:undefined,join:3,syn:3});assert.equal(d.run.outputs.syn.summary,'OUT-SSYN-3 SAW OUT-SA2-2 OUT-SB1-1');
+  await continueFrom('b1');assert.equal(await signal('b1'),'fork->b1:control','skipped, continue from the step before a skipped Task');await settled();
+  d=await state();bypassed(d);attempts(d,{plan:1,a1:undefined,a2:2,b1:2,b2:undefined,join:4,syn:4});assert.equal(d.run.outputs.syn.summary,'OUT-SSYN-4 SAW OUT-SA2-2 OUT-SB1-2');
   assert.deepEqual(errors,[]);
-  console.log('PASS: Continue run from a Join keeps every branch output, from a branch step runs that branch and joins the kept ones, from a Fork runs every branch, the Join is refused after a failed branch, with the edge signal in each case');
+  console.log('PASS: Continue run from a Join keeps every branch output, from a branch step runs that branch and joins the kept ones, from a Fork runs every branch, the Join is refused after a failed branch, with the edge signal in each case; also with the Fork as the first step and with skipped Tasks in the branches');
  }finally{await browser?.close();server.kill('SIGINT');await new Promise(r=>server.exitCode!==null?r():server.once('exit',r));fs.rmSync(dir,{recursive:true,force:true})}
 })().catch(e=>{console.error(e);process.exit(1)});

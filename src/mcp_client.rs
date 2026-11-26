@@ -454,7 +454,7 @@ async fn metadata(s: &Session, name: &str, args: Value) -> Result<Value> {
         "@prompts/get" => {
             serde_json::to_value(s.service.get_prompt(serde_json::from_value(args)?).await?)?
         }
-        _ => anyhow::bail!("Metodo metadati MCP non valido"),
+        _ => anyhow::bail!("Invalid MCP metadata method"),
     };
     Ok(json!({"content":[{"type":"text","text":serde_json::to_string(&result)?}],"isError":false}))
 }
@@ -587,8 +587,8 @@ fn grant(app: &App, h: &HeaderMap) -> Result<Grant> {
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.strip_prefix("Bearer "))
-        .context("Credenziale MCP mancante")?;
-    ensure!(token.len() < 200, "Credenziale MCP non valida");
+        .context("MCP credential missing")?;
+    ensure!(token.len() < 200, "Invalid MCP credential");
     let g = app
         .mcp
         .grants
@@ -596,16 +596,21 @@ fn grant(app: &App, h: &HeaderMap) -> Result<Grant> {
         .unwrap()
         .get(&crate::store::hash(token))
         .cloned()
-        .context("Credenziale MCP revocata")?;
+        .context("MCP credential revoked")?;
     crate::auth::ensure_active(app, g.uid)?;
     ensure!(
         g.expires > now() && app.busy.lock().unwrap().contains(&g.run),
-        "Turno agente MCP non attivo"
+        "MCP agent turn not active"
     );
     let r = app.store.run(g.uid, &g.run)?;
-    ensure!(r.current == g.task, "Il task MCP è cambiato");
+    ensure!(r.current == g.task, "The MCP task has changed");
     Ok(g)
 }
+// The agent endpoint answers only the bridge and the agent's own tools, so its errors are in
+// English like every other text rightcommit hands to an agent.
+pub(crate) const MCP_ACCESS_ERROR: &str = "MCP access not valid or expired";
+pub(crate) const MCP_REQUEST_ERROR: &str =
+    "MCP request failed. Check the connection, the allowed tools and the timeout; no automatic retry.";
 pub async fn agent(
     State(app): State<App>,
     h: HeaderMap,
@@ -614,17 +619,17 @@ pub async fn agent(
     let g = grant(&app, &h).map_err(|_| {
         ApiError(
             StatusCode::UNAUTHORIZED,
-            "Accesso MCP non valido o scaduto".into(),
+            MCP_ACCESS_ERROR.into(),
         )
     })?;
-    let result=dispatch(&app,&g,req).await.map_err(|_|crate::auth::bad("Richiesta MCP fallita. Verifica connessione, tool consentiti e timeout; nessun retry automatico."))?;
+    let result=dispatch(&app,&g,req).await.map_err(|_|crate::auth::bad(MCP_REQUEST_ERROR))?;
     Ok(Json(result))
 }
 async fn dispatch(app: &App, g: &Grant, req: Request) -> Result<Value> {
     match req.method.as_str() {
         "tools/list" => Ok(json!({"tools":inventory(g).await?})),
         "tools/call" => {
-            let name = req.params["name"].as_str().context("Tool mancante")?;
+            let name = req.params["name"].as_str().context("Tool name missing")?;
             for node in &g.rag {
                 if let Some(result) = crate::rag::call(
                     app,
@@ -656,7 +661,7 @@ async fn dispatch(app: &App, g: &Grant, req: Request) -> Result<Value> {
                             metadata(&server.session, &tool.name, args),
                         )
                         .await
-                        .context("Timeout metadati MCP")?;
+                        .context("MCP metadata timeout")?;
                     }
                     let mut params: CallToolRequestParams =
                         serde_json::from_value(req.params.clone())?;
@@ -685,13 +690,13 @@ async fn dispatch(app: &App, g: &Grant, req: Request) -> Result<Value> {
                     });
                     agents::emit(app,g.uid,&g.run,"mcp_tool",&g.task,&json!({"server_node":server.node,"tool":tool.name,"status":if success{"completed"}else{"failed"},"elapsed_ms":start.elapsed().as_millis()}).to_string());
                     return Ok(serde_json::to_value(result.context(
-                        "Timeout MCP: verifica gli effetti prima del retry",
+                        "MCP timeout: check the effects before retrying",
                     )??)?);
                 }
             }
-            anyhow::bail!("Tool MCP non associato all'agente")
+            anyhow::bail!("MCP tool not assigned to the agent")
         }
-        _ => anyhow::bail!("Metodo MCP non supportato"),
+        _ => anyhow::bail!("Unsupported MCP method"),
     }
 }
 pub async fn probe(

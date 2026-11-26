@@ -27,7 +27,9 @@ print(json.dumps(dict(type='thread.started',thread_id=sid)),flush=True)
 print(json.dumps(dict(type='item.completed',item=dict(type='agent_message',text='<nodo_result>'+json.dumps(result)+'</nodo_result>'))),flush=True)
 '''
 (BIN/'codex').write_text(FAKE);(BIN/'codex').chmod(0o755)
-ENV=os.environ|{'NODO_DATA':str(TMP/'data'),'NODO_ASSETS':str(ROOT),'NODO_LISTEN':'127.0.0.1:8083','PATH':str(BIN)+':'+os.environ['PATH'],'NODO_SECURE_COOKIE':'0'}
+# A run is refused when its agents have no credentials: the fake CLI above needs none, so a dummy key
+# lets the run start without reaching any model.
+ENV=os.environ|{'NODO_DATA':str(TMP/'data'),'NODO_ASSETS':str(ROOT),'NODO_LISTEN':'127.0.0.1:8083','PATH':str(BIN)+':'+os.environ['PATH'],'NODO_SECURE_COOKIE':'0','CODEX_API_KEY':'offline-test-dummy'}
 log=open(TMP/'server.log','w')
 p=subprocess.Popen([str(ROOT/'target/debug/rightcommit')],env=ENV,stdout=log,stderr=log)
 client=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))

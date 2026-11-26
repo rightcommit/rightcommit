@@ -52,7 +52,7 @@ pub fn get(app: &App, uid: i64, id: &str) -> Result<Index> {
             |r| r.get(0),
         )
         .optional()?;
-    serde_json::from_str(&s.context("Indice RAG non trovato")?).map_err(Into::into)
+    serde_json::from_str(&s.context("RAG index not found")?).map_err(Into::into)
 }
 pub fn indices(app: &App, uid: i64) -> Result<Vec<Index>> {
     init(app)?;
@@ -76,7 +76,7 @@ fn generation(app: &App, uid: i64, i: &Index) -> Result<PathBuf> {
     let g = i
         .generation
         .as_ref()
-        .context("Indice non ancora disponibile")?;
+        .context("Index not available yet")?;
     uuid::Uuid::parse_str(g)?;
     Ok(base(app, uid, &i.id)?.join(g))
 }
@@ -610,22 +610,22 @@ pub async fn search_index(app: &App, uid: i64, id: &str, mut q: Search) -> Resul
     let cfg = i
         .generation_config
         .as_ref()
-        .context("Indice non disponibile")?;
+        .context("Index not available")?;
     ensure!(
         !q.query.trim().is_empty() && q.query.len() <= 4096,
-        "Query: 1–4096 caratteri"
+        "Query: 1–4096 characters"
     );
-    ensure!((1..=30).contains(&q.top_k), "Risultati: 1–30");
+    ensure!((1..=30).contains(&q.top_k), "Results: 1–30");
     if q.mode.is_empty() {
         q.mode = cfg.retrieval.clone()
     }
     ensure!(
         ["keyword", "semantic", "hybrid"].contains(&q.mode.as_str()),
-        "Modalità non valida"
+        "Invalid search mode"
     );
     ensure!(
         cfg.retrieval != "keyword" || q.mode == "keyword",
-        "Indice keyword: rigenera con embedding per la ricerca semantica"
+        "Keyword index: rebuild it with embeddings for semantic search"
     );
     let vector = if q.mode != "keyword" {
         let hub = app.rag.clone();
@@ -648,7 +648,7 @@ pub async fn search_index(app: &App, uid: i64, id: &str, mut q: Search) -> Resul
     };
     let results = vector::search(&generation(app, uid, &i)?, &q, &q.mode, vector).await?;
     Ok(
-        json!({"index":i.id,"root":i.root,"path":i.path,"generation":i.generation,"indexed_at":i.updated,"mode":q.mode,"results":results,"notice":"L’indice descrive la sorgente indicizzata, non le modifiche successive del workspace."}),
+        json!({"index":i.id,"root":i.root,"path":i.path,"generation":i.generation,"indexed_at":i.updated,"mode":q.mode,"results":results,"notice":"The index describes the indexed source, not later changes to the workspace."}),
     )
 }
 pub async fn search(
@@ -705,7 +705,7 @@ pub async fn call(
             json!({"total":data.files.len(),"offset":offset,"documents":data.files.into_iter().skip(offset).take(100).collect::<Vec<_>>()})
         }
         "rag_read_chunk" => {
-            let id = args["chunk_id"].as_str().context("chunk_id richiesto")?;
+            let id = args["chunk_id"].as_str().context("chunk_id required")?;
             let c = vector::chunk(&generation(app, uid, &i)?, id).await?;
             json!({"root":i.root,"source":i.path,"generation":i.generation,"chunk":c})
         }

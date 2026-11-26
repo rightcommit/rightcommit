@@ -158,7 +158,8 @@ as a beta and says it must be enabled first: in ChatGPT's security settings for 
 account, or in the workspace permissions by a workspace administrator.
 
 The steps below are for the first administrator (ID 1) and the container name in
-`compose.yaml`, `rightcommit`.
+`compose.yaml`, `rightcommit`. If your container has another name (`docker ps` lists it), put
+that name in place of `rightcommit` in each command, right before `codex` or `ls`.
 
 1. Start the app (`docker compose up -d` in the folder with `compose.yaml`), create the
    administrator in the browser if you have not yet, and check that your account's folder
@@ -219,10 +220,11 @@ What to know:
   own ChatGPT account.
 - Do not mount or copy `~/.codex` from your computer: Codex renews the tokens in
   `auth.json`, and two copies can invalidate each other.
-- Tested with Docker and the 1.10.2 image (Codex 0.166.0) up to the code prompt: completing
-  the sign-in needs a real ChatGPT account and was not part of the test. How rightcommit
-  detects the sign-in file, its ownership, keeping it after recreating the container, sign
-  out and reset were checked with a placeholder file. Not tested with Podman.
+- Tested end to end with Docker and the 1.10.3 image (Codex 0.166.0) on macOS: the device code
+  sign-in with a ChatGPT account, **Test connection**, a workflow run with a Codex Task, and
+  the run in FinOps with its estimated cost at API prices. The sign-in was still valid after
+  restarting the container and after recreating it on the same volume, as an image update
+  does. Sign out and reset were checked with a placeholder file. Not tested with Podman.
 
 A ChatGPT plan is for the person who holds it. Use your own sign-in for your own runs, do
 not share it with other people, and follow OpenAI's terms and usage limits; see
