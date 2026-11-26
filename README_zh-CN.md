@@ -158,12 +158,12 @@ rightcommit 支持个人使用，也支持在组织内部部署并使用独立�
 
 请先阅读[服务提供方条款与许可用途](PROVIDER_TERMS.md)。三个智能体都支持多用户使用。仍需遵守服务提供方的授权要求和凭据权限范围。
 
-设置中只接受 API 密钥，不接受 Claude Pro/Max 或 ChatGPT 订阅，应用也不提供 Claude 或 ChatGPT 账号登录。管理员可以在 `.env` 中设置令牌，让 Claude Code 使用自己的 Claude 订阅；其他用户都需要 API 密钥。
+设置中只接受 API 密钥，不接受 Claude Pro/Max 或 ChatGPT 订阅，应用也不提供 Claude 或 ChatGPT 账号登录。管理员可以在 `.env` 中设置令牌，让 Claude Code 使用自己的 Claude 订阅；使用原生安装时，你也可以在 rightcommit 为你的账号使用的文件夹中自行登录 Codex；其他用户都需要 API 密钥。
 
 | 智能体 | 所需凭据 | 指南 |
 |---|---|---|
 | Claude Code | Claude Console 中创建的 Anthropic API 密钥，或由管理员配置的网关、Amazon Bedrock、Google Vertex AI、Microsoft Foundry。仅管理员可以通过 `.env` 中的 `CLAUDE_CODE_OAUTH_TOKEN` 使用自己的 Claude 订阅；API 密钥字段会拒绝订阅令牌。 | [HOW_TO_CONFIGURE_CLAUDECODE.md](HOW_TO_CONFIGURE_CLAUDECODE.md) |
-| Codex | OpenAI 平台 API 密钥，或由管理员配置的兼容服务提供方。不支持 ChatGPT 登录。 | [HOW_TO_CONFIGURE_CODEX.md](HOW_TO_CONFIGURE_CODEX.md) |
+| Codex | OpenAI 平台 API 密钥，或由管理员配置的兼容服务提供方。应用内不提供 ChatGPT 登录；使用原生安装，或在 Docker 或 Podman 容器内，可按指南在你账号的 Codex 文件夹中运行 `codex login`。 | [HOW_TO_CONFIGURE_CODEX.md](HOW_TO_CONFIGURE_CODEX.md) |
 | Pi | 所选服务提供方（Anthropic、OpenAI、Gemini 等）的 API 密钥或云凭据。使用 Anthropic 时，Claude 订阅令牌会被拒绝。 | [HOW_TO_CONFIGURE_PI.md](HOW_TO_CONFIGURE_PI.md) |
 | 将 Pi 与 OpenRouter 搭配使用 | 账户中有余额的 OpenRouter API 密钥。 | [HOW_TO_CONFIGURE_PI_OPENROUTER.md](HOW_TO_CONFIGURE_PI_OPENROUTER.md) |
 | 在 Pi 中使用本地模型 | 在本机运行的模型服务器（Ollama、LM Studio、vLLM），无需 API 密钥。 | [HOW_TO_CONFIGURE_PI_LOCAL.md](HOW_TO_CONFIGURE_PI_LOCAL.md) |

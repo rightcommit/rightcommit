@@ -253,7 +253,12 @@ pub fn history(
             };
             let p = &v["payload"];
             if v["type"] == "session_meta" {
-                valid = p["id"].as_str() == Some(sid) && p["cwd"].as_str() == Some(&r.workspace);
+                // Compare paths, not strings: a direct source at the root of the sources
+                // folder is saved with a trailing slash that Codex does not keep in its log.
+                valid = p["id"].as_str() == Some(sid)
+                    && p["cwd"]
+                        .as_str()
+                        .is_some_and(|cwd| std::path::Path::new(cwd) == std::path::Path::new(&r.workspace));
                 if !valid {
                     failed = true;
                     break;
@@ -424,6 +429,77 @@ mod tests {
         c.prices.get_mut("openai/gpt-test").unwrap()["overrides"] =
             json!([{"utc_start":"12:00","prompt":"0"}]);
         assert!(c.estimate(&sample()).is_none());
+    }
+    /// A Codex log line as Codex writes it on a ChatGPT sign-in (`plan`) or with an API key (`None`).
+    fn log_line(kind: &str, at: &str, total: u64, last: u64, plan: Option<&str>) -> Value {
+        let usage = |input: u64| json!({"input_tokens":input,"cached_input_tokens":input/2,"cache_write_input_tokens":0,"output_tokens":10,"reasoning_output_tokens":3,"total_tokens":input+10});
+        let rate_limits = plan.map(|plan| json!({"limit_id":"codex","limit_name":null,"primary":{"used_percent":1.0,"window_minutes":300,"resets_at":1},"secondary":null,"credits":{"has_credits":false,"unlimited":false,"balance":null},"plan_type":plan,"individual_limit":null,"rate_limit_reached_type":null,"spend_control_reached":false}));
+        match kind {
+            "token_count" => json!({"timestamp":at,"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":usage(total),"last_token_usage":usage(last),"last_usage_includes_reasoning":true,"model_context_window":475000},"rate_limits":rate_limits}}),
+            // Newer Codex versions also repeat each request here: it must not be counted twice.
+            _ => json!({"timestamp":at,"type":"token_usage_record","payload":{"response_id":"r","turn_id":"t","root_turn_id":"t","usage":usage(last),"turn_token_usage":usage(total),"thread_token_usage":usage(total)}}),
+        }
+    }
+    #[tokio::test]
+    async fn trailing_slash_workspace_log_is_read_and_priced_with_or_without_a_plan() {
+        let d = tempfile::tempdir().unwrap();
+        let app = crate::tests::app(d.path());
+        let mut r = crate::engine::create(&app, 1, crate::presets::all().remove(0), "plan".into(), None)
+            .await
+            .unwrap();
+        let sid = "01a213a4-2ee0-7ff1-9db1-1c417f6921e3";
+        r.sessions.insert(
+            "author".into(),
+            crate::model::NativeSession {
+                provider: String::new(), base_url: String::new(), runtime: "codex".into(),
+                native_id: sid.into(), model: String::new(), turns: 1,
+            },
+        );
+        // A direct source at the root of the sources folder: the run keeps a trailing slash.
+        let cwd = r.workspace.trim_end_matches('/').to_string();
+        r.workspace = format!("{cwd}/");
+        let write = |plan: Option<&str>| {
+            let path = d.path().join(format!("rollout-2026-11-25T17-57-36-{sid}.jsonl"));
+            let lines = [
+                json!({"timestamp":"2026-11-25T16:57:36Z","type":"session_meta","payload":{"id":sid,"session_id":sid,"cwd":cwd,"originator":"codex_exec","source":"exec","model_provider":"openai"}}),
+                json!({"timestamp":"2026-11-25T16:57:37Z","type":"turn_context","payload":{"turn_id":"t","cwd":cwd,"model":"gpt-test"}}),
+                json!({"timestamp":"2026-11-25T16:57:37Z","type":"event_msg","payload":{"type":"task_started","turn_id":"t"}}),
+                log_line("record", "2026-11-25T16:57:43Z", 100, 100, plan),
+                log_line("token_count", "2026-11-25T16:57:44Z", 100, 100, plan),
+                log_line("record", "2026-11-25T16:57:47Z", 220, 120, plan),
+                log_line("token_count", "2026-11-25T16:57:48Z", 220, 120, plan),
+                // Codex repeats a token_count when only the rate limits change.
+                log_line("token_count", "2026-11-25T16:57:49Z", 220, 120, plan),
+                json!({"timestamp":"2026-11-25T16:57:51Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"t"}}),
+            ];
+            std::fs::write(&path, lines.iter().map(|l| l.to_string() + "\n").collect::<String>()).unwrap();
+            vec![path]
+        };
+        let cost = |rows: &[crate::finops::Usage]| {
+            rows.iter().map(|u| prices().estimate(u).unwrap()).sum::<f64>()
+        };
+        let files = write(Some("prolite"));
+        let (rows, missed) = history(&r, &[], &files, &mut 0);
+        assert_eq!(missed, 0);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows.iter().map(|u| u.input).sum::<u64>(), 220);
+        assert_eq!(rows.iter().map(|u| u.output).sum::<u64>(), 20);
+        assert_eq!(rows[0].cache_read, Some(50));
+        assert_eq!(rows[0].reasoning, Some(3));
+        assert_eq!(rows[0].model, "gpt-test");
+        // A ChatGPT sign-in is priced at API rates like any other Codex run.
+        let chatgpt = cost(&rows);
+        assert!(chatgpt > 0.);
+        // The same log written with an API key has no plan and gets the same estimate.
+        let files = write(None);
+        let (rows, missed) = history(&r, &[], &files, &mut 0);
+        assert_eq!(missed, 0);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].model, "gpt-test");
+        assert_eq!(cost(&rows), chatgpt);
+        // Another folder is still refused.
+        r.workspace = format!("{cwd}-other/");
+        assert_eq!(history(&r, &[], &files, &mut 0).1, 1);
     }
     #[tokio::test]
     async fn native_history_deduplicates_checks_ownership_and_rejects_partial_logs() {

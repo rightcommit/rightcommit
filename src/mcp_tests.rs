@@ -11,7 +11,7 @@ for line in sys.stdin:
   if 'id' not in q:continue
   if method=='initialize':result={'protocolVersion':q['params']['protocolVersion'],'capabilities':{'tools':{},'resources':{},'prompts':{}},'serverInfo':{'name':'fixture','version':'1'}}
   elif method=='tools/list':result={'tools':[{'name':'echo','description':'Echo the provided value','inputSchema':{'type':'object','properties':{'value':{'type':'string'}}}},{'name':'forbidden','inputSchema':{'type':'object','properties':{}}}]}
-  elif method=='tools/call':result={'content':[{'type':'text','text':q['params'].get('arguments',{}).get('value','')+'|'+os.getcwd()}]}
+  elif method=='tools/call':result={'content':[{'type':'text','text':q['params'].get('arguments',{}).get('value','')+'|'+os.getcwd()+'|'+os.environ.get('RIGHTCOMMIT_TEST_MCP_TOKEN','absent')}]}
   elif method=='resources/list':result={'resources':[{'uri':'fixture://document','name':'Document'}]}
   elif method=='resources/templates/list':result={'resourceTemplates':[]}
   elif method=='resources/read':result={'contents':[{'uri':q['params']['uri'],'text':'Resource content'}]}
@@ -152,6 +152,137 @@ async fn stdio_client_tool_scopes_sessions_resources_and_revocation() {
     assert!(crate::engine::validate(&run.workflow).is_ok());
     run.workflow.entry = "mcp".into();
     assert!(crate::engine::validate(&run.workflow).is_err());
+}
+#[test]
+fn server_variables_are_named_checked_against_the_command_and_resolved_only_for_the_administrator() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = crate::tests::app(dir.path());
+    let settings = Settings::default();
+    let home = agents::user_home(&app, 1).unwrap();
+    let stdio = |names: &[&str]| McpConfig {
+        name: "Service".into(),
+        transport: "stdio".into(),
+        command: "python3".into(),
+        env_from_server: names.iter().map(|n| n.to_string()).collect(),
+        ..Default::default()
+    };
+    let cfg = stdio(&["MY_SERVICE_TOKEN", "MY_SERVICE_URL"]);
+    validate(&cfg).unwrap();
+    let command = agents::command(&app, 1, &cfg.command, &home, &settings).unwrap();
+    let lookup = |name: &str| match name {
+        "MY_SERVICE_TOKEN" => Some("test-only-service-token-value".to_string()),
+        "MY_SERVICE_URL" => Some("https://service.test".to_string()),
+        "EMPTY_VALUE" => Some(String::new()),
+        _ => None,
+    };
+    assert_eq!(
+        resolve_server_variables(1, &cfg, &command, lookup).unwrap(),
+        vec![("MY_SERVICE_TOKEN".to_string(), "test-only-service-token-value".to_string()), ("MY_SERVICE_URL".to_string(), "https://service.test".to_string())]
+    );
+    // A missing or empty variable stops the launch with its name, never with another value.
+    for name in ["NOT_SET_ANYWHERE", "EMPTY_VALUE"] {
+        let error = resolve_server_variables(1, &stdio(&["MY_SERVICE_TOKEN", name]), &command, lookup).unwrap_err().to_string();
+        assert!(error.contains(name) && !error.contains("test-only-service-token-value"), "{error}");
+    }
+    // Only the first administrator, whatever the lookup holds.
+    let other = agents::command(&app, 2, &cfg.command, &agents::user_home(&app, 2).unwrap(), &settings).unwrap();
+    assert!(resolve_server_variables(2, &cfg, &other, lookup).unwrap_err().to_string().contains("ID 1"));
+    assert!(check_server_variables(2, &stdio(&[]), &other).is_ok());
+    // Names rightcommit sets for the command, and their families, are refused.
+    for name in ["HOME", "PATH", "USER", "LANG", "TMPDIR", "PWD", "LC_ALL", "XDG_DATA_HOME", "GIT_DIR", "CARGO_TARGET_DIR", "RUSTUP_TOOLCHAIN", "CODEX_HOME", "CLAUDE_CODE_OAUTH_TOKEN", "PI_LOCAL_API_KEY", "SPECKIT_FLAG"] {
+        let c = stdio(&[name]);
+        validate(&c).unwrap();
+        let error = check_server_variables(1, &c, &command).unwrap_err().to_string();
+        assert!(error.contains(name), "{name}: {error}");
+    }
+    // An agent CLI started as an MCP server keeps its own provider rules.
+    let mut codex = stdio(&["OPENAI_API_KEY"]);
+    check_server_variables(1, &codex, &command).unwrap();
+    codex.command = "codex".into();
+    let codex_command = agents::command(&app, 1, "codex", &home, &settings).unwrap();
+    assert!(check_server_variables(1, &codex, &codex_command).is_err());
+    // Names are shell identifiers, unique, not also literal, capped, and stdio only.
+    for bad in [&["1TOKEN"][..], &["MY-TOKEN"], &[""], &["LD_PRELOAD"], &["DYLD_INSERT_LIBRARIES"], &["SAME", "SAME"]] {
+        assert!(validate(&stdio(bad)).is_err(), "{bad:?}");
+    }
+    let mut both = stdio(&["MY_SERVICE_URL"]);
+    both.env.insert("MY_SERVICE_URL".into(), "https://literal.test".into());
+    assert!(validate(&both).unwrap_err().to_string().contains("MY_SERVICE_URL"));
+    let many: Vec<String> = (0..=MAX_SERVER_VARIABLES).map(|i| format!("VARIABLE_{i}")).collect();
+    assert!(validate(&stdio(&many.iter().map(String::as_str).collect::<Vec<_>>())).is_err());
+    let mut http = stdio(&["MY_SERVICE_URL"]);
+    http.transport = "http".into();
+    http.url = "https://mcp.example/mcp".into();
+    assert!(validate(&http).is_err());
+    // Settings saved before the field existed keep loading.
+    let legacy: McpConfig = serde_json::from_value(json!({"name":"Old","transport":"stdio","command":"echo"})).unwrap();
+    assert!(legacy.env_from_server.is_empty());
+    // The public configuration lists the names only.
+    assert_eq!(public_config(&cfg)["env_from_server"], json!(["MY_SERVICE_TOKEN", "MY_SERVICE_URL"]));
+}
+/// Launch (a run's MCP servers and Test connection) reads the named variables from the
+/// process environment, so this test checks it in a child run of itself only.
+#[tokio::test]
+async fn stdio_server_receives_named_server_variables_at_launch_and_values_stay_hidden() {
+    const NAME: &str = "mcp_client::tests::stdio_server_receives_named_server_variables_at_launch_and_values_stay_hidden";
+    const VALUE: &str = "test-only-mcp-server-variable";
+    if std::env::var("RIGHTCOMMIT_MCP_ENV_CHILD").is_err() {
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", NAME, "--test-threads=1"])
+            .env("RIGHTCOMMIT_MCP_ENV_CHILD", "1")
+            .env("RIGHTCOMMIT_TEST_MCP_TOKEN", VALUE)
+            .env("RIGHTCOMMIT_TEST_MCP_EMPTY", "")
+            .env_remove("RIGHTCOMMIT_TEST_MCP_MISSING")
+            .output()
+            .unwrap();
+        let report = String::from_utf8_lossy(&out.stdout);
+        assert!(out.status.success() && report.contains("1 passed"), "child test failed: {report}");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let (app, run) = fixture_app(dir.path()).await;
+    let set = |uid: i64, names: &[&str]| {
+        let mut settings = app.store.settings(1).unwrap();
+        settings.mcp_servers.get_mut("test").unwrap().env_from_server = names.iter().map(|n| n.to_string()).collect();
+        // Written straight to the store: launch must enforce the rules on its own.
+        app.store.save_settings(uid, &settings).unwrap();
+    };
+    // Without a reference the server never sees the variable.
+    let prepared = prepare(&app, 1, &run).await.unwrap().unwrap();
+    let call = |prepared: &Prepared| {
+        let g = app.mcp.grants.lock().unwrap()[&crate::store::hash(prepared.token())].clone();
+        let name = prepared.tools[0].name.to_string();
+        let app = app.clone();
+        async move { dispatch(&app, &g, Request { method: "tools/call".into(), params: json!({"name":name,"arguments":{"value":"seen"}}) }).await.unwrap() }
+    };
+    app.busy.lock().unwrap().insert(run.id.clone());
+    assert!(call(&prepared).await.to_string().contains("|absent"));
+    assert_eq!(prepared.server_values().count(), 0);
+    drop(prepared);
+    set(1, &["RIGHTCOMMIT_TEST_MCP_TOKEN"]);
+    let prepared = prepare(&app, 1, &run).await.unwrap().unwrap();
+    let result = call(&prepared).await.to_string();
+    assert!(result.contains(&format!("|{VALUE}")), "{result}");
+    // Run evidence passes through the turn's redaction, which hides the value.
+    assert_eq!(agents::redact_values(&result, prepared.server_values()).contains(VALUE), false);
+    assert!(app.store.events(1, &run.id, 0).unwrap().iter().all(|e| !e.text.contains(VALUE)));
+    drop(prepared);
+    // Test connection uses the same launch, and its answer carries no value.
+    let user = |id| User { id, email: String::new() };
+    let probed = probe(State(app.clone()), user(1), Path("test".into())).await.unwrap().0;
+    assert!(!probed.to_string().contains(VALUE));
+    let settings = crate::api::public_settings(&app, &user(1), &app.store.settings(1).unwrap());
+    assert!(settings.to_string().contains("RIGHTCOMMIT_TEST_MCP_TOKEN") && !settings.to_string().contains(VALUE));
+    for missing in ["RIGHTCOMMIT_TEST_MCP_MISSING", "RIGHTCOMMIT_TEST_MCP_EMPTY"] {
+        set(1, &["RIGHTCOMMIT_TEST_MCP_TOKEN", missing]);
+        let error = probe(State(app.clone()), user(1), Path("test".into())).await.unwrap_err().1;
+        assert!(error.contains(missing) && !error.contains(VALUE), "{error}");
+        assert!(prepare(&app, 1, &run).await.is_err());
+    }
+    // Another account cannot obtain a server variable by writing a reference.
+    set(2, &["RIGHTCOMMIT_TEST_MCP_TOKEN"]);
+    let error = probe(State(app.clone()), user(2), Path("test".into())).await.unwrap_err().1;
+    assert!(error.contains("ID 1") && !error.contains(VALUE), "{error}");
 }
 #[test]
 fn secrets_are_masked_merged_and_redacted_and_auth_modes_validate() {

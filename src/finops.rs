@@ -1113,6 +1113,78 @@ runtime: "codex".into(),
             1
         );
     }
+    /// A ChatGPT sign-in run whose workspace ends with a slash is recovered from its log and
+    /// priced at API rates like an API key run with the same tokens.
+    #[tokio::test]
+    async fn chatgpt_sign_in_runs_are_priced_like_api_key_runs() {
+        let d = tempfile::tempdir().unwrap();
+        let app = crate::tests::app(d.path());
+        let prices = crate::codex_cost::Catalog::parse(&json!({"data":[{"id":"openai/gpt-test","pricing":{"prompt":"0.01","completion":"0.1","input_cache_read":"0.001"}}]})).unwrap();
+        let mut ids = vec![];
+        for name in ["plan", "key"] {
+            let mut r = crate::engine::create(&app, 1, crate::presets::all().remove(0), name.into(), None).await.unwrap();
+            let sid = uuid::Uuid::new_v4().to_string();
+            r.status = "completed".into();
+            r.sessions.insert("author".into(), NativeSession {
+                provider: String::new(), base_url: String::new(), runtime: "codex".into(),
+                native_id: sid.clone(), model: "gpt-test".into(), turns: 1,
+            });
+            let cwd = r.workspace.clone();
+            if name == "plan" {
+                // A direct source at the sources root, saved with a trailing slash, and a log
+                // written on a ChatGPT sign-in (rate limits with a plan type).
+                r.workspace.push('/');
+                let dir = app.data.join("users/1/.codex/sessions/2026/11/25");
+                std::fs::create_dir_all(&dir).unwrap();
+                let token = |time: &str, total: u64, last: u64| json!({"timestamp":time,"type":"event_msg","payload":{"type":"token_count",
+                    "info":{"total_token_usage":{"input_tokens":total,"cached_input_tokens":total/2,"output_tokens":20,"reasoning_output_tokens":5},
+                            "last_token_usage":{"input_tokens":last,"cached_input_tokens":last/2,"cache_write_input_tokens":0,"output_tokens":10,"reasoning_output_tokens":3}},
+                    "rate_limits":{"plan_type":"prolite","credits":{"has_credits":false},"primary":{"used_percent":1.0}}}});
+                let lines = [
+                    json!({"type":"session_meta","payload":{"id":sid,"cwd":cwd}}),
+                    json!({"type":"turn_context","payload":{"model":"gpt-test","turn_id":"t"}}),
+                    token("2026-11-25T16:57:44Z", 100, 100),
+                    token("2026-11-25T16:57:48Z", 220, 120),
+                ];
+                std::fs::write(dir.join(format!("rollout-2026-11-25T17-57-36-{sid}.jsonl")),
+                    lines.iter().map(|l| l.to_string() + "\n").collect::<String>()).unwrap();
+            }
+            app.store.save_run(1, &r).unwrap();
+            let mut u = Tracker::new("codex", "task", "author", "gpt-test", 1).observe(&json!({"type":"turn.completed","usage":{"input_tokens":220,"cached_input_tokens":110,"cache_write_input_tokens":0,"output_tokens":20,"reasoning_output_tokens":6}}), &sid).unwrap();
+            u.at = "2026-11-25T16:57:49Z".parse::<jiff::Timestamp>().unwrap().as_millisecond();
+            let mut row = serde_json::to_value(&u).unwrap();
+            // A row saved by an unreleased build with a subscription flag still loads.
+            row["subscription"] = json!(true);
+            app.store.event(1, &r.id, "usage", "task", &row.to_string()).unwrap();
+            ids.push(r.id);
+        }
+        let value = report_priced(&app, 1, &prices).unwrap();
+        let run = |id: &str| value["runs"].as_array().unwrap().iter().find(|r| r["id"] == id).unwrap()["metrics"].clone();
+        let (plan, key) = (run(&ids[0]), run(&ids[1]));
+        assert_eq!(plan["records"], 2);
+        assert_eq!(plan["historical_codex_records"], 2);
+        assert_eq!(plan["estimated_records"], 2);
+        assert_eq!(key["records"], 1);
+        assert_eq!(key["estimated_records"], 1);
+        for m in [&plan, &key] {
+            assert_eq!(m["input"], 220);
+            assert_eq!(m["output"], 20);
+            assert_eq!(m["cache_read"], 110);
+            assert!(m["usd"].is_null());
+        }
+        let cost = |m: &Value| m["estimated_usd"].as_f64().unwrap();
+        assert!(cost(&plan) > 0.);
+        assert!((cost(&plan) - cost(&key)).abs() < 1e-10);
+        assert_eq!(value["summary"]["historical_codex_sessions_unavailable"], 1); // "key" has no log
+        // Totals and every grouping include both estimates.
+        let m = &value["summary"]["metrics"];
+        assert_eq!(m["estimated_records"], 3);
+        assert!((cost(m) - 2. * cost(&key)).abs() < 1e-10);
+        let sum = |rows: &Value| rows.as_array().unwrap().iter().filter_map(|r| r["metrics"]["estimated_usd"].as_f64()).sum::<f64>();
+        for group in ["models", "agents", "workflows"] {
+            assert!((sum(&value[group]) - 2. * cost(&key)).abs() < 1e-10, "{group}");
+        }
+    }
     #[tokio::test]
     async fn runs_and_agents_split_costs_by_model_and_reconcile() {
         let d = tempfile::tempdir().unwrap();

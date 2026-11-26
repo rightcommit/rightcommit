@@ -116,6 +116,10 @@ pub fn router(app: App) -> Router {
             axum::routing::post(crate::manager::resolve_proposal),
         )
         .route(
+            "/api/manager/chat/mcp/register",
+            axum::routing::post(crate::manager::register_mcp),
+        )
+        .route(
             "/manager.js",
             axum::routing::get(|| async {
                 (
@@ -507,7 +511,7 @@ fn api_key_preview(key: &str) -> Option<String> {
     if chars.len() <= 8 { return Some("...".into()); }
     Some(format!("{}...{}", chars[..5].iter().collect::<String>(), chars[chars.len()-3..].iter().collect::<String>()))
 }
-fn public_settings(a: &App, u: &User, s: &Settings) -> Value {
+pub(crate) fn public_settings(a: &App, u: &User, s: &Settings) -> Value {
     let mut effective = s.clone();
     crate::compaction::normalize(&mut effective);
     let s = &effective;
@@ -559,7 +563,7 @@ async fn openrouter_models(_u: User) -> ApiResult<Json<Value>> {
         .send()
         .await
         .map_err(|_| {
-            bad("OpenRouter non raggiungibile. Riprova o inserisci il modello manualmente")
+            bad("OpenRouter non raggiungibile. Riprova più tardi")
         })?
         .error_for_status()
         .map_err(|_| bad("Catalogo OpenRouter non disponibile. Riprova più tardi"))?;
@@ -608,7 +612,7 @@ fn settings_revision(settings: &Settings) -> String {
     let mut s=settings.clone();crate::compaction::normalize(&mut s);
     crate::store::hash(serde_json::to_vec(&s).unwrap())
 }
-fn validate_settings(s: &mut Settings, old: &Settings) -> anyhow::Result<()> {
+fn validate_settings(a: &App, uid: i64, s: &mut Settings, old: &Settings) -> anyhow::Result<()> {
     if !["codex", "claude", "pi"].contains(&s.default_runtime.as_str()) {
         return Err(anyhow::anyhow!("Runtime non valido"));
     }
@@ -687,6 +691,13 @@ fn validate_settings(s: &mut Settings, old: &Settings) -> anyhow::Result<()> {
         crate::mcp_client::merge(c, old.mcp_servers.get(id).unwrap_or(&McpConfig::default()));
         crate::mcp_client::validate(c)?;
     }
+    // Server variables are checked against the command that will start each server; launch
+    // checks them again with the values (src/mcp_client.rs).
+    for c in s.mcp_servers.values().filter(|c| !c.env_from_server.is_empty()) {
+        crate::mcp_client::check_server_variables_owner(uid, c)?;
+        let command = agents::command(a, uid, &c.command, &agents::user_home(a, uid)?, s)?;
+        crate::mcp_client::check_server_variables(uid, c, &command)?;
+    }
     Ok(())
 }
 fn merge_config_patch(target: &mut Value, patch: &Value, schema: &Value) -> anyhow::Result<()> {
@@ -729,7 +740,7 @@ async fn patch_settings(State(a): State<App>,u: User,Json(payload): Json<Value>)
 async fn save_settings(State(a): State<App>,u: User,Json(payload): Json<Value>) -> ApiResult<Json<Value>> {
     write_settings(a,u,payload,false).await
 }
-async fn write_settings(a: App,u: User,payload: Value,partial: bool) -> ApiResult<Json<Value>> {
+pub(crate) async fn write_settings(a: App,u: User,payload: Value,partial: bool) -> ApiResult<Json<Value>> {
     let revision=payload[if partial {"revision"}else{"_revision"}].as_str().ok_or_else(||auth::ApiError(StatusCode::CONFLICT,SETTINGS_CONFLICT.into()))?;
     let mut mcp_changed=false;
     let mut previous=None;
@@ -746,7 +757,7 @@ async fn write_settings(a: App,u: User,payload: Value,partial: bool) -> ApiResul
             && (config.client_id!=previous.client_id || config.base_url.trim_end_matches('/')!=previous.base_url.trim_end_matches('/')) {
             config.client_secret.clear();
         }
-        validate_settings(&mut next,latest)?;
+        validate_settings(&a,u.id,&mut next,latest)?;
         mcp_changed=serde_json::to_value(&next.mcp_servers)?!=serde_json::to_value(&latest.mcp_servers)?;
         if serde_json::to_value(&next)?!=serde_json::to_value(&*latest)? {backup_settings(&a,u.id,latest)?;}
         previous=Some(latest.clone());
@@ -1385,6 +1396,25 @@ mod settings_isolation_tests {
         assert_eq!(app.store.settings(1).unwrap().mcp_servers["demo"].env["TOKEN"],"dummy");
         let _ = patch_settings(State(app.clone()),user(),Json(json!({"revision":added["_revision"],"changes":{"mcp_servers":{"demo":null}}}))).await.unwrap();
         let saved=app.store.settings(1).unwrap();assert!(saved.mcp_servers.is_empty());assert!(["first","second"].contains(&saved.agents["pi"].model.as_str()));
+    }
+    #[tokio::test]
+    async fn only_the_first_administrator_saves_mcp_server_variables_by_name() {
+        let dir=tempfile::tempdir().unwrap();let app=crate::tests::app(dir.path());
+        let server=|names:Value|json!({"mcp_servers":{"service":{"name":"Service","transport":"stdio","command":"python3","args":["server.py"],"env":{"MODE":"test"},"env_from_server":names,"auth":{"mode":"none"}}}});
+        let other=User{id:2,email:"other@test.local".into()};
+        let revision=settings_revision(&app.store.settings(2).unwrap());
+        let refused=patch_settings(State(app.clone()),other.clone(),Json(json!({"revision":revision,"changes":server(json!(["MY_SERVICE_TOKEN"]))}))).await.unwrap_err();
+        assert!(refused.1.contains("ID 1"),"{}",refused.1);assert!(app.store.settings(2).unwrap().mcp_servers.is_empty());
+        // Literal variables stay available to every account.
+        let _ = patch_settings(State(app.clone()),other,Json(json!({"revision":revision,"changes":server(json!([]))}))).await.unwrap();
+        let revision=settings_revision(&app.store.settings(1).unwrap());
+        for (names,needle) in [(json!(["HOME"]),"HOME"),(json!(["GIT_DIR"]),"GIT_DIR"),(json!(["MODE"]),"MODE"),(json!(["BAD-NAME"]),"Nome")] {
+            let error=patch_settings(State(app.clone()),user(),Json(json!({"revision":revision,"changes":server(names)}))).await.unwrap_err();
+            assert!(error.1.contains(needle),"{}",error.1);
+        }
+        let saved=patch_settings(State(app.clone()),user(),Json(json!({"revision":revision,"changes":server(json!(["MY_SERVICE_TOKEN"]))}))).await.unwrap().0;
+        assert_eq!(saved["mcp_servers"]["service"]["env_from_server"],json!(["MY_SERVICE_TOKEN"]));
+        assert_eq!(app.store.settings(1).unwrap().mcp_servers["service"].env_from_server,vec!["MY_SERVICE_TOKEN".to_string()]);
     }
     #[tokio::test]
     async fn local_endpoint_changes_do_not_reuse_existing_provider_secrets() {

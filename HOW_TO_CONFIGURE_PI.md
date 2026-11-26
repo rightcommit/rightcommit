@@ -27,7 +27,9 @@ The simplest option.
 2. In rightcommit open **Personal settings** → **Agents** → **Pi Agent**.
 3. Set **Pi provider** to *Anthropic* or *OpenAI*.
 4. Paste the key in **Personal API key**, set an explicit **Model** available to that provider
-   and press **Save**. Pi requires a model in the app or the Agent node.
+   and press **Save**. Pi requires a model in the app or the Agent node. With OpenRouter, the
+   **Model** field of a Pi Agent node offers the same searchable model list as Personal
+   settings (see [HOW_TO_CONFIGURE_PI_OPENROUTER.md](HOW_TO_CONFIGURE_PI_OPENROUTER.md)).
 
 The key is encrypted in the database; the full value is not returned by the app. Leave the
 field empty to keep it; use the bin icon to remove it.
@@ -55,7 +57,10 @@ This list matches the pinned Pi **1.5.2** catalog and rightcommit's actual
 forwarding rules: **43 provider entries** and **72 distinct provider variables**.
 The source is [distribution/pi-providers.json](distribution/pi-providers.json), with the
 application's filters applied. Provider-specific variables are passed only to the selected
-Pi provider, including in Multi-provider mode. Environment configuration remains available
+Pi provider, including in Multi-provider mode and for the administrator's Project Manager,
+which inherits the server's other environment variables but none of this catalog (see
+[Agents and the server environment](README.md#agents-and-the-server-environment)).
+Environment configuration remains available
 to Pi users when no applicable app API key is selected.
 
 The table is an allowlist, not a requirement to set every variable in a row. Configure only

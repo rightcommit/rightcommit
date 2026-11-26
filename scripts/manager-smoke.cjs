@@ -45,7 +45,14 @@ const BASE=process.env.NODO_TEST_URL||'http://127.0.0.1:18082';
   const invalid=await send('proposta invalida');assert.equal(invalid.workflow,null);assert.match(invalid.messages.at(-1).text,/Non ho applicato/);assert.equal(await page.evaluate(()=>app.wf.nodes.length),3);
   const otherEmail='manager-other-'+Date.now()+'@nodo.local';await call('/users',{email:otherEmail,password:'temporary-manager-other-password'});
   const other=await browser.newContext();const login=await other.request.post(BASE+'/api/auth/login',{headers:{'X-Nodo-Request':'1'},data:{email:otherEmail,password:'temporary-manager-other-password'}});assert.equal(login.status(),200);
-  const history=await other.request.get(BASE+'/api/manager/chat?workflow_id='+w.id);assert.equal((await history.json()).messages.length,0);await other.close();
+  const history=await other.request.get(BASE+'/api/manager/chat?workflow_id='+w.id);assert.equal((await history.json()).messages.length,0);
+  // Optional: start the server with RIGHTCOMMIT_SMOKE_INHERITED and RIGHTCOMMIT_SMOKE_TOKEN (8+ characters), and give this script the same RIGHTCOMMIT_SMOKE_INHERITED.
+  if(process.env.RIGHTCOMMIT_SMOKE_INHERITED){
+   const ask=async(request,id)=>{const r=await request.post(BASE+'/api/manager/chat',{headers:{'X-Nodo-Request':'1'},data:{workflow:{...w,id},message:'ambiente server'}});assert.equal(r.status(),200,await r.text());return (await r.json()).messages.at(-1).text};
+   assert.equal(await ask(page.request,'manager-env-admin-'+Date.now()),`inherited=${process.env.RIGHTCOMMIT_SMOKE_INHERITED} token=[redacted]`,'the administrator manager inherits the server environment, secrets redacted');
+   assert.equal(await ask(other.request,'manager-env-other-'+Date.now()),'inherited=absent token=absent','other accounts keep a clean environment');
+  }
+  await other.close();
   const run=await call('/runs',{workflow_id:w.id});let state;
   for(let i=0;i<100;i++){state=await call('/runs/'+run.id);if(['completed','failed'].includes(state.run.status))break;await page.waitForTimeout(100)}assert.equal(state.run.status,'completed',state.run.error);
   await page.evaluate(id=>loadRun(id),run.id);await page.waitForFunction(()=>app.run?.status==='completed');

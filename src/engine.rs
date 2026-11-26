@@ -34,7 +34,7 @@ pub fn edge_allowed(a: &Node, b: &Node, kind: &str, outcome: &str) -> bool {
     }
 }
 // Parallel regions are deliberately structured: disjoint Task chains and one barrier.
-fn parallel_branches(w: &Workflow, fork: &Node) -> Result<Vec<Vec<Node>>> {
+pub(crate) fn parallel_branches(w: &Workflow, fork: &Node) -> Result<Vec<Vec<Node>>> {
     let join = fork_join(w, fork)?;
     let starts: Vec<_> = w
         .edges
@@ -478,13 +478,13 @@ fn memory_source_instructions(workflow: &Workflow, task: &Node) -> &'static str 
             && node.agent == task.id
             && reachable(workflow, &task.id, &node.id)
     }) {
-        "\nPassaggio di consegne via Memory: includi nel campo details del risultato, o nel report prima di <nodo_result>, \
-         decisioni e motivazioni, vincoli, file da consultare, prossimo passo e questioni aperte. Distingui ciò che hai \
-         verificato da ciò che resta da verificare. Prima di rispondere, conta i caratteri Unicode del report (non i token). \
-         Se supera 16.000 caratteri, salva il report completo in un file Markdown nel workspace, con un nome univoco \
-         sotto .rightcommit/handoffs/. Verifica che il file esista. Metti il percorso relativo e le sezioni da leggere all'inizio del \
-         riepilogo in summary, includi il percorso in artifacts e passa in details o nel report testuale solo un riepilogo \
-         entro 16.000 caratteri. Indica al prossimo agente di leggere il file prima di proseguire."
+        "\nHandoff through Memory: in the details field of the result, or in the report before <nodo_result>, include \
+         decisions and their reasons, constraints, files to consult, the next step and open questions. Separate what you \
+         verified from what remains to be verified. Before answering, count the Unicode characters of the report (not tokens). \
+         If it exceeds 16,000 characters, save the complete report in a Markdown file in the workspace, with a unique name \
+         under .rightcommit/handoffs/. Check that the file exists. Put the relative path and the sections to read at the start of \
+         summary, include the path in artifacts and pass in details or in the text report only a summary \
+         within 16,000 characters. Tell the next agent to read the file before continuing."
     } else {
         ""
     }
@@ -722,11 +722,7 @@ pub async fn create_reserved(
         sessions: BTreeMap::new(),
         outputs: BTreeMap::new(),
         pending: None,
-        active_edge: w
-            .edges
-            .iter()
-            .find(|e| e.to == w.entry && e.kind == "context")
-            .cloned(),
+        active_edge: entry_edge(&w),
         pause_requested: false,
         attempts: BTreeMap::new(),
         reworks: BTreeMap::new(),
@@ -761,6 +757,28 @@ pub async fn create_reserved(
 pub struct RunControl {
     pub stop: tokio::sync::watch::Sender<bool>,
     pub done: tokio::sync::watch::Receiver<bool>,
+}
+/// The edge a new run shows entering its first node: the context link into the entry.
+fn entry_edge(w: &Workflow) -> Option<Edge> {
+    w.edges
+        .iter()
+        .find(|e| e.to == w.entry && e.kind == "context")
+        .cloned()
+}
+/// The edge shown entering `node` when the run reaches it with no recorded route,
+/// as after a resume or a restart. A restart from the first node shows the same
+/// edge as the run's first start.
+pub(crate) fn arrival_edge(r: &Run, node: &str) -> Option<Edge> {
+    match &r.last_node {
+        Some(previous) => r
+            .workflow
+            .edges
+            .iter()
+            .find(|e| e.to == node && &e.from == previous)
+            .cloned(),
+        None if node == r.workflow.entry => entry_edge(&r.workflow),
+        None => None,
+    }
 }
 pub fn launch(app: App, uid: i64, rid: String) -> Result<()> {
     crate::auth::ensure_active(&app, uid)?;
@@ -897,7 +915,7 @@ fn incoming(app: &App, uid: i64, r: &Run) -> Result<String> {
         .map(|n| serde_json::json!({"id":n.id,"status":r.states.get(&n.id)}))
         .collect();
     Ok(format!(
-        "Source disponibili (percorsi relativi al workspace oppure assoluti per le sorgenti dirette; associazioni Agent): {}\nRichiesta originale: {}\nChiarimento autenticato successivo (prevale sulle ambiguità originali): {}\nProvenienza Source: {}\nApprovazioni effettivamente registrate dal server: {}\nReview di approvazione pianificate e stati: {}\nIl server gestisce le richieste di approvazione secondo la policy del run: non attestare esiti futuri, ma non richiedere come prerequisito tecnico una fase umana esplicitamente pianificata a valle.\nOutput precedente: {}\nRisposta autenticata per questo nodo: {}",
+        "Available Sources (paths relative to the workspace, or absolute for direct sources; Agent bindings): {}\nOriginal run request: {}\nLater authenticated clarification (takes precedence over ambiguities in the original request): {}\nSource provenance: {}\nApprovals actually recorded by the server: {}\nPlanned approval Reviews and their states: {}\nThe server handles approval requests according to the run's policy: do not attest future outcomes, but do not require as a technical prerequisite a human step explicitly planned downstream.\nPrevious output: {}\nAuthenticated answer for this node: {}",
         r.context
             .get("inherited-sources")
             .cloned()
@@ -974,7 +992,7 @@ fn route_state(r: &mut Run, outcome: &str) -> Result<()> {
                         .get(&e.from)
                         .and_then(|o| serde_json::to_string(o).ok())
                 })
-                .unwrap_or_else(|| "Review rifiutata: riesamina gli artefatti correnti.".into());
+                .unwrap_or_else(|| "Review rejected: examine the current artifacts again.".into());
             // A correction branch may open with a Memory: the finding is for the Task after it.
             let mut receiver = e.to.clone();
             let mut hops = 0;
@@ -1109,12 +1127,7 @@ pub(crate) async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
             n.command = serde_json::to_string(&crate::servicenow::prepare(&n, &r, config)?)?;
         }
         if r.active_edge.is_none() {
-            r.active_edge = r
-                .workflow
-                .edges
-                .iter()
-                .find(|e| e.to == n.id && r.last_node.as_ref().is_some_and(|p| p == &e.from))
-                .cloned();
+            r.active_edge = arrival_edge(&r, &n.id);
         }
         if n.kind == "Task" && n.skip {
             bypass_task(&mut r, &n);
@@ -1202,7 +1215,7 @@ pub(crate) async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
             "Task" => {
                 let (rt, model, provider, base_url) = runtime(&r, &n.agent)?;
                 let cmd = agents::resolve_command(&n.command, &rt, Path::new(&r.workspace))?;
-                let scope = "Strumenti completi: puoi leggere, scrivere, modificare file ed eseguire comandi necessari nel workspace. Rispetta lo scopo della fase SDD: prepara e correggi i documenti prima dell'implementazione, senza anticipare task futuri non richiesti.";
+                let scope = "Full tools: you can read, write and edit files and run the commands you need in the workspace. Respect the scope of the SDD phase: prepare and correct the documents before the implementation, without anticipating future tasks that were not requested.";
                 let handoff = r
                     .context
                     .remove(&format!("handoff:{}", n.agent))
@@ -1217,7 +1230,7 @@ pub(crate) async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
                     .unwrap_or_default();
                 let memory_instructions = memory_source_instructions(&r.workflow, &n);
                 let prompt = format!(
-                    "{cmd}\n{scope}\nBinding Agent: {}\n{}{memory_instructions}\n{}\nHandoff esplicito: {handoff}\nRisposte registrate: {answer}\nFinding da correggere in questo rework: {feedback}",
+                    "{cmd}\n{scope}\nAgent binding: {}\nStep instructions:\n{}{memory_instructions}\n{}\nExplicit handoff: {handoff}\nRecorded answers: {answer}\nFindings to fix in this rework: {feedback}",
                     n.agent,
                     n.prompt,
                     incoming(app, uid, &r)?
@@ -1254,7 +1267,7 @@ pub(crate) async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
                     if n.mode != "human" {
                         let (rt, model, provider, base_url) = runtime(&r, &n.agent)?;
                         let prompt = format!(
-                            "REVIEW. {}\n{}\nPuoi modificare i file ed eseguire i comandi necessari per verificare e correggere il lavoro. Riporta le modifiche e i test effettivi. Restituisci decision pass oppure rework.",
+                            "REVIEW. Step instructions:\n{}\n{}\nYou can edit files and run the commands needed to verify and correct the work. Report the actual changes and tests. Return decision pass or rework.",
                             n.prompt,
                             incoming(app, uid, &r)?
                         );
@@ -1357,7 +1370,7 @@ pub(crate) async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
                 }
                 let (rt, model, provider, base_url) = runtime(&r, &n.agent)?;
                 let prompt = format!(
-                    "GATE decisionale con strumenti completi. {}\n{}\nEsiti ammessi: {}. Usa esclusivamente un esito nel campo decision. Puoi modificare file ed eseguire comandi necessari; segnala ogni modifica e rivalida il risultato. Se manca una decisione umana usa status needs_input.",
+                    "Decision GATE with full tools. Step instructions:\n{}\n{}\nAllowed outcomes: {}. Put exactly one of these outcomes in the decision field. You can edit files and run the commands you need; report every change and validate the result again. If a human decision is missing, use status needs_input.",
                     n.prompt,
                     incoming(app, uid, &r)?,
                     n.outcomes.join(", ")
@@ -1554,7 +1567,7 @@ fn parallel_prompt(app: &App, uid: i64, branch: &Run, task: &Node, fork: &Node) 
             .unwrap_or_default()
     };
     Ok(format!(
-        "{}\n{}{memory_instructions}\n{}\nHandoff esplicito: {}\nChiarimento per i rami: {}\nTask parallelo: workspace condiviso, rispetta i file assegnati al tuo ramo.",
+        "{}\nStep instructions:\n{}{memory_instructions}\n{}\nExplicit handoff: {}\nClarification for the branches: {}\nParallel task: shared workspace, keep to the files assigned to your branch.",
         cmd,
         task.prompt,
         incoming(app, uid, branch)?,
@@ -1674,6 +1687,17 @@ async fn execute_parallel(app: &App, uid: i64, r: &mut Run, fork: &Node) -> Resu
             return pause_for(app, uid, r, "question", questions, Some(fork.id.clone()));
         }
     }
+    let joined = barrier_output(r, &branches)?;
+    r.outputs.insert(fork.target.clone(), joined);
+    r.states.insert(fork.id.clone(), "completed".into());
+    r.last_node = Some(fork.id.clone());
+    r.current = fork.target.clone();
+    r.active_edge = None;
+    save(app, uid, r)
+}
+
+/// The Join's result: the completed output of every branch Task. Skipped Tasks contribute nothing.
+pub(crate) fn barrier_output(r: &Run, branches: &[Vec<Node>]) -> Result<AgentResult> {
     let outputs: BTreeMap<_, _> = branches
         .iter()
         .flatten()
@@ -1690,19 +1714,11 @@ async fn execute_parallel(app: &App, uid: i64, r: &mut Run, fork: &Node) -> Resu
             Ok((n.id.clone(), output))
         })
         .collect::<Result<_>>()?;
-    r.outputs.insert(
-        fork.target.clone(),
-        AgentResult {
-            status: "completed".into(),
-            summary: serde_json::to_string(&outputs)?,
-            ..Default::default()
-        },
-    );
-    r.states.insert(fork.id.clone(), "completed".into());
-    r.last_node = Some(fork.id.clone());
-    r.current = fork.target.clone();
-    r.active_edge = None;
-    save(app, uid, r)
+    Ok(AgentResult {
+        status: "completed".into(),
+        summary: serde_json::to_string(&outputs)?,
+        ..Default::default()
+    })
 }
 
 fn rework_review(app: &App, uid: i64, r: &mut Run) -> Result<()> {
@@ -2095,6 +2111,67 @@ mod parallel_tests {
             ..Default::default()
         }
     }
+    #[tokio::test]
+    async fn a_step_answer_without_structured_result_gets_one_follow_up_without_a_new_attempt() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let app = crate::tests::app(dir.path());
+        app.store.update_settings(1, |s| {
+            s.agents.insert("codex".into(), AgentConfig { api_key: "test-codex".into(), ..Default::default() });
+            Ok(())
+        }).unwrap();
+        let tools = crate::distribution::tools(dir.path());
+        std::fs::create_dir_all(&tools).unwrap();
+        // Answers in plain text; the follow-up returns the block unless the step asks for "twice".
+        std::fs::write(tools.join("codex"), r#"#!/bin/sh
+prompt=$(cat)
+printf '%s\n' "$*" >> "$HOME/codex-calls.log"
+printf '%s\n' '{"type":"thread.started","thread_id":"step-session"}'
+case "$prompt" in
+  *"ended without the required <nodo_result> block"*)
+    if [ -f "$HOME/twice" ]; then printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"Still plain."}}'; exit 0; fi
+    printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"<nodo_result>{\"status\":\"completed\",\"summary\":\"Plan: A then B\",\"decision\":\"pass\"}</nodo_result>"}}' ;;
+  *CASE-TWICE*) touch "$HOME/twice"; printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"FULL PLAN"}}' ;;
+  *) printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"FULL PLAN: step A, then step B"}}' ;;
+esac
+"#).unwrap();
+        std::fs::set_permissions(tools.join("codex"), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let home = crate::agents::user_home(&app, 1).unwrap();
+        for (kind, prompt) in [("Task", "Plan the work"), ("Gate", "Decide"), ("Task", "CASE-TWICE plan")] {
+            let _ = std::fs::remove_file(home.join("codex-calls.log"));
+            let mut w: Workflow = serde_json::from_value(serde_json::json!({
+                "id":"follow-up", "name":"Follow-up", "description":"", "entry":"step",
+                "nodes":[{"id":"source","kind":"Source","source_type":"example"},
+                    {"id":"author","kind":"Agent","runtime":"codex"},
+                    {"id":"step","kind":kind,"agent":"author","prompt":prompt,"outcomes":["pass"]},
+                    {"id":"done","kind":"Task","agent":"author","skip":true}],
+                "edges":[{"from":"source","to":"author","kind":"context"},
+                    {"from":"author","to":"step","kind":"context"},{"from":"step","to":"done","kind":"control","outcome":"pass"}]
+            })).unwrap();
+            if kind == "Task" { w.edges.last_mut().unwrap().outcome.clear(); }
+            let r = create(&app, 1, w, "Request".into(), None).await.unwrap();
+            let result = drive(&app, 1, &r.id).await;
+            let saved = app.store.run(1, &r.id).unwrap();
+            let events = app.store.events(1, &r.id, 0).unwrap();
+            let calls = std::fs::read_to_string(home.join("codex-calls.log")).unwrap();
+            // Two turns, both recorded, the second resuming the same native session, one attempt.
+            assert_eq!(events.iter().filter(|e| e.kind == "agent_turn").count(), 2, "{prompt}");
+            assert_eq!(calls.lines().count(), 2, "{prompt}");
+            assert!(!calls.lines().next().unwrap().contains("resume") && calls.lines().nth(1).unwrap().contains("resume step-session"));
+            assert_eq!(saved.attempts["step"], 1);
+            if prompt.starts_with("CASE-TWICE") {
+                assert_eq!(result.unwrap_err().to_string(), "Risposta agente priva del risultato strutturato rightcommit. Riprendi nella stessa sessione con Retry.");
+                assert!(!saved.outputs.contains_key("step"));
+                continue;
+            }
+            result.unwrap();
+            assert_eq!(saved.status, "completed", "{prompt}");
+            let out = &saved.outputs["step"];
+            assert_eq!(out.summary, "Plan: A then B");
+            assert_eq!(out.details, "FULL PLAN: step A, then step B", "the text already written is kept");
+            assert_eq!(saved.sessions[if kind == "Gate" { "gate:step" } else { "author" }].turns, 1);
+        }
+    }
     #[test]
     fn rework_opens_a_correction_branch_that_changes_agent_only_through_memory() {
         let graph = |fixer: &str, memory: bool| -> Workflow {
@@ -2210,6 +2287,7 @@ mod parallel_tests {
             assert!(prompt.contains("Research request"));
             assert!(prompt.contains(&task.agent));
             assert!(prompt.contains("native model-private state is not copied"));
+            assert!(prompt.contains("Step instructions:\n") && prompt.contains("Parallel task: shared workspace, keep to the files assigned to your branch."));
         }
         r.states.insert("a".into(), "completed".into());
         r.outputs
@@ -2305,6 +2383,56 @@ mod parallel_tests {
             serde_json::from_str(package["source_output"]["summary"].as_str().unwrap()).unwrap();
         assert_eq!(results["a"]["summary"], "a");
         assert_eq!(results["b"]["summary"], "b");
+    }
+    #[tokio::test]
+    async fn step_wrappers_are_english_and_ask_for_the_language_of_the_step() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let app = crate::tests::app(dir.path());
+        app.store.update_settings(1, |s| {
+            s.agents.insert("codex".into(), AgentConfig { api_key: "test-codex".into(), ..Default::default() });
+            Ok(())
+        }).unwrap();
+        let tools = crate::distribution::tools(dir.path());
+        std::fs::create_dir_all(&tools).unwrap();
+        // Keeps every prompt it receives and passes every step.
+        std::fs::write(tools.join("codex"), r#"#!/bin/sh
+cat > "$HOME/prompt-$(date +%s%N)-$$.txt"
+printf '%s\n' '{"type":"thread.started","thread_id":"language-session"}'
+printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"<nodo_result>{\"status\":\"completed\",\"summary\":\"Done\",\"decision\":\"pass\"}</nodo_result>"}}'
+"#).unwrap();
+        std::fs::set_permissions(tools.join("codex"), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let w: Workflow = serde_json::from_value(serde_json::json!({
+            "id":"language", "name":"Language", "description":"", "entry":"write",
+            "nodes":[{"id":"source","kind":"Source","source_type":"example"},
+                {"id":"author","kind":"Agent","runtime":"codex"},{"id":"checker","kind":"Agent","runtime":"codex"},
+                {"id":"write","kind":"Task","agent":"author","prompt":"Write a one-line plan in English."},
+                {"id":"review","kind":"Review","mode":"agent","agent":"author","prompt":"Check the plan."},
+                {"id":"gate","kind":"Gate","agent":"author","prompt":"Is the plan complete?","outcomes":["pass"]},
+                {"id":"memory","kind":"Memory","agent":"write","target":"checker"},
+                {"id":"check","kind":"Task","agent":"checker","prompt":"Confirm the plan."}],
+            "edges":[{"from":"source","to":"author","kind":"context"},{"from":"source","to":"checker","kind":"context"},
+                {"from":"write","to":"review","kind":"control"},{"from":"review","to":"gate","kind":"control"},
+                {"from":"gate","to":"memory","kind":"control","outcome":"pass"},{"from":"memory","to":"check","kind":"control"}]
+        })).unwrap();
+        let r = create(&app, 1, w, "Plan the release".into(), None).await.unwrap();
+        drive(&app, 1, &r.id).await.unwrap();
+        assert_eq!(app.store.run(1, &r.id).unwrap().status, "completed");
+        let home = crate::agents::user_home(&app, 1).unwrap();
+        let prompts: Vec<String> = std::fs::read_dir(&home).unwrap().filter_map(|e| e.ok()).map(|e| e.path())
+            .filter(|p| p.file_name().unwrap().to_string_lossy().starts_with("prompt-"))
+            .map(|p| std::fs::read_to_string(p).unwrap()).collect();
+        assert_eq!(prompts.len(), 4, "Task, Review, Gate and the Task after Memory");
+        for prompt in &prompts {
+            assert!(prompt.contains(crate::agents::LANGUAGE), "every step asks for the language of its own instructions");
+            assert!(prompt.contains("Step instructions:\n") && prompt.contains("Original run request: Plan the release"));
+            for italian in ["GATE decisionale", "Strumenti completi", "Output precedente", "Richiesta originale", "Handoff esplicito", "Esiti ammessi", "Puoi modificare", "Passaggio di consegne"] {
+                assert!(!prompt.contains(italian), "{italian}");
+            }
+        }
+        assert!(prompts.iter().any(|p| p.contains("Decision GATE with full tools") && p.contains("Allowed outcomes: pass")));
+        assert!(prompts.iter().any(|p| p.contains("REVIEW. Step instructions:\nCheck the plan.")));
+        assert!(prompts.iter().any(|p| p.contains("Handoff through Memory") && p.contains("Write a one-line plan in English.")));
     }
     #[test]
     fn accepts_structured_parallel_tasks() {

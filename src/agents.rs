@@ -195,6 +195,92 @@ pub fn command(app: &App, uid: i64, bin: &str, cwd: &Path, settings: &Settings) 
     }
     Ok(c)
 }
+/// Whether this account's Project Manager also sees the environment of the rightcommit server,
+/// and its stdio MCP servers may take variables from it by name (`McpConfig::env_from_server`).
+/// Server environment configuration belongs to the first administrator; extending the
+/// inheritance to every account is a deliberate change of this one condition.
+pub(crate) fn manager_inherits_server_environment(uid: i64) -> bool {
+    uid == 1
+}
+/// The server's environment variables, as the administrator's Project Manager inherits them.
+pub(crate) fn server_environment() -> Vec<(String, String)> {
+    std::env::vars_os()
+        .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
+        .collect()
+}
+/// Variables the runtime's own CLI reads to authenticate or to choose where requests go.
+/// Only rightcommit's provider rules put them in the environment (see
+/// `resolve_provider_environment_for_user`); the server environment never adds or replaces one.
+/// Other providers' keys are not managed for Codex and Claude Code. Pi reaches every catalog
+/// provider, so all of their variables are Pi's own.
+fn provider_managed(runtime: &str, name: &str) -> bool {
+    let listed = |lists: &[&[&str]]| lists.iter().any(|list| list.contains(&name));
+    let prefixed = |prefixes: &[&str]| prefixes.iter().any(|prefix| name.starts_with(prefix));
+    listed(&[NETWORK_ENV])
+        || match runtime {
+            "claude" => prefixed(&["ANTHROPIC_", "CLAUDE_"]) || listed(&[CLAUDE_MODEL_ENV, AWS_ENV, VERTEX_ENV, FOUNDRY_ENV]),
+            // Codex native provider profiles can also use the AWS variables.
+            "codex" => prefixed(&["CODEX_", "OPENAI_"]) || (name.starts_with("AWS_") && listed(&[AWS_ENV])),
+            "pi" => {
+                prefixed(&["PI_", "ANTHROPIC_", "OPENAI_"])
+                    || listed(&[HOST_SECRETS])
+                    || crate::pi_providers::catalog().iter().any(|provider| provider.env.iter().any(|env| env == name))
+            }
+            _ => true,
+        }
+}
+/// The variables a command sets or removes, the names a server value must not replace.
+fn command_variables(c: &Command) -> Vec<String> {
+    c.as_std().get_envs().filter_map(|(name, _)| name.to_str().map(str::to_owned)).collect()
+}
+/// Whether rightcommit decides this variable for a command with these variables: one of them
+/// or its family (GIT_*, XDG_*, CARGO_*, CODEX_*, CLAUDE_*, PI_* ...; LC_* override LANG), or
+/// the server's own working directory.
+fn owned_by_command(owned: &[String], name: &str) -> bool {
+    ["PWD", "OLDPWD"].contains(&name)
+        || name.starts_with("LC_")
+        || owned.iter().any(|set| set == name || set.find('_').is_some_and(|end| name.starts_with(&set[..=end])))
+}
+/// Adds the server environment to a Project Manager process without replacing what
+/// rightcommit decides: every variable the command already sets or removes and its family
+/// (GIT_*, XDG_*, CARGO_*, CODEX_*, CLAUDE_*, PI_* ...; LC_* override LANG), the server's own
+/// working directory, and the provider variables of the runtime.
+pub(crate) fn inherit_server_environment(c: &mut Command, runtime: &str, server: &[(String, String)]) {
+    let owned = command_variables(c);
+    for (name, value) in server {
+        if !name.is_empty() && !owned_by_command(&owned, name) && !provider_managed(runtime, name) {
+            c.env(name, value);
+        }
+    }
+}
+/// Whether a stdio MCP server command may not take this variable from the server environment
+/// (`McpConfig::env_from_server`). The same rule as `inherit_server_environment`: rightcommit
+/// decides every variable the command sets and its family and, when the command is an agent CLI,
+/// that runtime's provider variables. Call it before the configuration's own `env` is added.
+pub(crate) fn server_variable_reserved(c: &Command, bin: &str, name: &str) -> bool {
+    owned_by_command(&command_variables(c), name) || (["claude", "codex", "pi"].contains(&bin) && provider_managed(bin, name))
+}
+/// Whether a variable name looks like it holds a secret.
+pub(crate) fn secret_name(name: &str) -> bool {
+    let name = name.to_ascii_uppercase();
+    ["KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL"].iter().any(|word| name.contains(word))
+}
+/// Hides values of server variables whose names look secret, in addition to `redact`.
+/// Short values are kept: replacing a common short word everywhere would garble the output.
+pub(crate) fn redact_server_secrets(text: &str, server: &[(String, String)]) -> String {
+    redact_values(text, server.iter().filter(|(name, _)| secret_name(name)).map(|(_, value)| value.as_str()))
+}
+/// Replaces each value of 8 characters or more with `[redacted]`; shorter values are kept.
+pub(crate) fn redact_values<'a>(text: &str, values: impl IntoIterator<Item = &'a str>) -> String {
+    let mut values: Vec<&str> = values.into_iter().filter(|value| value.chars().count() >= 8).collect();
+    // Longest first: a short value must not break up a longer one that contains it.
+    values.sort_by_key(|value| std::cmp::Reverse(value.len()));
+    let mut text = text.to_string();
+    for value in values {
+        text = text.replace(value, "[redacted]");
+    }
+    text
+}
 // Only provider variables reach agent processes. HOME/PATH and CLI state stay app-owned.
 const CLAUDE_MODEL_ENV: &[&str] = &[
     "ANTHROPIC_MODEL",
@@ -801,13 +887,14 @@ pub fn resolve_command(command: &str, runtime: &str, workspace: &Path) -> Result
     )
 }
 
-const CONTRACT: &str = r#"
+pub(crate) const CONTRACT: &str = r#"
 rightcommit orchestration contract (highest priority for the final answer format only):
 Work in the repository. When the task names an installed skill or command (Spec Kit, OpenSpec or another framework), actually read and execute its instructions; never claim an action or test without doing it. Keep output concise. This is a small library, keep the implementation small.
 All turns have read, write, edit and shell tools in this execution workspace, including Analyze, Review and Gate. Restrictions stated in earlier turns no longer apply. Perform the required actions with the tools available now; do not report a read-only limitation from memory.
 If a skill requires an unanswered human decision, do not invent a choice or wait on terminal stdin. End this turn with status needs_input and explicit questions. The human response will arrive in the SAME native conversation.
 At the END of your final response emit exactly one JSON object between <nodo_result> and </nodo_result>:
-<nodo_result>{"status":"completed|needs_input|blocked","summary":"short factual report","questions":[],"artifacts":["relative/path"],"decision":""}</nodo_result>
+<nodo_result>{"status":"completed|needs_input|blocked","summary":"the result itself in short form","details":"the long form, or empty","questions":[],"artifacts":["relative/path"],"decision":""}</nodo_result>
+summary is what people see first and what the next steps receive first, so it must contain the result itself in short form: the answer, the decision and its reason, the key points of the plan, the changes made and the tests actually run. Never describe what you produced instead of giving it: "Plan provided", "One-line plan provided" or "See the answer above" are wrong. details holds the long form (the full answer, report or evidence) and may be left empty when summary says everything; text before <nodo_result> is used as details when details is empty. An instruction such as "only the output", "nothing else" or "no explanations" limits the content of summary and details; it never removes the <nodo_result> block.
 Do not include hidden reasoning. Native session continuity is managed externally; never launch a nested coding agent. Do not read credential files. Do not push, merge, deploy, or contact a ticket system: Connection nodes perform those actions separately.
 "#;
 
@@ -889,6 +976,21 @@ pub(crate) fn public_agent_failure(detail: &str) -> &'static str {
 
 const LOCAL_TURN_TIMEOUT: &str = "Turno interrotto o scaduto; la sessione salvata resta disponibile per un riesame manuale";
 const MISSING_STRUCTURED_RESULT: &str = "Risposta agente priva del risultato strutturato rightcommit. Riprendi nella stessa sessione con Retry.";
+/// The one follow-up turn asked when an answer ends without its structured result.
+pub(crate) const STRUCTURED_RESULT_FOLLOW_UP: &str = "Your previous answer in this conversation ended without the required <nodo_result> block. Do not do any new work, do not use tools and do not change or repeat that answer: rightcommit keeps the text you already wrote. Reply now with only the <nodo_result> block for the answer you just gave, following the format below, with every structured field that answer needs (status, decision, questions, artifacts and, where the format asks for it, details). Its summary states the result itself in short form, not a description of it.";
+
+/// An answer that ended without a readable structured result. Shown as `MISSING_STRUCTURED_RESULT`;
+/// it carries the redacted text of the answer for the single follow-up turn.
+#[derive(Debug)]
+struct MissingStructuredResult(String);
+
+impl std::fmt::Display for MissingStructuredResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(MISSING_STRUCTURED_RESULT)
+    }
+}
+
+impl std::error::Error for MissingStructuredResult {}
 
 fn is_timeout(text: &str) -> bool {
     text.contains("timeout") || text.contains("timed out")
@@ -949,6 +1051,9 @@ pub(crate) fn explain_agent_failure(runtime: &str, detail: String) -> String {
         detail
     }
 }
+
+/// rightcommit's own instructions are English; the answer follows the people's language.
+pub(crate) const LANGUAGE: &str = "Language: write your answer, summary, details and questions in the language of the human-written content of this turn (the user's message, or the step's own instructions and the run request), not in the language of rightcommit's instructions around it, which are always English. When those human-written parts use different languages, follow the step's own instructions. Keep machine-read values exactly as specified: status, decision and outcome names, JSON keys, IDs, tags and paths.";
 
 pub(crate) fn pi_arguments(
     session: &NativeSession,
@@ -1036,11 +1141,38 @@ pub(crate) fn validate_pi_model(runtime: &str, model: &str) -> Result<()> {
     Ok(())
 }
 pub async fn turn(app: &App, uid: i64, run: &mut Run, request: Turn<'_>) -> Result<AgentResult> {
-    let result = turn_once(app, uid, run, request).await;
+    let mut result = turn_once(app, uid, run, request).await;
     if result.as_ref().is_err_and(|error| error.is::<RetryablePiTimeout>()) {
-        return turn_once(app, uid, run, request).await;
+        result = turn_once(app, uid, run, request).await;
     }
-    result
+    // An answer without its structured result gets ONE follow-up turn in the same native session,
+    // asking only for the block. The follow-up is never followed up: if it fails too, the first
+    // error stands. Attempts and rework counts are the caller's and do not change.
+    let answer = match &result {
+        Err(error) => match error.downcast_ref::<MissingStructuredResult>() {
+            Some(missing) => missing.0.split("<nodo_result>").next().unwrap_or_default().trim().to_owned(),
+            None => return result,
+        },
+        Ok(_) => return result,
+    };
+    emit(app, uid, &run.id, "activity", &run.current, &serde_json::json!({"runtime":request.runtime,"phase":"result_follow_up"}).to_string());
+    let Ok(mut out) = turn_once(app, uid, run, Turn { prompt: STRUCTURED_RESULT_FOLLOW_UP, ..request }).await else {
+        return result;
+    };
+    Ok(if answer.is_empty() {
+        out
+    } else if request.binding == crate::manager::BINDING {
+        // The manager's reply is its summary: show the text the user asked for.
+        out.summary = answer;
+        out
+    } else {
+        if out.details.trim().is_empty() {
+            let mut chars = answer.chars();
+            out.details = chars.by_ref().take(16_000).collect();
+            out.details_truncated = chars.next().is_some();
+        }
+        out
+    })
 }
 
 async fn turn_once(app: &App, uid: i64, run: &mut Run, request: Turn<'_>) -> Result<AgentResult> {
@@ -1096,10 +1228,13 @@ runtime: runtime.into(),
     let mut settings = app.store.settings(uid)?; // OAuth may have refreshed during MCP preparation.
     settings.agents.insert(runtime.into(),cfg.clone());
     let read_only = supervising || (managing && !settings.manager_write_enabled);
+    // The administrator's Project Manager also sees the server environment; workflow runs never do.
+    let inherited = if managing && manager_inherits_server_environment(uid) {server_environment()} else {Vec::new()};
     let redact_turn = |value: &str| {
-        let text = redact_for_user(app, uid, value, &settings);
+        let text = redact_server_secrets(&redact_for_user(app, uid, value, &settings), &inherited);
         if let Some(mcp) = &mcp {
-            text.replace(mcp.token(), "[redacted]")
+            // Server variables passed to the run's MCP servers never reach run evidence.
+            redact_values(&text, mcp.server_values()).replace(mcp.token(), "[redacted]")
         } else {
             text
         }
@@ -1111,6 +1246,7 @@ runtime: runtime.into(),
     }
     crate::compaction::configure(app, uid, runtime, &settings, &mut cmd)?;
     if runtime == "pi" {crate::pi_local::configure(app,uid,&settings,&session.model,&mut cmd)?;}
+    inherit_server_environment(&mut cmd, runtime, &inherited);
     match runtime {
         "codex" => {
             cmd.arg("--no-daemon");
@@ -1278,7 +1414,7 @@ runtime: runtime.into(),
     } else if managing {
         crate::manager::CONTRACT
     } else if supervising {
-        r#"Return only <nodo_result>{"status":"completed|blocked","summary":"brief evidence-based rationale","details":"concrete answer or review feedback","questions":[],"artifacts":[],"decision":"answer|approve|reject"}</nodo_result>. Do not include hidden reasoning. You are a decision-only supervisor with read tools. Do not modify files, run another agent, contact external systems or read credentials. Preserve your native session."#
+        r#"Return only <nodo_result>{"status":"completed|blocked","summary":"the reason itself, brief and evidence-based","details":"the concrete answer or review feedback itself","questions":[],"artifacts":[],"decision":"answer|approve|reject"}</nodo_result>. Write the reason and the answer themselves, never a description of them such as "Answer provided". Do not include hidden reasoning. You are a decision-only supervisor with read tools. Do not modify files, run another agent, contact external systems or read credentials. Preserve your native session."#
     } else {
         CONTRACT
     };
@@ -1294,7 +1430,9 @@ runtime: runtime.into(),
     let manager_context = if managing {
         format!("Current authenticated account and permanent implementation directories: {}. These paths belong to this account; do not assume user ID 1 or use another account's home. Directory availability does not override the current permissions below.", crate::manager::implementation_context(app, uid))
     } else { String::new() };
-    let full = format!("{prompt}\n\n{contract}\n\n{manager_context}\n\n{permissions}");
+    // The catalog assistant writes both locales on purpose.
+    let language = if template_assistant { "" } else { LANGUAGE };
+    let full = format!("{prompt}\n\n{contract}\n\n{language}\n\n{manager_context}\n\n{permissions}");
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -1534,7 +1672,10 @@ runtime: runtime.into(),
             })
         ))
     );
-    let result = parse_result(&redact_turn(&text))?;
+    let text = redact_turn(&text);
+    let result = parse_result(&text).map_err(|error| {
+        if error.to_string() == MISSING_STRUCTURED_RESULT { MissingStructuredResult(text.clone()).into() } else { error }
+    })?;
     session.turns += 1;
     run.sessions.insert(binding.into(), session);
     if managing {
@@ -1793,5 +1934,182 @@ mod pi_readiness_tests {
     #[test]
     fn model_is_required_before_pi_launch() {
         assert!(validate_pi_model("pi","").is_err());assert!(validate_pi_model("pi","  ").is_err());assert!(validate_pi_model("pi","configured-model").is_ok());assert!(validate_pi_model("codex","").is_ok());
+    }
+}
+
+#[cfg(test)]
+mod server_environment_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn server(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs.iter().map(|(name, value)| (name.to_string(), value.to_string())).collect()
+    }
+    fn environment(c: &Command) -> BTreeMap<String, Option<String>> {
+        c.as_std()
+            .get_envs()
+            .map(|(name, value)| (name.to_string_lossy().into_owned(), value.map(|v| v.to_string_lossy().into_owned())))
+            .collect()
+    }
+    fn manager(app: &App, runtime: &str, config: AgentConfig, inherited: &[(String, String)]) -> BTreeMap<String, Option<String>> {
+        let mut settings = Settings::default();
+        settings.agents.insert(runtime.into(), config);
+        let home = user_home(app, 1).unwrap();
+        let mut c = command(app, 1, runtime, &home, &settings).unwrap();
+        inherit_server_environment(&mut c, runtime, inherited);
+        environment(&c)
+    }
+    fn value<'a>(env: &'a BTreeMap<String, Option<String>>, name: &str) -> Option<&'a str> {
+        env.get(name).and_then(|value| value.as_deref())
+    }
+
+    /// Every name the provider rules read must stay out of the inherited environment, so a
+    /// new name in those rules fails here until it is managed.
+    #[test]
+    fn every_name_the_provider_rules_read_is_managed() {
+        let recorded = std::cell::RefCell::new(std::collections::BTreeSet::<String>::new());
+        for runtime in ["claude", "codex", "pi"] {
+            recorded.borrow_mut().clear();
+            let mut configs = vec![AgentConfig::default(), AgentConfig { api_key: "test-personal-key".into(), ..Default::default() }];
+            if runtime == "pi" {
+                configs = crate::pi_providers::catalog()
+                    .iter()
+                    .flat_map(|provider| [false, true].map(|multi_provider| AgentConfig { provider: provider.id.clone(), api_key: "test-personal-key".into(), multi_provider, ..Default::default() }))
+                    .collect();
+            }
+            for cfg in &configs {
+                for present in [false, true] {
+                    resolve_provider_environment_for_user(1, runtime, cfg, |name| {
+                        recorded.borrow_mut().insert(name.to_string());
+                        present.then(|| "1".to_string())
+                    });
+                }
+            }
+            if runtime == "codex" {
+                // provider_environment_in_home adds these for native Codex provider profiles.
+                recorded.borrow_mut().extend(AWS_ENV.iter().filter(|name| name.starts_with("AWS_")).map(|name| name.to_string()));
+            }
+            let names = recorded.borrow().clone();
+            assert!(names.len() > 3, "{runtime}: the probe must reach the provider rules");
+            let leaked: Vec<_> = names.iter().filter(|name| !provider_managed(runtime, name)).collect();
+            assert!(leaked.is_empty(), "{runtime} would inherit managed variables: {leaked:?}");
+
+            // The same names through a real command: today's outcome, whatever the server holds.
+            let dir = tempfile::tempdir().unwrap();
+            let app = crate::tests::app(dir.path());
+            let config = AgentConfig { provider: "anthropic".into(), model: "test-model".into(), api_key: "test-personal-key".into(), ..Default::default() };
+            let mut settings = Settings::default();
+            settings.agents.insert(runtime.into(), config);
+            let home = user_home(&app, 1).unwrap();
+            let before = environment(&command(&app, 1, runtime, &home, &settings).unwrap());
+            let fake: Vec<_> = names.iter().map(|name| (name.clone(), "test-only-server-value".to_string())).collect();
+            let mut c = command(&app, 1, runtime, &home, &settings).unwrap();
+            inherit_server_environment(&mut c, runtime, &fake);
+            assert!(environment(&c) == before, "{runtime}: a managed variable changed");
+        }
+    }
+
+    #[test]
+    fn codex_manager_sees_other_keys_and_custom_variables_but_keeps_its_own_rules() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = crate::tests::app(dir.path());
+        let home = user_home(&app, 1).unwrap();
+        let inherited = server(&[
+            ("GEMINI_API_KEY", "test-only-gemini-value"),
+            ("MY_SERVICE_URL", "https://service.test"),
+            ("NODO_CONNECTOR_HOSTS", "example.test"),
+            ("OPENAI_BASE_URL", "https://gateway.test/v1"),
+            ("CODEX_ACCESS_TOKEN", "test-only-codex-access"),
+            ("OPENAI_API_KEY", "test-only-openai-value"),
+            ("AWS_ACCESS_KEY_ID", "test-only-aws-id"),
+            ("HOME", "/elsewhere"),
+            ("CODEX_HOME", "/elsewhere/.codex"),
+            ("PATH", "/elsewhere/bin"),
+            ("GIT_DIR", "/elsewhere/.git"),
+            ("XDG_CACHE_HOME", "/elsewhere/.cache"),
+            ("LC_ALL", "C"),
+            ("PWD", "/elsewhere"),
+        ]);
+        let env = manager(&app, "codex", AgentConfig { api_key: "test-personal-codex".into(), ..Default::default() }, &inherited);
+        assert_eq!(value(&env, "GEMINI_API_KEY"), Some("test-only-gemini-value"));
+        assert_eq!(value(&env, "MY_SERVICE_URL"), Some("https://service.test"));
+        assert_eq!(value(&env, "NODO_CONNECTOR_HOSTS"), Some("example.test"));
+        assert_eq!(value(&env, "CODEX_API_KEY"), Some("test-personal-codex"));
+        for name in ["OPENAI_BASE_URL", "CODEX_ACCESS_TOKEN", "OPENAI_API_KEY", "AWS_ACCESS_KEY_ID", "GIT_DIR", "XDG_CACHE_HOME", "LC_ALL", "PWD"] {
+            assert_eq!(value(&env, name), None, "{name}");
+        }
+        assert_eq!(value(&env, "HOME"), Some(home.to_str().unwrap()));
+        assert_eq!(value(&env, "CODEX_HOME"), Some(home.join(".codex").to_str().unwrap()));
+        assert_ne!(value(&env, "PATH"), Some("/elsewhere/bin"));
+    }
+
+    #[test]
+    fn claude_manager_with_a_personal_key_gets_no_gateway_or_subscription() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = crate::tests::app(dir.path());
+        let inherited = server(&[
+            ("ANTHROPIC_BASE_URL", "https://gateway.test"),
+            ("ANTHROPIC_CUSTOM_HEADERS", "Authorization: Bearer test-only-header"),
+            ("CLAUDE_CODE_OAUTH_TOKEN", "test-only-subscription"),
+            ("ANTHROPIC_AUTH_TOKEN", "test-only-bearer"),
+            ("CLAUDE_CODE_USE_BEDROCK", "1"),
+            ("AWS_ACCESS_KEY_ID", "test-only-aws-id"),
+            ("GOOGLE_APPLICATION_CREDENTIALS", "/elsewhere/key.json"),
+            ("GEMINI_API_KEY", "test-only-gemini-value"),
+            ("OPENAI_API_KEY", "test-only-openai-value"),
+            ("CLAUDE_CONFIG_DIR", "/elsewhere/.claude"),
+        ]);
+        let env = manager(&app, "claude", AgentConfig { api_key: "test-personal-claude".into(), ..Default::default() }, &inherited);
+        assert_eq!(value(&env, "ANTHROPIC_API_KEY"), Some("test-personal-claude"));
+        for name in ["ANTHROPIC_BASE_URL", "ANTHROPIC_CUSTOM_HEADERS", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "AWS_ACCESS_KEY_ID", "GOOGLE_APPLICATION_CREDENTIALS"] {
+            assert_eq!(value(&env, name), None, "{name}");
+        }
+        assert_eq!(value(&env, "GEMINI_API_KEY"), Some("test-only-gemini-value"));
+        assert_eq!(value(&env, "OPENAI_API_KEY"), Some("test-only-openai-value"));
+        assert_eq!(value(&env, "CLAUDE_CONFIG_DIR"), Some(user_home(&app, 1).unwrap().join(".claude").to_str().unwrap()));
+    }
+
+    #[test]
+    fn pi_manager_on_anthropic_gets_no_subscription_token_or_other_provider_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = crate::tests::app(dir.path());
+        let inherited = server(&[
+            ("ANTHROPIC_AUTH_TOKEN", "test-only-bearer"),
+            ("ANTHROPIC_OAUTH_TOKEN", "test-only-oauth"),
+            ("CLAUDE_CODE_OAUTH_TOKEN", "test-only-subscription"),
+            ("GEMINI_API_KEY", "test-only-gemini-value"),
+            ("PI_LOCAL_BASE_URL", "http://127.0.0.1:1/v1"),
+            ("MY_SERVICE_URL", "https://service.test"),
+        ]);
+        let config = AgentConfig { provider: "anthropic".into(), model: "test-model".into(), api_key: "test-personal-pi".into(), ..Default::default() };
+        let env = manager(&app, "pi", config, &inherited);
+        assert_eq!(value(&env, "ANTHROPIC_API_KEY"), Some("test-personal-pi"));
+        for name in ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_OAUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "GEMINI_API_KEY", "PI_LOCAL_BASE_URL"] {
+            assert_eq!(value(&env, name), None, "{name}");
+        }
+        assert_eq!(value(&env, "MY_SERVICE_URL"), Some("https://service.test"));
+    }
+
+    #[test]
+    fn only_the_first_administrator_manager_inherits() {
+        assert!(manager_inherits_server_environment(1));
+        assert!(!manager_inherits_server_environment(2));
+    }
+
+    #[test]
+    fn secret_looking_server_values_are_redacted() {
+        let inherited = server(&[
+            ("MY_SERVICE_TOKEN", "test-only-service-token"),
+            ("db_Password", "test-only-db-pass"),
+            ("Deploy_Credentials", "test-only-credential"),
+            ("SHORT_KEY", "abc123"),
+            ("PUBLIC_URL", "https://service.test/public"),
+        ]);
+        let text = "token=test-only-service-token pass=test-only-db-pass cred=test-only-credential short=abc123 url=https://service.test/public";
+        assert_eq!(
+            redact_server_secrets(text, &inherited),
+            "token=[redacted] pass=[redacted] cred=[redacted] short=abc123 url=https://service.test/public"
+        );
+        assert_eq!(redact_server_secrets(text, &[]), text);
     }
 }

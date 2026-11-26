@@ -478,6 +478,9 @@ pub struct McpConfig {
     pub command: String,
     pub args: Vec<String>,
     pub env: BTreeMap<String, String>,
+    /// stdio only: names of variables passed from the rightcommit server's own environment at
+    /// launch. Values are read when the server starts and never saved (first administrator only).
+    pub env_from_server: Vec<String>,
     pub headers: BTreeMap<String, String>,
     pub timeout_secs: u64,
     pub auth: McpAuth,
@@ -491,6 +494,7 @@ impl Default for McpConfig {
             command: String::new(),
             args: vec![],
             env: BTreeMap::new(),
+            env_from_server: vec![],
             headers: BTreeMap::new(),
             timeout_secs: 60,
             auth: McpAuth::default(),

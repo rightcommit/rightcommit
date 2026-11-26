@@ -203,15 +203,94 @@ provider authorization and credential scope still apply.
 
 The settings take API keys, not Claude Pro/Max or ChatGPT subscriptions, and the app has no
 Claude or ChatGPT sign-in. The administrator can run Claude Code on their own Claude subscription
-with a token in `.env`; every other user needs an API key.
+with a token in `.env`, and with a native install you can sign in to Codex yourself in the folder
+rightcommit uses for your account; everyone else needs an API key.
 
 | Agent | What you need | Guide |
 |---|---|---|
 | Claude Code | An Anthropic API key from the Claude Console, or a gateway, Amazon Bedrock, Google Vertex AI or Microsoft Foundry set up by the administrator. Only the administrator can use their own Claude subscription, through `CLAUDE_CODE_OAUTH_TOKEN` in `.env`; the API key field refuses subscription tokens. | [HOW_TO_CONFIGURE_CLAUDECODE.md](HOW_TO_CONFIGURE_CLAUDECODE.md) |
-| Codex | An OpenAI platform API key, or a compatible provider set up by the administrator. No ChatGPT sign-in. | [HOW_TO_CONFIGURE_CODEX.md](HOW_TO_CONFIGURE_CODEX.md) |
+| Codex | An OpenAI platform API key, or a compatible provider set up by the administrator. The app has no ChatGPT sign-in; you can run `codex login` in your account's Codex folder, with a native install or inside the Docker or Podman container, as the guide explains. | [HOW_TO_CONFIGURE_CODEX.md](HOW_TO_CONFIGURE_CODEX.md) |
 | Pi | An API key or cloud credentials for the selected provider (Anthropic, OpenAI, Gemini and more). With Anthropic, Claude subscription tokens are refused. | [HOW_TO_CONFIGURE_PI.md](HOW_TO_CONFIGURE_PI.md) |
 | Pi with OpenRouter | An OpenRouter API key with credit. | [HOW_TO_CONFIGURE_PI_OPENROUTER.md](HOW_TO_CONFIGURE_PI_OPENROUTER.md) |
 | Pi with a local model | A model server on your computer (Ollama, LM Studio, vLLM). No API key. | [HOW_TO_CONFIGURE_PI_LOCAL.md](HOW_TO_CONFIGURE_PI_LOCAL.md) |
+
+### Agents and the server environment
+
+Agents in workflow runs, Test connection and stdio MCP servers start with a clean
+environment: rightcommit's own base variables (such as `HOME`, `PATH` and the agent's
+configuration folder) plus the provider variables described in each agent's guide. A stdio
+MCP server also gets the variables in its own configuration and, for the first administrator,
+the server variables its configuration names (see below), and nothing else.
+
+The **Project Manager of the first administrator (ID 1)** also inherits the rest of the
+environment of the rightcommit server process, including the variables loaded from `.env`,
+so the MCP servers and scripts it writes can be tested with them. It does not inherit:
+
+- the variables rightcommit sets itself, and their families (`HOME`, `USER`, `PATH`, `TMPDIR`,
+  `LANG` and `LC_*`, `XDG_*`, `GIT_*`, `CARGO_*`, `RUSTUP_*`, `CODEX_*`, `CLAUDE_*`, `PI_*`, `SPECKIT_*`),
+  or the server's `PWD`;
+- the authentication and routing variables of the agent the manager runs on, which keep
+  following the rules in its guide: for Claude Code `ANTHROPIC_*`, `CLAUDE_*` and the AWS,
+  Vertex and Foundry variables; for Codex `OPENAI_*`, `CODEX_*` and the AWS variables; for Pi
+  every variable of its provider catalog. A personal API key therefore still excludes a global
+  gateway or subscription token, and Pi still never gets a Claude subscription token;
+- the proxy and certificate variables (`HTTP_PROXY`, `SSL_CERT_FILE`...), which every agent
+  already receives as they are.
+
+Other providers' keys are inherited: a Project Manager running on Codex sees
+`GEMINI_API_KEY` if the server has it. Values of server variables whose name contains
+`KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `PASSWD` or `CREDENTIAL` (8 characters or longer) are
+replaced with `[redacted]` in the manager's replies. Other accounts' Project Managers keep the
+clean environment. With Docker or Podman, only the variables passed into the container
+exist: `compose.yaml` lists them, and a variable of your own needs an `environment:` entry
+or an `env_file`. Codex can filter further what its shell commands see through
+`shell_environment_policy` in the account's `config.toml`.
+
+The Project Manager can run commands, so anything in the server environment can reach the
+model provider or the files it writes. Start rightcommit with only the variables you are
+willing to expose to it.
+
+#### MCP servers that take variables from the server environment
+
+The first administrator can give a stdio MCP server variables from the rightcommit server's
+own environment by name, so a token set in `.env` (or in the container's environment) is
+never copied into the settings. In **Personal settings → MCP**, edit the server and write the
+names in **Variables from the server environment**, one per line. The field is shown only to
+account ID 1.
+
+- rightcommit reads the values each time it starts the server, in a workflow run and with
+  Test connection, and never saves them. Settings show only the names. In the output of runs
+  that use the server, values of 8 characters or longer are replaced with `[redacted]`.
+- A variable that is missing or empty stops the start with an error that names it. Add it to
+  the server environment and restart rightcommit.
+- Names are letters, digits and `_`, not starting with a digit, at most 20 per server. A name
+  can be in **Environment variables** or in this field, not in both.
+- The variables rightcommit sets for the server process and their families are refused:
+  `HOME`, `USER`, `PATH`, `TMPDIR`, `LANG` and `LC_*`, `PWD`, `XDG_*`, `GIT_*`, `CARGO_*`,
+  `RUSTUP_*`, `CODEX_*`, `CLAUDE_*`, `PI_*`, `SPECKIT_*`, and the loader variables (`LD_*`,
+  `DYLD_*` ...). When the command is `codex`, `claude` or `pi`, that agent's provider variables
+  are refused too.
+- Other accounts cannot save such names, and a name written into their settings by other means
+  is refused when the server starts.
+
+With Docker or Podman, only the variables passed into the container exist (see above).
+
+#### MCP servers the Project Manager writes
+
+After the Project Manager has written an MCP server in your account's folder and verified that
+it starts, it can propose to register it. The chat shows **Proposed MCP server registration**;
+**Review and register** shows exactly what will be saved: ID, name, command, arguments, the
+literal environment variables and the names of the variables taken from the server
+environment. Nothing is saved until you choose **Register server**. The entry then goes
+through the same checks as a server added in Personal settings, such as the limit of 30
+servers and the settings revision. When a server with the same ID exists, the review says so
+and the button becomes **Replace server**; it is never replaced without that confirmation.
+
+A proposal never carries secret values: one whose literal variables look like a secret (the
+name contains `KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `PASSWD` or `CREDENTIAL`) is refused and
+the manager is asked to correct it. For the first administrator it names those variables
+among the variables from the server environment; for other accounts it leaves them empty and
+tells you which ones to fill in under Personal settings → MCP after registering.
 
 ## Documentation
 

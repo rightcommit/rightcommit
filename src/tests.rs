@@ -150,6 +150,21 @@ fn structured_results_fail_closed() {
     assert!(agents::parse_result("{\"status\":\"approved_by_human\"}").is_err());
 }
 #[test]
+fn contracts_ask_for_the_result_itself_in_summary() {
+    // Workflow steps: summary carries the result, details the long form, and the block stays.
+    assert!(agents::CONTRACT.contains(r#""summary":"the result itself in short form","details":"the long form, or empty""#));
+    assert!(agents::CONTRACT.contains("must contain the result itself in short form"));
+    assert!(agents::CONTRACT.contains("Never describe what you produced instead of giving it"));
+    assert!(agents::CONTRACT.contains("it never removes the <nodo_result> block"));
+    // Project Manager: the reply is the summary itself.
+    assert!(crate::manager::CONTRACT.contains("summary is your reply itself"));
+    assert!(crate::manager::CONTRACT.contains("never a description of it"));
+    // What the next step receives: the whole output, details included.
+    let out = agents::parse_result("Long form\n<nodo_result>{\"status\":\"completed\",\"summary\":\"Short form\"}</nodo_result>").unwrap();
+    assert_eq!((out.summary.as_str(), out.details.as_str()), ("Short form", "Long form"));
+    assert!(serde_json::to_string(&out).unwrap().contains("Long form"));
+}
+#[test]
 fn report_truncation_counts_unicode_characters_and_only_marks_copied_text() {
     let boundary = "à".repeat(16_000);
     let result = r#"<nodo_result>{"status":"completed"}</nodo_result>"#;

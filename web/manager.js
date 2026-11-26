@@ -14,7 +14,7 @@
  let inputWidth=0;
  const inputObserver=new ResizeObserver(entries=>{for(const entry of entries){if(entry.contentRect.width!==inputWidth){inputWidth=entry.contentRect.width;resizeInput(entry.target)}}});
  const key=()=>`${app.user?.id}:${currentWorkflow()?.id}:${app.run?.id||'design'}`;
- const data=()=>{if(!cache.has(scope))cache.set(scope,{messages:[],input:'',busy:false,version:0,proposal:null,undo:null,error:'',proposalKind:'edit'});return cache.get(scope)};
+ const data=()=>{if(!cache.has(scope))cache.set(scope,{messages:[],input:'',busy:false,version:0,proposal:null,registration:null,undo:null,error:'',proposalKind:'edit'});return cache.get(scope)};
  const labels={
  'minimize-2':['Riduci intestazione manager','Nasconde la faccina per lasciare più spazio ai messaggi della chat.'],
  'maximize-2':['Espandi intestazione manager','Mostra di nuovo la faccina del manager.'],
@@ -119,6 +119,8 @@
  function activityHtml(state){
   const item=(state.activity||[]).at(-1);
   if(state.stopping||!item)return `<p class="manager-thinking">${icon('loader-circle')}<span>${state.stopping?'Interruzione in corso…':'Il manager sta analizzando il contesto…'}</span></p>`;
+  // The answer ended without the structured result: the same session is asked for it once more.
+  if(item.phase==='result_follow_up')return `<p class="manager-thinking manager-activity-line">${icon('loader-circle')}<span>Risultato strutturato mancante: richiesto all’agente</span></p>`;
   const verb=toolVerbs[String(item.tool).toLowerCase().replace(/[^a-z]/g,'')],detail=toolDetail(item.detail);
   return `<p class="manager-thinking manager-activity-line">${icon('loader-circle')}<span>${verb?esc(verb):`Usa lo strumento <code data-no-i18n>${esc(item.tool)}</code>`}</span>${detail?`<code data-no-i18n title="${esc(item.detail)}">${esc(detail)}</code>`:''}</p>`;
  }
@@ -140,7 +142,7 @@
   try{
    const result=await api('/manager/chat/rewind',{workflow_id:currentWorkflow().id,run_id:app.run?.id||null,index});
    if(scope!==current)return;
-   state.messages=result.messages;state.conversationId=result.conversation_id;state.proposal=null;state.warning=null;state.notice='';state.error='';state.input=result.message;state.version++;
+   state.messages=result.messages;state.conversationId=result.conversation_id;state.proposal=null;state.registration=null;state.warning=null;state.notice='';state.error='';state.input=result.message;state.version++;
    renderChat();$('#manager-form').requestSubmit();
   }catch(error){state.error=error.message;if(scope===current)renderChat()}
  }
@@ -150,7 +152,7 @@
  }
  function renderChat(){
   if(!open)return;const state=data();
-  $('#manager-panel').innerHTML=`<div class="manager-heading"><div class="manager-header-actions"><button type="button" id="manager-reset" class="manager-reset" ${state.busy?'disabled':''} title="Azzera chat">${icon('rotate-cw')}Azzera chat</button><button type="button" class="icon-button" id="manager-compact" aria-expanded="${!faceCollapsed}" aria-controls="manager-face" aria-label="${esc(uiText(faceCollapsed?'Mostra faccina':'Nascondi faccina'))}" title="${esc(uiText(faceCollapsed?'Mostra faccina':'Nascondi faccina'))}">${icon(faceCollapsed?'maximize-2':'minimize-2')}</button><button type="button" class="icon-button" id="manager-close" aria-label="Chiudi chat">${icon('x')}</button></div>${managerFace(state)}<div class="manager-title"><b>Project manager</b><small id="manager-context"></small></div></div><div id="manager-messages" role="log" aria-label="Messaggi del project manager" aria-live="polite">${state.messages.length?state.messages.map((m,i)=>`<article data-no-i18n class="manager-message ${m.role==='user'?'from-user':'from-manager'}"><b>${m.role==='user'?uiText('Tu'):'Project manager'}</b>${m.role==='user'&&!state.busy?`<button type="button" class="icon-button manager-rewind" data-rewind="${i}" aria-label="${esc(uiText('Riparti da questo messaggio'))}" title="${esc(uiText('Riparti da questo messaggio'))}">${icon('refresh-cw')}</button>`:''}<div class="${m.role==='assistant'?'manager-markdown markdown':''}">${m.role==='assistant'&&m.html?m.html:esc(m.text).replace(/\n/g,'<br>')}</div></article>`).join(''):`<div class="manager-empty">${icon('project-manager')}<p>Descrivi il workflow che vuoi creare, chiedi una modifica ai nodi o domandami a che punto è la run.</p></div>`}${state.busy?`<div id="manager-activity" role="status">${activityHtml(state)}</div>`:''}</div><div id="manager-feedback" role="status">${state.notice?`<p class="manager-notice">${esc(state.notice)}</p>`:''}${state.warning?`<p class="manager-warning">${esc(uiText('Da completare prima di Esegui:'))} ${esc(state.warning)}</p>`:''}${state.error?`<section class="manager-error" role="alert"><button type="button" class="icon-button" id="manager-dismiss-error" aria-label="Chiudi errore">${icon('x')}</button><p>${esc(uiText(state.error))}</p><button type="button" id="manager-error-settings">${esc(uiText('Impostazioni agenti'))}</button></section>`:''}${state.proposal?`<div class="manager-proposal"><p>Proposta pronta. La run e le modifiche fatte nel frattempo restano conservate.</p><button type="button" id="manager-apply">${icon('workflow')}${app.run||state.proposalKind==='create'?uiText('Apri come nuovo workflow'):uiText('Applica alla bozza')}</button> <button type="button" id="manager-dismiss-proposal">${esc(uiText('Ignora proposta'))}</button></div>`:''}${state.undo?'<button type="button" id="manager-undo">Annulla ultima modifica del manager</button>':''}${previousDraft&&!app.run?'<button type="button" id="manager-restore">Torna alla bozza precedente</button>':''}</div><form id="manager-form"><label for="manager-input">Messaggio al manager</label><div class="manager-compose-row"><textarea id="manager-input" rows="1" maxlength="32000" placeholder="Es. aggiungi una review dopo i test…" required>${esc(state.input)}</textarea>${state.busy?`<button type="button" id="manager-stop" class="manager-send manager-stop" title="Interrompi l’elaborazione del manager" ${state.stopping?'disabled':''}>${icon('square')}${state.stopping?'Interruzione…':'Stop'}</button>`:`<button type="submit" class="primary manager-send">${icon('play')}Invia</button>`}</div><span class="small manager-runtime">${esc(app.settings?.default_runtime||state.runtime||'')} · ${uiText('Credenziali personali')}</span></form>`;
+  $('#manager-panel').innerHTML=`<div class="manager-heading"><div class="manager-header-actions"><button type="button" id="manager-reset" class="manager-reset" ${state.busy?'disabled':''} title="Azzera chat">${icon('rotate-cw')}Azzera chat</button><button type="button" class="icon-button" id="manager-compact" aria-expanded="${!faceCollapsed}" aria-controls="manager-face" aria-label="${esc(uiText(faceCollapsed?'Mostra faccina':'Nascondi faccina'))}" title="${esc(uiText(faceCollapsed?'Mostra faccina':'Nascondi faccina'))}">${icon(faceCollapsed?'maximize-2':'minimize-2')}</button><button type="button" class="icon-button" id="manager-close" aria-label="Chiudi chat">${icon('x')}</button></div>${managerFace(state)}<div class="manager-title"><b>Project manager</b><small id="manager-context"></small></div></div><div id="manager-messages" role="log" aria-label="Messaggi del project manager" aria-live="polite">${state.messages.length?state.messages.map((m,i)=>`<article data-no-i18n class="manager-message ${m.role==='user'?'from-user':'from-manager'}"><b>${m.role==='user'?uiText('Tu'):'Project manager'}</b>${m.role==='user'&&!state.busy?`<button type="button" class="icon-button manager-rewind" data-rewind="${i}" aria-label="${esc(uiText('Riparti da questo messaggio'))}" title="${esc(uiText('Riparti da questo messaggio'))}">${icon('refresh-cw')}</button>`:''}<div class="${m.role==='assistant'?'manager-markdown markdown':''}">${m.role==='assistant'&&m.html?m.html:esc(m.text).replace(/\n/g,'<br>')}</div></article>`).join(''):`<div class="manager-empty">${icon('project-manager')}<p>Descrivi il workflow che vuoi creare, chiedi una modifica ai nodi o domandami a che punto è la run.</p></div>`}${state.busy?`<div id="manager-activity" role="status">${activityHtml(state)}</div>`:''}</div><div id="manager-feedback" role="status">${state.notice?`<p class="manager-notice">${esc(state.notice)}</p>`:''}${state.warning?`<p class="manager-warning">${esc(uiText('Da completare prima di Esegui:'))} ${esc(state.warning)}</p>`:''}${state.error?`<section class="manager-error" role="alert"><button type="button" class="icon-button" id="manager-dismiss-error" aria-label="Chiudi errore">${icon('x')}</button><p>${esc(uiText(state.error))}</p><button type="button" id="manager-error-settings">${esc(uiText('Impostazioni agenti'))}</button></section>`:''}${state.proposal?`<div class="manager-proposal"><p>Proposta pronta. La run e le modifiche fatte nel frattempo restano conservate.</p><button type="button" id="manager-apply">${icon('workflow')}${app.run||state.proposalKind==='create'?uiText('Apri come nuovo workflow'):uiText('Applica alla bozza')}</button> <button type="button" id="manager-dismiss-proposal">${esc(uiText('Ignora proposta'))}</button></div>`:''}${state.registration&&!state.busy?`<div class="manager-proposal manager-mcp-proposal"><p><span>Registrazione server MCP proposta:</span> <b data-no-i18n>${esc(state.registration.name||state.registration.server_id)}</b></p><p class="small">Non viene salvato nulla finché non confermi.</p><button type="button" id="manager-mcp-review">${icon('mcp-client')}${esc(uiText('Rivedi e registra'))}</button> <button type="button" id="manager-mcp-dismiss">${esc(uiText('Ignora proposta'))}</button></div>`:''}${state.undo?'<button type="button" id="manager-undo">Annulla ultima modifica del manager</button>':''}${previousDraft&&!app.run?'<button type="button" id="manager-restore">Torna alla bozza precedente</button>':''}</div><form id="manager-form"><label for="manager-input">Messaggio al manager</label><div class="manager-compose-row"><textarea id="manager-input" rows="1" maxlength="32000" placeholder="Es. aggiungi una review dopo i test…" required>${esc(state.input)}</textarea>${state.busy?`<button type="button" id="manager-stop" class="manager-send manager-stop" title="Interrompi l’elaborazione del manager" ${state.stopping?'disabled':''}>${icon('square')}${state.stopping?'Interruzione…':'Stop'}</button>`:`<button type="submit" class="primary manager-send">${icon('play')}Invia</button>`}</div><span class="small manager-runtime">${esc(app.settings?.default_runtime||state.runtime||'')} · ${uiText('Credenziali personali')}</span></form>`;
   $('#manager-compact').onclick=()=>{
     faceCollapsed=!faceCollapsed;
     $('#manager-face').hidden=faceCollapsed;
@@ -174,6 +176,8 @@
   $$('[data-rewind]').forEach(button=>button.onclick=()=>rewindTo(state,Number(button.dataset.rewind)));
   $('#manager-restore')?.addEventListener('click',()=>{const current={workflow:structuredClone(app.wf),dirty:app.dirty};app.wf=previousDraft.workflow;app.dirty=previousDraft.dirty;previousDraft=current;app.selected=null;workflowOptions(app.wf.id);rememberWorkflow(app.wf.id);render();fit();renderChat()});
   $('#manager-apply')?.addEventListener('click',()=>applyPending(state));
+  $('#manager-mcp-review')?.addEventListener('click',()=>reviewRegistration(state));
+  $('#manager-mcp-dismiss')?.addEventListener('click',()=>{resolveRegistration(state);renderChat()});
   $('#manager-dismiss-proposal')?.addEventListener('click',()=>{
    state.warning=null;
    resolveProposal(state);
@@ -191,7 +195,7 @@
   if(owner!==app.user?.id){owner=app.user?.id;previousDraft=null;scope='';cache.clear()}
   if(!open)return;updateContextLabel();const next=key();if(next===scope&&!force)return;
   const changed=next!==scope;scope=next;const state=data();if(changed){state.notice='';state.warning=null}if(state.busy){renderChat();return}const version=state.version,request=++historyRequest;renderChat();
-  try{const q=new URLSearchParams({workflow_id:currentWorkflow().id});if(app.run)q.set('run_id',app.run.id);const history=await api('/manager/chat?'+q);if(request===historyRequest&&key()===next&&state.version===version){state.messages=history.messages;state.runtime=history.runtime;state.conversationId=history.conversation_id;if(history.proposal&&(history.proposal.id??'')!==state.resolvedProposalId&&JSON.stringify({...currentWorkflow(),created:0})!==JSON.stringify({...history.proposal.workflow,created:0})){state.proposal=history.proposal.workflow;state.proposalId=history.proposal.id??'';state.proposalKind=history.proposal.kind;state.warning=history.proposal.warning}else{state.proposal=null}renderChat()}}catch(error){if(scope===next){state.error=error.message;renderChat()}}
+  try{const q=new URLSearchParams({workflow_id:currentWorkflow().id});if(app.run)q.set('run_id',app.run.id);const history=await api('/manager/chat?'+q);if(request===historyRequest&&key()===next&&state.version===version){state.messages=history.messages;state.runtime=history.runtime;state.conversationId=history.conversation_id;if(history.proposal&&(history.proposal.id??'')!==state.resolvedProposalId&&JSON.stringify({...currentWorkflow(),created:0})!==JSON.stringify({...history.proposal.workflow,created:0})){state.proposal=history.proposal.workflow;state.proposalId=history.proposal.id??'';state.proposalKind=history.proposal.kind;state.warning=history.proposal.warning}else{state.proposal=null}state.registration=pendingRegistration(state,history.mcp_registration);renderChat()}}catch(error){if(scope===next){state.error=error.message;renderChat()}}
  }
  window.nodoManagerContextChanged=()=>sync();
  function resolveProposal(state){
@@ -201,6 +205,30 @@
   state.version++;
   api('/manager/chat/proposal/resolve',{conversation_id:state.conversationId,proposal_id:proposalId})
    .catch(error=>toast(error.message));
+ }
+ // An MCP server registration proposed by the manager: shown in full and saved only on confirmation.
+ const pendingRegistration=(state,registration)=>registration&&registration.id!==state.resolvedRegistrationId?registration:null;
+ function resolveRegistration(state){
+  const id=state.registration?.id||'';state.registration=null;state.resolvedRegistrationId=id;
+  api('/manager/chat/proposal/resolve',{conversation_id:state.conversationId,proposal_id:id}).catch(error=>toast(error.message));
+ }
+ async function reviewRegistration(state){
+  const registration=state.registration;if(!registration)return;
+  let settings;try{settings=await api('/settings')}catch(error){toast(error.message);return}
+  if(state.registration!==registration)return;
+  const existing=settings.mcp_servers?.[registration.server_id],env=Object.entries(registration.env||{}),names=registration.env_from_server||[];
+  const list=items=>items.length?`<ul class="mcp-registration-list">${items.join('')}</ul>`:`<span>${esc(uiText('Nessuna'))}</span>`;
+  const body=`<p class="note">Controlla cosa verrà registrato in Configurazioni personali → MCP. Nulla viene salvato finché non confermi.</p>${existing?`<p class="manager-warning">Esiste già un server MCP con questo ID: la conferma lo sostituisce.</p><p class="small"><span>Server attuale:</span> <b data-no-i18n>${esc(existing.name||registration.server_id)}</b></p>`:''}<dl class="mcp-registration"><dt>ID</dt><dd><code data-no-i18n>${esc(registration.server_id)}</code></dd><dt>Nome</dt><dd data-no-i18n>${esc(registration.name||'')}</dd><dt>Comando</dt><dd><code data-no-i18n>${esc(registration.command)}</code></dd><dt>Argomenti</dt><dd>${registration.args?.length?`<pre class="source-view" data-no-i18n>${esc(JSON.stringify(registration.args,null,2))}</pre>`:`<span>${esc(uiText('Nessuno'))}</span>`}</dd><dt>Variabili d’ambiente</dt><dd>${list(env.map(([name,value])=>`<li><code data-no-i18n>${esc(value?name+'='+value:name)}</code>${value?'':` <span class="small">${esc(uiText('da compilare in Configurazioni personali → MCP'))}</span>`}</li>`))}</dd><dt>Variabili dall’ambiente del server</dt><dd>${list(names.map(name=>`<li><code data-no-i18n>${esc(name)}</code></li>`))}</dd></dl>${names.length?'<p class="note">rightcommit legge i valori di queste variabili dal proprio ambiente a ogni avvio del server e non li salva.</p>':''}${existing&&env.some(([,value])=>!value)?'<p class="note">Le variabili vuote conservano il valore già salvato con lo stesso nome.</p>':''}<p id="manager-mcp-error" class="error" role="alert"></p>`;
+  modal('Registrare il server MCP?',body,`<div class="spacer"></div><button data-action="close-dialog">Annulla</button><button class="primary" id="manager-mcp-confirm">${icon('save')}${existing?'Sostituisci server':'Registra server'}</button>`,true);
+  $('#manager-mcp-confirm').onclick=async event=>{
+   const button=event.currentTarget;button.disabled=true;
+   try{
+    app.settings=await api('/manager/chat/mcp/register',{conversation_id:state.conversationId,proposal_id:registration.id,revision:settings._revision,replace:!!existing});
+    closeModal();if(state.registration===registration)state.registration=null;state.resolvedRegistrationId=registration.id;
+    state.notice=uiText(existing?'Server MCP sostituito in Configurazioni personali.':'Server MCP registrato in Configurazioni personali.');
+    renderInspector();window.dispatchEvent(new Event('settings-saved'));
+   }catch(error){const box=$('#manager-mcp-error');if(box)box.textContent=error.message;button.disabled=false}
+  };
  }
  function applyWorkflow(workflow,state){const before=structuredClone(app.wf);workflow=structuredClone(workflow);
   if(app.editBase){
@@ -234,7 +262,7 @@
   try{
    try{state.cursor=(await api('/manager/chat/activity?'+query)).cursor}catch{state.cursor=null}
    poll=setInterval(()=>pollActivity(state,query,originalScope),1000);
-   const response=await api('/manager/chat',{workflow,run_id:runId,message,conversation_id:state.conversationId||null});state.messages=response.messages;state.runtime=response.runtime;state.conversationId=response.conversation_id;state.warning=response.validation_warning;
+   const response=await api('/manager/chat',{workflow,run_id:runId,message,conversation_id:state.conversationId||null});state.messages=response.messages;state.runtime=response.runtime;state.conversationId=response.conversation_id;state.warning=response.validation_warning;state.registration=pendingRegistration(state,response.mcp_registration);
    if(response.stopped)state.notice=uiText('Elaborazione interrotta. Puoi inviare un nuovo messaggio.');
    if(response.workflow){
     state.base=base;state.proposalId=response.proposal_id??'';state.proposalKind=response.kind||'edit';

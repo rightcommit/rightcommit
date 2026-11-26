@@ -1,6 +1,6 @@
 //! Explicitly resume a stopped run from a verified control-flow checkpoint.
 use crate::{App, agents, engine, model::*};
-use anyhow::{Result, ensure};
+use anyhow::{Result, bail, ensure};
 use std::collections::HashSet;
 
 fn predecessor(r: &Run, node: &str) -> Option<Edge> {
@@ -34,6 +34,99 @@ fn predecessor(r: &Run, node: &str) -> Option<Edge> {
                 .is_some_and(|selected| selected.kind == "control" && selected.to == node)
         })
         .cloned()
+}
+/// Where the engine resumes when the user continues from a node.
+struct Checkpoint {
+    /// The node the engine runs first: the chosen node, or the Fork of a chosen branch step.
+    current: String,
+    /// The node the run arrives from (`last_node`); its result is the first step's handoff.
+    previous: Option<String>,
+    /// The link that shows the moving dots while the chosen node runs.
+    shown: Option<Edge>,
+    /// For a Join: its result rebuilt from the kept branch outputs.
+    joined: Option<AgentResult>,
+}
+/// Each valid Fork with its branches, in workflow order.
+fn forks(r: &Run) -> impl Iterator<Item = (&Node, Vec<Vec<Node>>)> {
+    r.workflow
+        .nodes
+        .iter()
+        .filter(|n| n.kind == "Fork")
+        .filter_map(|fork| Some((fork, engine::parallel_branches(&r.workflow, fork).ok()?)))
+}
+/// A branch step is done as the Fork counts it: completed with a completed result, or skipped.
+fn branch_done(r: &Run, n: &Node) -> bool {
+    n.skip
+        || r.states.get(&n.id).is_some_and(|s| s == "completed")
+            && r.outputs.get(&n.id).is_some_and(|o| o.status == "completed")
+}
+fn checkpoint(r: &Run, node: &str) -> Option<Checkpoint> {
+    if r.workflow.node(node).ok()?.kind == "Join" {
+        // The Join collects every branch: all of them must be done, and their outputs are kept.
+        let (fork, branches) = forks(r).find(|(fork, _)| fork.target == node)?;
+        if r.states.get(&fork.id).is_none_or(|s| s != "completed")
+            || !branches.iter().flatten().all(|n| branch_done(r, n))
+        {
+            return None;
+        }
+        // As in a run that reaches the Join: it arrives from the Fork, by no single link.
+        return Some(Checkpoint {
+            current: node.into(),
+            previous: Some(fork.id.clone()),
+            shown: None,
+            joined: Some(engine::barrier_output(r, &branches).ok()?),
+        });
+    }
+    let branch = forks(r).find_map(|(fork, branches)| {
+        Some((fork, branches.into_iter().find(|b| b.iter().any(|n| n.id == node))?))
+    });
+    if let Some((fork, chain)) = branch {
+        // A branch step runs again through its Fork, which runs only the branch steps that are
+        // not done and then joins them with the kept outputs of the other branches.
+        let entered = r
+            .states
+            .get(&fork.id)
+            .is_some_and(|s| !["queued", "skipped"].contains(&s.as_str()));
+        let arrival = predecessor(r, &fork.id);
+        let earlier: Vec<_> = chain.iter().take_while(|n| n.id != node).collect();
+        if !entered
+            || arrival.is_none() && fork.id != r.workflow.entry
+            || !earlier.iter().all(|n| branch_done(r, n))
+        {
+            return None;
+        }
+        let from = earlier.last().map_or(&fork.id, |n| &n.id);
+        return Some(Checkpoint {
+            current: fork.id.clone(),
+            previous: arrival.map(|edge| edge.from),
+            shown: r
+                .workflow
+                .edges
+                .iter()
+                .find(|e| e.kind == "control" && &e.from == from && e.to == node)
+                .cloned(),
+            joined: None,
+        });
+    }
+    let incoming = predecessor(r, node)?;
+    Some(Checkpoint {
+        current: node.into(),
+        previous: Some(incoming.from.clone()),
+        shown: Some(incoming),
+        joined: None,
+    })
+}
+/// The node a completed step was reached from; a Join is reached from its Fork.
+fn reached_from(r: &Run, id: &str) -> Option<String> {
+    if r.workflow.node(id).is_ok_and(|n| n.kind == "Join") {
+        return r
+            .workflow
+            .nodes
+            .iter()
+            .find(|n| n.kind == "Fork" && n.target == id)
+            .map(|n| n.id.clone());
+    }
+    predecessor(r, id).map(|edge| edge.from)
 }
 fn restart_point(r: &Run, node: &str) -> bool {
     node == r.workflow.entry
@@ -81,7 +174,7 @@ pub fn candidates(app: &App, uid: i64, r: &Run) -> Vec<String> {
             if restart_point(r, &n.id) {
                 can_restart
             } else {
-                can_continue && predecessor(r, &n.id).is_some()
+                can_continue && checkpoint(r, &n.id).is_some()
             }
         })
         .map(|n| n.id.clone())
@@ -98,15 +191,20 @@ pub fn prepare(app: &App, uid: i64, rid: &str, node: &str, acknowledge: bool) ->
         node.into()
     };
     let node = target.as_str();
-    let incoming = if restarting {
-        None
+    let resume = if restarting {
+        Checkpoint {
+            current: node.into(),
+            previous: None,
+            shown: None,
+            joined: None,
+        }
+    } else if let Some(resume) = checkpoint(&r, node) {
+        resume
+    } else if r.workflow.node(node).is_ok_and(|n| n.kind == "Join") {
+        bail!("Non tutti i rami del Fork sono completati: continua dal Fork o da un passo del ramo da rieseguire")
     } else {
-        predecessor(&r, node)
+        bail!("Il nodo precedente non è completato con successo sul percorso selezionato")
     };
-    ensure!(
-        restarting || incoming.is_some(),
-        "Il nodo precedente non è completato con successo sul percorso selezionato"
-    );
     ensure!(
         acknowledge,
         "Conferma la ripresa: i passi da questo nodo saranno rieseguiti sui file correnti"
@@ -125,10 +223,12 @@ pub fn prepare(app: &App, uid: i64, rid: &str, node: &str, acknowledge: bool) ->
                 .map(|e| e.to.clone()),
         );
     }
-    // Preserve attempts, rework/supervisor budgets, sessions, child history and artifacts.
+    // Preserve attempts, supervisor budgets, sessions, child history and artifacts. The steps
+    // that run again get their rework budget back; the others keep their count.
     for id in &affected {
         r.states.insert(id.clone(), "queued".into());
         r.outputs.remove(id);
+        r.reworks.remove(id);
         for prefix in [
             "human-approved",
             "answer",
@@ -145,8 +245,15 @@ pub fn prepare(app: &App, uid: i64, rid: &str, node: &str, acknowledge: bool) ->
             r.context.remove(&format!("handoff:{}", n.target));
         }
     }
+    if resume.current != node {
+        // The Fork of the chosen branch step runs again; the other branches keep their state.
+        r.states.insert(resume.current.clone(), "queued".into());
+    }
+    if let Some(joined) = resume.joined {
+        r.outputs.insert(node.into(), joined);
+    }
     r.last_task = None;
-    let mut cursor = incoming.as_ref().map(|edge| edge.from.clone());
+    let mut cursor = resume.previous.clone();
     let mut seen = HashSet::new();
     while let Some(id) = cursor {
         if !seen.insert(id.clone()) {
@@ -156,11 +263,11 @@ pub fn prepare(app: &App, uid: i64, rid: &str, node: &str, acknowledge: bool) ->
             r.last_task = Some(id);
             break;
         }
-        cursor = predecessor(&r, &id).map(|edge| edge.from);
+        cursor = reached_from(&r, &id);
     }
-    r.current = node.into();
-    if let Some(edge) = &incoming
-        && let Ok(previous) = r.workflow.node(&edge.from)
+    r.current = resume.current;
+    if let Some(id) = &resume.previous
+        && let Ok(previous) = r.workflow.node(id)
         && previous.kind == "Memory"
         && let Some(output) = r.outputs.get(&previous.id)
     {
@@ -169,8 +276,8 @@ pub fn prepare(app: &App, uid: i64, rid: &str, node: &str, acknowledge: bool) ->
             output.summary.clone(),
         );
     }
-    r.last_node = incoming.as_ref().map(|edge| edge.from.clone());
-    r.active_edge = incoming;
+    r.last_node = resume.previous;
+    r.active_edge = resume.shown;
     r.pending = None;
     r.status = "paused".into();
     r.error = None;
@@ -260,7 +367,8 @@ mod tests {
                 .contains_key("human-approved:baseline-review")
         );
         assert_eq!(resumed.attempts["step-1"], 2);
-        assert_eq!(resumed.reworks["baseline-review"], 1);
+        // The review runs again after step-1, so it gets its rework budget back.
+        assert!(!resumed.reworks.contains_key("baseline-review"));
         assert_eq!(resumed.context["supervisor:count"], "3");
     }
     #[tokio::test]
@@ -286,6 +394,10 @@ mod tests {
         assert!(resumed.last_node.is_none());
         assert!(resumed.last_task.is_none());
         assert!(resumed.active_edge.is_none());
+        // When it runs, the restarted first node shows the edge of the first start.
+        let first = r.active_edge.clone().expect("first start shows an entry edge");
+        let shown = engine::arrival_edge(&resumed, &resumed.current).expect("restart shows an entry edge");
+        assert_eq!((shown.from, shown.to, shown.kind), (first.from, first.to, first.kind));
         assert!(resumed.pending.is_none());
         assert!(resumed.outputs.is_empty());
         assert_eq!(resumed.workspace, r.workspace);
@@ -351,5 +463,260 @@ mod tests {
         assert!(predecessor(&r, &selected).is_some());
         r.outputs.get_mut(&gid).unwrap().decision = "needs_info".into();
         assert!(predecessor(&r, &selected).is_none());
+    }
+    fn result(summary: &str) -> AgentResult {
+        AgentResult {
+            status: "completed".into(),
+            summary: summary.into(),
+            decision: "pass".into(),
+            ..Default::default()
+        }
+    }
+    fn edge(from: &str, to: &str, kind: &str, outcome: &str) -> Edge {
+        Edge {
+            from: from.into(),
+            to: to.into(),
+            kind: kind.into(),
+            outcome: outcome.into(),
+        }
+    }
+    /// plan → Fork → (a1 → a2 | b) → Join → human Review → synthesis, as a completed run.
+    async fn parallel_fixture() -> (tempfile::TempDir, App, Run) {
+        let dir = tempfile::tempdir().unwrap();
+        let app = crate::tests::app(dir.path());
+        let mut w: Workflow = serde_json::from_value(serde_json::json!({
+            "id":"parallel-continue", "name":"Parallel continue", "description":"", "entry":"plan",
+            "nodes":[{"id":"source","kind":"Source","source_type":"example"},
+                {"id":"coordinator","kind":"Agent"},{"id":"aa","kind":"Agent"},{"id":"ab","kind":"Agent"},
+                {"id":"plan","kind":"Task","agent":"coordinator","prompt":"Plan"},
+                {"id":"fork","kind":"Fork","target":"join"},
+                {"id":"a1","kind":"Task","agent":"aa","prompt":"A1"},
+                {"id":"a2","kind":"Task","agent":"aa","prompt":"A2"},
+                {"id":"b","kind":"Task","agent":"ab","prompt":"B"},
+                {"id":"join","kind":"Join"},
+                {"id":"review","kind":"Review","mode":"human","prompt":"Review"},
+                {"id":"synthesis","kind":"Task","agent":"coordinator","prompt":"Synthesis"}],
+            "edges":[]
+        }))
+        .unwrap();
+        w.edges = vec![
+            edge("source", "coordinator", "context", ""),
+            edge("coordinator", "plan", "context", ""),
+            edge("coordinator", "synthesis", "context", ""),
+            edge("aa", "a1", "context", ""),
+            edge("aa", "a2", "context", ""),
+            edge("ab", "b", "context", ""),
+            edge("plan", "fork", "control", ""),
+            edge("fork", "a1", "control", ""),
+            edge("fork", "b", "control", ""),
+            edge("a1", "a2", "control", ""),
+            edge("a2", "join", "control", ""),
+            edge("b", "join", "control", ""),
+            edge("join", "review", "control", ""),
+            edge("review", "synthesis", "control", ""),
+        ];
+        let mut r = engine::create(&app, 1, w, "test".into(), None)
+            .await
+            .unwrap();
+        for id in ["plan", "fork", "a1", "a2", "b", "join", "review", "synthesis"] {
+            r.states.insert(id.into(), "completed".into());
+            if id != "fork" {
+                r.outputs.insert(id.into(), result(&format!("{id} first pass")));
+            }
+        }
+        r.status = "completed".into();
+        r.current = "synthesis".into();
+        r.last_node = Some("review".into());
+        app.store.save_run(1, &r).unwrap();
+        (dir, app, r)
+    }
+    #[tokio::test]
+    async fn continuation_from_the_join_keeps_every_branch_and_runs_the_join_again() {
+        let (_dir, app, r) = parallel_fixture().await;
+        assert!(candidates(&app, 1, &r).contains(&"join".into()));
+        let resumed = prepare(&app, 1, &r.id, "join", true).unwrap();
+        assert_eq!(resumed.current, "join");
+        // As in a run that reaches the Join: it arrives from the Fork, by no single link.
+        assert_eq!(resumed.last_node.as_deref(), Some("fork"));
+        assert!(resumed.active_edge.is_none());
+        assert_eq!(resumed.last_task.as_deref(), Some("plan"));
+        for id in ["plan", "fork", "a1", "a2", "b"] {
+            assert_eq!(resumed.states[id], "completed", "{id}");
+        }
+        for id in ["plan", "a1", "a2", "b"] {
+            assert_eq!(resumed.outputs[id].summary, format!("{id} first pass"));
+        }
+        for id in ["join", "review", "synthesis"] {
+            assert_eq!(resumed.states[id], "queued", "{id}");
+        }
+        engine::drive(&app, 1, &r.id).await.unwrap();
+        let saved = app.store.run(1, &r.id).unwrap();
+        assert_eq!(saved.status, "waiting_review");
+        assert_eq!(saved.pending.unwrap().node, "review");
+        assert_eq!(saved.states["join"], "completed");
+        assert_eq!(saved.attempts["join"], 1);
+        assert!(!saved.attempts.contains_key("a1") && !saved.attempts.contains_key("b"));
+        // The node after the Join receives every branch output, as in a normal run.
+        let package: serde_json::Value =
+            serde_json::from_str(&saved.context["handoff:coordinator"]).unwrap();
+        assert_eq!(package["source_task"], "join");
+        let results: serde_json::Value =
+            serde_json::from_str(package["source_output"]["summary"].as_str().unwrap()).unwrap();
+        for id in ["a1", "a2", "b"] {
+            assert_eq!(results[id]["summary"], format!("{id} first pass"));
+        }
+    }
+    #[tokio::test]
+    async fn continuation_inside_a_branch_runs_that_branch_and_joins_the_kept_ones() {
+        let (_dir, app, r) = parallel_fixture().await;
+        let ids = candidates(&app, 1, &r);
+        for id in ["fork", "a1", "a2", "b", "join", "review", "synthesis"] {
+            assert!(ids.contains(&id.into()), "{id}");
+        }
+        let resumed = prepare(&app, 1, &r.id, "a2", true).unwrap();
+        // The Fork runs again: it runs only the branch steps that are not completed.
+        assert_eq!(resumed.current, "fork");
+        assert_eq!(resumed.last_node.as_deref(), Some("plan"));
+        assert_eq!(resumed.last_task.as_deref(), Some("plan"));
+        let shown = resumed.active_edge.clone().expect("the link into the chosen step");
+        assert_eq!((shown.from.as_str(), shown.to.as_str()), ("a1", "a2"));
+        for id in ["plan", "a1", "b"] {
+            assert_eq!(resumed.states[id], "completed", "{id}");
+            assert_eq!(resumed.outputs[id].summary, format!("{id} first pass"));
+        }
+        for id in ["fork", "a2", "join", "review", "synthesis"] {
+            assert_eq!(resumed.states[id], "queued", "{id}");
+            assert!(!resumed.outputs.contains_key(id), "{id}");
+        }
+        // The chosen step completes in place of its agent; the Fork joins it with the kept branch.
+        let mut ran = resumed.clone();
+        ran.states.insert("a2".into(), "completed".into());
+        ran.outputs.insert("a2".into(), result("a2 second pass"));
+        app.store.save_run(1, &ran).unwrap();
+        engine::drive(&app, 1, &r.id).await.unwrap();
+        let saved = app.store.run(1, &r.id).unwrap();
+        assert_eq!(saved.status, "waiting_review");
+        assert_eq!(saved.states["fork"], "completed");
+        assert_eq!(saved.states["join"], "completed");
+        let results: serde_json::Value =
+            serde_json::from_str(&saved.outputs["join"].summary).unwrap();
+        assert_eq!(results["a1"]["summary"], "a1 first pass");
+        assert_eq!(results["a2"]["summary"], "a2 second pass");
+        assert_eq!(results["b"]["summary"], "b first pass");
+        // The first step of a branch arrives by the Fork's link to it.
+        let mut done = app.store.run(1, &r.id).unwrap();
+        done.pending = None;
+        done.status = "completed".into();
+        app.store.save_run(1, &done).unwrap();
+        let resumed = prepare(&app, 1, &r.id, "b", true).unwrap();
+        assert_eq!(resumed.current, "fork");
+        let shown = resumed.active_edge.clone().unwrap();
+        assert_eq!((shown.from.as_str(), shown.to.as_str()), ("fork", "b"));
+        assert_eq!(resumed.outputs["a2"].summary, "a2 second pass");
+        assert_eq!(resumed.states["b"], "queued");
+    }
+    #[tokio::test]
+    async fn continuation_from_the_fork_runs_every_branch_again() {
+        let (_dir, app, r) = parallel_fixture().await;
+        let resumed = prepare(&app, 1, &r.id, "fork", true).unwrap();
+        assert_eq!(resumed.current, "fork");
+        assert_eq!(resumed.last_node.as_deref(), Some("plan"));
+        let shown = resumed.active_edge.clone().unwrap();
+        assert_eq!((shown.from.as_str(), shown.to.as_str()), ("plan", "fork"));
+        assert_eq!(resumed.outputs["plan"].summary, "plan first pass");
+        for id in ["fork", "a1", "a2", "b", "join", "review", "synthesis"] {
+            assert_eq!(resumed.states[id], "queued", "{id}");
+            assert!(!resumed.outputs.contains_key(id), "{id}");
+        }
+    }
+    #[tokio::test]
+    async fn continuation_after_a_failed_branch_refuses_the_join_but_runs_the_branch_again() {
+        let (_dir, app, mut r) = parallel_fixture().await;
+        // As the engine leaves a run whose branch b failed: the Fork failed, nothing after it ran.
+        r.states.insert("b".into(), "failed".into());
+        r.outputs.insert("b".into(), AgentResult { status: "failed".into(), ..Default::default() });
+        r.states.insert("fork".into(), "failed".into());
+        for id in ["join", "review", "synthesis"] {
+            r.states.insert(id.into(), "queued".into());
+            r.outputs.remove(id);
+        }
+        r.status = "failed".into();
+        r.current = "fork".into();
+        r.last_node = Some("plan".into());
+        app.store.save_run(1, &r).unwrap();
+        let ids = candidates(&app, 1, &r);
+        assert!(!ids.contains(&"join".into()));
+        assert!(!ids.contains(&"review".into()));
+        for id in ["fork", "a1", "a2", "b"] {
+            assert!(ids.contains(&id.into()), "{id}");
+        }
+        let refused = prepare(&app, 1, &r.id, "join", true).unwrap_err().to_string();
+        assert!(refused.contains("continua dal Fork"), "{refused}");
+        let resumed = prepare(&app, 1, &r.id, "b", true).unwrap();
+        assert_eq!(resumed.current, "fork");
+        assert_eq!(resumed.states["b"], "queued");
+        assert!(!resumed.outputs.contains_key("b"));
+        for id in ["a1", "a2"] {
+            assert_eq!(resumed.states[id], "completed");
+            assert_eq!(resumed.outputs[id].summary, format!("{id} first pass"));
+        }
+    }
+    #[tokio::test]
+    async fn continuation_gives_back_the_rework_budget_of_the_steps_that_run_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = crate::tests::app(dir.path());
+        let mut w: Workflow = serde_json::from_value(serde_json::json!({
+            "id":"rework-continue", "name":"Rework continue", "description":"", "entry":"t1",
+            "nodes":[{"id":"source","kind":"Source","source_type":"example"},
+                {"id":"agent","kind":"Agent"},
+                {"id":"t1","kind":"Task","agent":"agent","prompt":"T1"},
+                {"id":"r1","kind":"Review","mode":"human","prompt":"R1","max_rework":1},
+                {"id":"t2","kind":"Task","agent":"agent","prompt":"T2"},
+                {"id":"r2","kind":"Review","mode":"human","prompt":"R2","max_rework":1},
+                {"id":"t3","kind":"Task","agent":"agent","prompt":"T3"}],
+            "edges":[]
+        }))
+        .unwrap();
+        w.edges = vec![
+            edge("source", "agent", "context", ""),
+            edge("agent", "t1", "context", ""),
+            edge("agent", "t2", "context", ""),
+            edge("agent", "t3", "context", ""),
+            edge("t1", "r1", "control", ""),
+            edge("r1", "t1", "rework", "rework"),
+            edge("r1", "t2", "control", ""),
+            edge("t2", "r2", "control", ""),
+            edge("r2", "t2", "rework", "rework"),
+            edge("r2", "t3", "control", ""),
+        ];
+        let mut r = engine::create(&app, 1, w, "test".into(), None)
+            .await
+            .unwrap();
+        for id in ["t1", "r1", "t2", "r2", "t3"] {
+            r.states.insert(id.into(), "completed".into());
+            r.outputs.insert(id.into(), result(id));
+        }
+        // Both reviews used their only correction in the first pass.
+        r.reworks.insert("r1".into(), 1);
+        r.reworks.insert("r2".into(), 1);
+        r.attempts.insert("t2".into(), 2);
+        r.context.insert("supervisor:count".into(), "3".into());
+        r.status = "completed".into();
+        app.store.save_run(1, &r).unwrap();
+        let mut resumed = prepare(&app, 1, &r.id, "t2", true).unwrap();
+        // r2 runs again with its budget back; r1 does not run again and keeps its count.
+        assert!(!resumed.reworks.contains_key("r2"));
+        assert_eq!(resumed.reworks["r1"], 1);
+        assert_eq!(resumed.attempts["t2"], 2);
+        assert_eq!(resumed.context["supervisor:count"], "3");
+        // The re-run review asks for a correction: it has one left.
+        resumed.states.insert("t2".into(), "completed".into());
+        resumed.outputs.insert("t2".into(), result("t2 again"));
+        resumed.current = "r2".into();
+        engine::route(&app, 1, &mut resumed, "rework").unwrap();
+        assert_eq!(resumed.current, "t2");
+        assert_eq!(resumed.reworks["r2"], 1);
+        resumed.current = "r2".into();
+        assert!(engine::route(&app, 1, &mut resumed, "rework").is_err());
     }
 }

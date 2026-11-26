@@ -51,6 +51,9 @@ key takes precedence. The shared key is never displayed or copied into another u
 This section applies only to administrator ID 1. Other users do not inherit provider
 credentials, cloud/gateway configuration, endpoints or model settings from the server environment.
 Their shared fallback is exclusively the administrator's API key saved in Personal settings.
+The administrator's Project Manager also inherits the server's other environment variables,
+but not these: they keep the rules below. See
+[Agents and the server environment](README.md#agents-and-the-server-environment).
 
 For Docker, edit `.env` beside the Compose file, protect it with `chmod 600 .env`, and run
 `docker compose up -d`. For native installations, set the variables before starting the app.

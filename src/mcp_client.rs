@@ -33,6 +33,8 @@ pub struct Session {
     _process: Option<agents::ProcessGroup>,
     pub service: RunningService<RoleClient, ClientConfig>,
     pub timeout: u64,
+    /// Values of the server variables the process received, hidden from run evidence.
+    server_values: Vec<String>,
 }
 #[derive(Clone)]
 pub struct Bound {
@@ -79,6 +81,56 @@ impl Hub {
             .await
             .retain(|k, _| !k.starts_with(&format!("{uid}:{rid}:")));
     }
+}
+/// The most variable names one stdio server may take from the server environment.
+const MAX_SERVER_VARIABLES: usize = 20;
+/// An environment variable name a stdio MCP server may receive: letters, digits and _, and none
+/// of the loader variables that would change how the process starts.
+fn env_name_allowed(k: &str) -> bool {
+    !k.is_empty()
+        && k.len() < 128
+        && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && !k.starts_with("LD_")
+        && !k.starts_with("DYLD_")
+        && !["GCONV_PATH", "GLIBC_TUNABLES", "LOCPATH", "NLSPATH", "LIBPATH", "SHLIB_PATH"].contains(&k)
+}
+/// Only the account that may use the server environment can name server variables. Check it
+/// before building another account's command, which reads the administrator's settings.
+pub(crate) fn check_server_variables_owner(uid: i64, c: &McpConfig) -> Result<()> {
+    ensure!(
+        c.env_from_server.is_empty() || agents::manager_inherits_server_environment(uid),
+        "Solo il primo amministratore (ID 1) può passare variabili dall’ambiente del server a un server MCP"
+    );
+    Ok(())
+}
+/// Checks `env_from_server` against the command that will start the server: only the account
+/// that may use the server environment can name variables, and never one rightcommit sets for
+/// that command. `command` must not have the configuration's own `env` yet.
+pub(crate) fn check_server_variables(uid: i64, c: &McpConfig, command: &tokio::process::Command) -> Result<()> {
+    check_server_variables_owner(uid, c)?;
+    if let Some(name) = c.env_from_server.iter().find(|name| agents::server_variable_reserved(command, &c.command, name)) {
+        anyhow::bail!("La variabile {name} è impostata da rightcommit e non può arrivare dall’ambiente del server");
+    }
+    Ok(())
+}
+/// Reads each `env_from_server` name from `lookup` (the server's own environment at launch).
+/// A missing or empty variable is an error that names it; values never appear in errors.
+pub(crate) fn resolve_server_variables(
+    uid: i64,
+    c: &McpConfig,
+    command: &tokio::process::Command,
+    lookup: impl Fn(&str) -> Option<String>,
+) -> Result<Vec<(String, String)>> {
+    check_server_variables(uid, c, command)?;
+    c.env_from_server
+        .iter()
+        .map(|name| {
+            let value = lookup(name).filter(|value| !value.is_empty()).with_context(|| {
+                format!("La variabile {name} non è impostata nell’ambiente del server o è vuota: aggiungila e riavvia rightcommit")
+            })?;
+            Ok((name.clone(), value))
+        })
+        .collect()
 }
 pub fn validate(c: &McpConfig) -> Result<()> {
     ensure!(
@@ -139,24 +191,27 @@ pub fn validate(c: &McpConfig) -> Result<()> {
         reqwest::header::HeaderName::from_bytes(c.auth.header.as_bytes())?;
     }
     ensure!(
-        c.env.iter().all(|(k, v)| !k.is_empty()
-            && k.len() < 128
-            && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-            && !v.contains('\0')
-            && v.len() <= 16384
-            && !k.starts_with("LD_")
-            && !k.starts_with("DYLD_")
-            && ![
-                "GCONV_PATH",
-                "GLIBC_TUNABLES",
-                "LOCPATH",
-                "NLSPATH",
-                "LIBPATH",
-                "SHLIB_PATH"
-            ]
-            .contains(&k.as_str())),
+        c.env.iter().all(|(k, v)| env_name_allowed(k) && !v.contains('\0') && v.len() <= 16384),
         "Variabili MCP non valide"
     );
+    if !c.env_from_server.is_empty() {
+        ensure!(c.transport == "stdio", "Le variabili dall’ambiente del server valgono solo per i server MCP stdio");
+        ensure!(
+            c.env_from_server.len() <= MAX_SERVER_VARIABLES,
+            "Al massimo {MAX_SERVER_VARIABLES} variabili dall’ambiente del server per un server MCP"
+        );
+        for (i, name) in c.env_from_server.iter().enumerate() {
+            ensure!(
+                env_name_allowed(name) && !name.starts_with(|c: char| c.is_ascii_digit()),
+                "Nome di variabile dall’ambiente del server non valido: usa lettere, cifre e _ senza iniziare con una cifra"
+            );
+            ensure!(!c.env_from_server[..i].contains(name), "La variabile {name} è indicata due volte");
+            ensure!(
+                !c.env.contains_key(name),
+                "La variabile {name} è sia nelle variabili d’ambiente sia in quelle dall’ambiente del server: tienila in una sola"
+            );
+        }
+    }
     if c.auth.mode.starts_with("oauth_") {
         ensure!(!c.auth.client_id.is_empty(), "Client ID OAuth obbligatorio");
         if !c.auth.issuer.is_empty() {
@@ -242,11 +297,16 @@ async fn connect(
     let timeout = Duration::from_secs(cfg.timeout_secs);
     let client = ClientConfig::default();
     let mut process = None;
+    let mut server_values = vec![];
     let service = if cfg.transport == "stdio" {
         let settings = app.store.settings(uid)?;
         let mut command = agents::command(app, uid, &cfg.command, cwd, &settings)?;
+        // Resolved against the command before its own env, which wins for a name in both.
+        let server = resolve_server_variables(uid, cfg, &command, |name| std::env::var(name).ok())?;
+        server_values = server.iter().map(|(_, value)| value.clone()).collect();
         command
             .args(&cfg.args)
+            .envs(server)
             .envs(&cfg.env)
             .stderr(std::process::Stdio::null());
         let transport = TokioChildProcess::new(command)?;
@@ -288,6 +348,7 @@ async fn connect(
         _process: process,
         service,
         timeout: cfg.timeout_secs,
+        server_values,
     }))
 }
 async fn cached(app: &App, uid: i64, r: &Run, node: &Node) -> Result<Arc<Session>> {
@@ -425,6 +486,7 @@ pub struct Prepared {
     pub tools: Vec<Tool>,
     pub dir: PathBuf,
     pub endpoint: String,
+    server_values: Vec<String>,
 }
 impl Drop for Prepared {
     fn drop(&mut self) {
@@ -439,6 +501,10 @@ impl Drop for Prepared {
 impl Prepared {
     pub fn token(&self) -> &str {
         &self.token
+    }
+    /// Values of the server variables passed to this turn's MCP servers.
+    pub fn server_values(&self) -> impl Iterator<Item = &str> {
+        self.server_values.iter().map(String::as_str)
     }
 }
 pub async fn prepare(app: &App, uid: i64, r: &Run) -> Result<Option<Prepared>> {
@@ -481,6 +547,7 @@ pub async fn prepare(app: &App, uid: i64, r: &Run) -> Result<Option<Prepared>> {
         expires: now() + app.store.settings(uid)?.task_timeout_secs as i64 + 60,
     };
     let tools = inventory(&grant).await?;
+    let server_values = grant.servers.iter().flat_map(|s| s.session.server_values.clone()).collect();
     let token = format!("{}{}", id(), id());
     let dir = agents::user_home(app, uid)?
         .join("tmp")
@@ -506,6 +573,7 @@ pub async fn prepare(app: &App, uid: i64, r: &Run) -> Result<Option<Prepared>> {
         tools,
         dir,
         endpoint,
+        server_values,
     }))
 }
 #[derive(Deserialize, Serialize)]

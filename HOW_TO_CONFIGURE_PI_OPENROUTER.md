@@ -24,6 +24,14 @@ Read [Provider terms and permitted use](PROVIDER_TERMS.md).
 
 Pick a model that supports **tool calling**: Pi needs tools to read and edit files.
 
+The **Model** field of an Agent node that runs Pi with OpenRouter offers the same list. Leave
+it empty to use the model from Personal settings, or type any ID by hand.
+The **Supervisor model** field of the execution mode (workflow execution mode, run start and
+scheduled runs) offers it too when the supervisor runs Pi with OpenRouter: **Supervisor agent**
+set to *Pi Agent*, or *Personal preference* with Pi as your Default agent. The supervisor uses
+the Pi provider from Personal settings (the default provider in Multi-provider mode). Leave
+the field empty to use the model from Personal settings.
+
 ## Other ways to give the key
 
 - **Installation-wide:** set `OPENROUTER_API_KEY` in `.env` (Docker or Podman, then

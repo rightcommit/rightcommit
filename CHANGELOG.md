@@ -3,6 +3,102 @@
 What changed in each version of rightcommit. Releases are also listed on
 [GitHub](https://github.com/rightcommit/rightcommit/releases).
 
+## [1.10.3] - 2026-11-26
+
+### Added
+
+- A stdio MCP server of the first administrator can take variables from the rightcommit
+  server's environment by name: **Variables from the server environment** in
+  Personal settings → MCP. The values are read each time the server starts, in runs and with
+  Test connection, and never saved or shown; a missing or empty variable stops the start with
+  an error that names it. Names rightcommit sets itself are refused, and other accounts can
+  neither save nor use such names. See
+  [Agents and the server environment](README.md#agents-and-the-server-environment).
+- The **Project Manager** can propose to register an MCP server it has written and verified.
+  The chat shows exactly what will be registered (command, arguments, variables) and saves it
+  through the normal settings checks only when you confirm; a server with the same ID is
+  replaced only after you confirm the replacement. A proposal with a literal value that looks
+  like a secret is refused, and the manager is asked to name the variable instead.
+
+- The **Model** field of an Agent node that runs Pi with OpenRouter offers the OpenRouter
+  model list, searchable as in Personal settings → Agents → Pi Agent. Empty still uses the
+  model from Personal settings, a model typed by hand or missing from the list is kept, and
+  if the list does not load the field works as before.
+- The **Supervisor model** field of the execution mode (workflow execution mode, run start and
+  scheduled runs) offers the same OpenRouter model list when the supervisor runs Pi with
+  OpenRouter: **Supervisor agent** set to *Pi Agent*, or *Personal preference* with Pi as the
+  Default agent, and OpenRouter as the Pi provider in Personal settings (the default provider
+  in Multi-provider mode). The list appears or disappears as you change the supervisor agent.
+  Empty still uses the model from Personal settings, and any model can be typed by hand.
+
+### Changed
+
+- Agent steps and the **Project Manager** are told plainly that the **summary** of their
+  answer must be the result itself in short form (the answer, the decision and its reason, the
+  key points of a plan), never a description such as "Plan provided"; the long form goes in
+  the details. The summary is what the run view shows first; the next steps still receive both.
+- The Codex guide explains how to use your own Codex sign-in with a native install: run
+  `codex login` with `CODEX_HOME` set to your account's Codex folder in the app's data folder.
+  A sign-in made in your own terminal, or a `CODEX_HOME` exported before starting rightcommit,
+  is not used. The README and the Project Manager say the same.
+- The Codex guide also covers Docker and Podman: sign in inside the container with
+  `docker exec` as your account's user, with Codex's device code sign-in
+  (`codex login --device-auth`), which prints a link and a one-time code to enter in any
+  browser. The sign-in stays in the data volume when you update the container. The README and
+  the Project Manager say the same.
+- The avatar menu entry and its dialog are written **Manage templates** in English, like the
+  other menu entries.
+- **FinOps** shows Codex runs made with a ChatGPT sign-in with the estimated cost at API
+  prices, like any other Codex run: it is an estimate, not a charge on the ChatGPT plan.
+- The first administrator's **Project Manager** also sees the environment variables of the
+  rightcommit server, so the MCP servers and scripts it writes can be tested with them. The
+  variables rightcommit sets itself and the credentials and endpoints of the manager's own
+  agent keep their current rules, values of variables named like secrets are redacted in its
+  replies, and workflow runs, other accounts and stdio MCP servers keep a clean environment.
+  The manager can run commands: start rightcommit only with variables you accept it to read.
+  See [Agents and the server environment](README.md#agents-and-the-server-environment).
+
+### Fixed
+
+- When an agent's answer ends without rightcommit's structured result, for example after a
+  request such as "report the output verbatim, nothing else", rightcommit now asks the same
+  session once more for the structured result only, with no new work, and keeps the text the
+  agent already wrote: the **Project Manager** shows it as its reply, and a workflow step keeps
+  it in its details. This works for the Project Manager and for every agent step (Task,
+  Review, Gate, parallel branches and the supervisor) without using an attempt or a correction.
+  The Activity log shows the extra request, the Project Manager chat shows it on the line that
+  follows what the manager is doing until the reply arrives, and FinOps counts both turns. If
+  the second answer has no structured result either, the error stays as before. The Project
+  Manager is also told that "nothing else" applies to the content of its reply, never to the
+  structured result.
+- The errors shown when the OpenRouter model list cannot be loaded (unreachable, unavailable,
+  invalid or empty catalog) are in English when the interface is in English.
+- When a run runs its first step again, after **Continue run** from the Source or the first
+  step, **Resume** of a first step that failed or was stopped, or **Edit and continue** from the
+  first step, the link entering that step shows its moving dots again, as in the run's first
+  start. Before, the dots appeared only from the second step on.
+- **Continue run** works with parallel branches. From a **Join** it keeps the output of every
+  branch and runs the Join and the steps after it again, so the next step receives all branch
+  outputs as in a normal run; before, the run stopped at the Join because the branch outputs
+  were discarded. From a step inside a branch it runs that step and the rest of its branch
+  again, then joins them with the kept outputs of the other branches; before, the first step
+  of a branch could not be chosen and a later one stopped the run at the Join. From a **Fork**
+  every branch runs again, as before. If a branch did not complete, the Join cannot be chosen
+  and the message says to continue from the Fork or from a step of that branch.
+- **Continue run** gives the Gates and Reviews that run again their full number of
+  corrections (**Rework limit**). Before, a Gate or Review that had used its corrections in the
+  first pass stopped the run at its first negative outcome. Gates and Reviews before the chosen
+  node keep their count, and attempts, supervisor budgets, sessions and artifacts are kept as
+  before.
+- **FinOps** lost the model and the cost of Codex runs whose working folder path ended with
+  a slash, such as a direct source on the whole sources folder: their Codex logs were not
+  read, so these runs showed only a summary with no model and no cost estimate.
+- Agents now answer in the language of the workflow's own prompts and of the run request. The
+  instructions rightcommit adds around a step (Task, Review, Gate, parallel branches, Memory
+  handoff, supervisor) were in Italian, so a Gate could answer in Italian in an English
+  workflow; they are now in English and ask the agent to follow the language of the step's
+  prompt. The Project Manager answers in the language of your message.
+
 ## [1.10.2] - 2026-11-25
 
 ### Fixed

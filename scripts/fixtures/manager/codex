@@ -30,6 +30,20 @@ if 'tutti i nodi' in message:
 if 'stato' in message and manifest['current_run']:
  evidence=json.loads((context/('run-'+manifest['current_run']+'.json')).read_text())
  summary='Stato verificato: '+evidence['run']['status']+'. Eventi: '+str(len(evidence['events']))+'. Artefatti: '+str(len(evidence['artifacts']))+'.'
+if 'ambiente server' in message:
+ import os
+ summary='inherited='+os.environ.get('RIGHTCOMMIT_SMOKE_INHERITED','absent')+' token='+os.environ.get('RIGHTCOMMIT_SMOKE_TOKEN','absent')
+if 'registra il server mcp' in message:
+ # Writes a small stdio MCP server, as the manager would, and proposes its registration.
+ server=pathlib.Path(manifest['implementation']['mcp_servers_dir'])/'smoke'
+ server.mkdir(parents=True,exist_ok=True)
+ (server/'server.py').write_text("import json,os,sys\nfor line in sys.stdin:\n q=json.loads(line)\n if 'id' not in q:continue\n m=q.get('method');r={}\n if m=='initialize':r={'protocolVersion':q['params']['protocolVersion'],'capabilities':{'tools':{}},'serverInfo':{'name':'smoke','version':'1'}}\n elif m=='tools/list':r={'tools':[{'name':'token_'+('present' if os.environ.get('RIGHTCOMMIT_SMOKE_MCP_TOKEN') else 'absent'),'inputSchema':{'type':'object','properties':{}}}]}\n print(json.dumps({'jsonrpc':'2.0','id':q['id'],'result':r}),flush=True)\n")
+ registration={'id':'smoke-mcp','name':'Smoke MCP','command':sys.executable,'args':[str(server/'server.py')],'env':{'SMOKE_MODE':'test','SMOKE_API_KEY':''},'env_from_server':['RIGHTCOMMIT_SMOKE_MCP_TOKEN'] if manifest['implementation']['server_environment'] else []}
+ # The first answer with "segreto" carries a secret literal; the controller refuses it and asks once more.
+ if 'segreto' in message and 'mcp_registration proposal was refused' not in prompt:
+  registration['env']['SMOKE_API_KEY']='smoke-literal-secret-value'
+ kind='explain';details={'workflow':None,'mcp_registration':registration}
+ summary='Server MCP scritto e verificato. La registrazione è proposta e attende la tua conferma.'
 result={'status':'completed','summary':summary,'details':json.dumps(details),'questions':[],'artifacts':[],'decision':kind}
 print(json.dumps({'type':'thread.started','thread_id':sid}))
 print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':'<nodo_result>'+json.dumps(result)+'</nodo_result>'}}))

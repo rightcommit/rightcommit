@@ -11,14 +11,14 @@ home=pathlib.Path(os.environ['HOME']); f=home/'tmp'/('mock-'+sid+'.json')
 f.parent.mkdir(parents=True,exist_ok=True)
 turn=json.loads(f.read_text())+1 if f.exists() else 1
 f.write_text(json.dumps(turn))
-supervising='Sei il supervisore del run.' in prompt
+supervising="You are the run's supervisor." in prompt
 assert ('read-only' in args)==supervising
 if supervising:
- p=json.loads(prompt.split('RICHIESTA: ',1)[1].split('\\nOUTPUT:',1)[0])
+ p=json.loads(prompt.split('REQUEST: ',1)[1].split('\\nOUTPUT:',1)[0])
  decision='answer' if p['kind'] in ['question','gate'] else 'approve'
  result=dict(status='completed',summary='Recommended from the supplied goal and evidence',details='Use stable defaults and keep the existing public contract.',decision=decision)
 else:
- if 'GATE decisionale' in prompt:
+ if 'Decision GATE' in prompt:
   result=dict(status='completed',summary='Gate verified',decision='pass')
  elif turn==1:
   result=dict(status='needs_input',summary='Choose compatibility policy',questions=['Keep the existing public contract?'],decision='')
