@@ -87,7 +87,9 @@ pub async fn execute(app: &App, uid: i64, r: &Run, n: &Node) -> Result<AgentResu
                 let line = format!("Comando di test: {} ({})", command.display(), command.origin_text());
                 // The Activity Log shows what ran; the report keeps only the tool output.
                 agents::emit(app, uid, &r.id, "output", &n.id, &line);
-                let output = agents::project_tool(app, uid, cwd, &command.argv, 600).await?;
+                let output = agents::project_tool(app, uid, cwd, &command.argv, 600)
+                    .await
+                    .map_err(|e| crate::test_command::explain(&command, e))?;
                 // A failure shows its output in the error; a passing run shows its last lines here.
                 agents::emit(app, uid, &r.id, "output", &n.id, &crate::test_command::passing_summary(&output));
                 output

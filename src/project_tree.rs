@@ -60,7 +60,8 @@ pub const BUILD: &str = "target";
 
 /// A dependency or cache folder from `DEPENDENCY_DIRS`. A regular file with one of these names is
 /// project content and is not skipped. A link with one of these names is skipped without being
-/// followed: it is neither copied nor refused.
+/// followed: it is neither copied nor refused. Storage hides these folders in /sources and
+/// examples, and the Project Manager does not suggest them as Source folders.
 pub fn dependency_dir(name: &OsStr, is_file: bool) -> bool {
     !is_file && DEPENDENCY_DIRS.iter().any(|dir| name == *dir)
 }
@@ -78,6 +79,12 @@ pub fn export_rules() -> serde_json::Value {
     let mut folders = vec![BUILD];
     folders.extend(DEPENDENCY_DIRS);
     serde_json::json!({"any": [GIT], "folders": folders})
+}
+
+/// The rule for the ZIP of a folder in /sources or examples: only `DEPENDENCY_DIRS`, whose links
+/// would stop the export. `.git` and `target` there are the user's own and stay in the ZIP.
+pub fn source_export_rules() -> serde_json::Value {
+    serde_json::json!({"folders": DEPENDENCY_DIRS})
 }
 
 #[cfg(test)]

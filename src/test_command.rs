@@ -80,6 +80,34 @@ pub fn split_labeled(label: &str, command: &str) -> Result<Vec<String>> {
     Ok(argv)
 }
 
+/// The Python the detected pytest command runs with, chosen in the run's workspace when the step
+/// runs: the project's virtual environment, `.venv` then `venv`, or else the system `python3`.
+/// A copied workspace has a virtual environment only if the run created one: the copy leaves the
+/// Source's out.
+const PYTHONS: &[&str] = &[".venv/bin/python", "venv/bin/python"];
+fn python(workspace: &Path) -> String {
+    // An executable file, following links: `.venv/bin/python` links to the interpreter.
+    PYTHONS
+        .iter()
+        .find(|python| crate::agents::program_available(python, workspace, &[]))
+        .map_or_else(|| "python3".into(), |python| python.to_string())
+}
+
+/// The failure of a test command whose Python has no pytest gets a first line that says so and
+/// how to fix it; the output follows as written. The Activity log translates the first line.
+pub fn explain(command: &TestCommand, error: anyhow::Error) -> anyhow::Error {
+    let text = error.to_string();
+    if !text.contains("No module named pytest") {
+        return error;
+    }
+    anyhow::anyhow!(
+        "pytest is not installed for {}. Install it with the project's dependencies in a virtual \
+         environment in the project folder (python3 -m venv .venv, then .venv/bin/pip install pytest), \
+         which the detected command uses, or set a test command in the node.\n{text}",
+        command.argv[0]
+    )
+}
+
 pub fn detect(workspace: &Path) -> Result<TestCommand> {
     // Compare real entry names: on case-insensitive file systems `makefile` would also open `Makefile`.
     let files: std::collections::HashSet<String> = std::fs::read_dir(workspace)?
@@ -90,10 +118,11 @@ pub fn detect(workspace: &Path) -> Result<TestCommand> {
     let file = |name: &str| files.contains(name);
     for (files, argv) in DETECTION {
         if let Some(found) = files.iter().find(|name| file(name)) {
-            return Ok(TestCommand {
-                argv: argv.iter().map(|s| s.to_string()).collect(),
-                origin: Origin::Detected(found),
-            });
+            let mut argv: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
+            if argv[0] == "python3" {
+                argv[0] = python(workspace);
+            }
+            return Ok(TestCommand { argv, origin: Origin::Detected(found) });
         }
     }
     // make reads GNUmakefile, then makefile, then Makefile.
@@ -177,6 +206,55 @@ mod tests {
             assert_eq!(found.argv, argv(expected), "{file}");
             assert_eq!(found.origin, Origin::Detected(file));
         }
+    }
+
+    fn executable(path: &Path, text: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    #[test]
+    fn python_tests_prefer_the_project_virtual_environment() {
+        for file in ["pyproject.toml", "pytest.ini", "setup.py"] {
+            let dir = workspace(&[(file, "")]);
+            let found = || detect(dir.path()).unwrap();
+            assert_eq!(found().argv, argv(&["python3", "-m", "pytest"]), "{file}");
+            // Not executable, or a link to nothing: not a Python to run.
+            std::fs::create_dir_all(dir.path().join("venv/bin")).unwrap();
+            std::fs::write(dir.path().join("venv/bin/python"), "").unwrap();
+            std::fs::create_dir_all(dir.path().join(".venv/bin")).unwrap();
+            std::os::unix::fs::symlink(dir.path().join("missing"), dir.path().join(".venv/bin/python")).unwrap();
+            assert_eq!(found().argv, argv(&["python3", "-m", "pytest"]), "{file}");
+            executable(&dir.path().join("venv/bin/python"), "#!/bin/sh\n");
+            assert_eq!(found(), TestCommand { argv: argv(&["venv/bin/python", "-m", "pytest"]), origin: Origin::Detected(file) });
+            // .venv wins over venv; python -m venv makes bin/python a link to the interpreter.
+            std::fs::remove_file(dir.path().join(".venv/bin/python")).unwrap();
+            executable(&dir.path().join("interpreter"), "#!/bin/sh\n");
+            std::os::unix::fs::symlink(dir.path().join("interpreter"), dir.path().join(".venv/bin/python")).unwrap();
+            assert_eq!(found().argv, argv(&[".venv/bin/python", "-m", "pytest"]), "{file}");
+            assert_eq!(found().display(), ".venv/bin/python -m pytest");
+        }
+        // Other ecosystems and a command set in the node are never changed.
+        let dir = workspace(&[("Cargo.toml", ""), ("pyproject.toml", "")]);
+        executable(&dir.path().join(".venv/bin/python"), "#!/bin/sh\n");
+        assert_eq!(detect(dir.path()).unwrap().argv, argv(&["cargo", "test"]));
+        let node = Node { test_command: "python3 -m pytest -q".into(), ..Default::default() };
+        assert_eq!(resolve(&node, dir.path()).unwrap().argv, argv(&["python3", "-m", "pytest", "-q"]));
+    }
+
+    #[test]
+    fn a_missing_pytest_says_how_to_install_it() {
+        let command = TestCommand { argv: argv(&[".venv/bin/python", "-m", "pytest"]), origin: Origin::Detected("pyproject.toml") };
+        let output = ".venv/bin/python: /workspace/.venv/bin/python: No module named pytest";
+        let message = explain(&command, anyhow::anyhow!("{output}")).to_string();
+        let (first, rest) = message.split_once('\n').unwrap();
+        assert_eq!(first, "pytest is not installed for .venv/bin/python. Install it with the project's dependencies in a virtual environment in the project folder (python3 -m venv .venv, then .venv/bin/pip install pytest), which the detected command uses, or set a test command in the node.");
+        assert_eq!(rest, output);
+        // Any other failure is left as it was.
+        let failed = "python3: 1 failed, 2 passed";
+        assert_eq!(explain(&command, anyhow::anyhow!("{failed}")).to_string(), failed);
     }
 
     #[test]

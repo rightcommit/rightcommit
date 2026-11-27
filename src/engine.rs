@@ -649,6 +649,9 @@ pub async fn create_reserved(
     let direct_primary = source_context.contains_key("direct-primary");
     if !direct_primary && !workspace.join(".git").exists() {
         agents::tool(app, uid, &workspace, "git", &["init", "-b", "main"], 30).await?;
+        // The copy has no dependency folders; the exclude keeps those the run creates out of
+        // `git add --all` and `git status` in the workspace.
+        crate::local_commit::exclude_dependency_dirs(app, uid, &workspace).await?;
         agents::tool(app, uid, &workspace, "git", &["add", "--all"], 30).await?;
         agents::tool(
             app,

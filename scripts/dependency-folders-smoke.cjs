@@ -3,7 +3,8 @@
 // environment starts (its links are not copied), a permanent one too; the folders do not count
 // toward the copy size; the agent's own .venv, node_modules and caches are not captured as
 // artifacts and do not show in the Artifacts view (nor older captures of them), while a file named
-// venv does; Storage hides them in the workspace and the result ZIP leaves them out.
+// venv does; Storage hides them in the workspace and in /sources, and the result ZIP leaves them out,
+// as does the ZIP of a /sources folder; the local commit leaves out those the run created.
 // A disposable server, temporary data and NODO_SOURCES, and a fake offline Claude Code CLI.
 const fs=require('fs'),os=require('os'),path=require('path'),assert=require('node:assert/strict'),{spawn,execFileSync}=require('child_process');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
@@ -57,14 +58,22 @@ emit(dict(type='result',result='<nodo_result>'+json.dumps(dict(status='completed
    const wf={id:'deps-'+mode,name:'Dependencies '+mode,description:'',entry:'work',nodes:[
     {id:'source',kind:'Source',title:'Project',source_type:'folder',source_mode:mode,location,x:60,y:80},
     {id:'agent',kind:'Agent',title:'Fixture',runtime:'claude',x:300,y:300},
-    {id:'work',kind:'Task',title:'Work',agent:'agent',prompt:'Install dependencies and write the result',x:300,y:80}],
-    edges:[{from:'source',to:'agent',kind:'context'},{from:'agent',to:'work',kind:'context'}]};
+    {id:'work',kind:'Task',title:'Work',agent:'agent',prompt:'Install dependencies and write the result',x:300,y:80},
+    ...(mode==='copy'?[{id:'commit',kind:'Connection',title:'Commit',provider:'local',operation:'commit',confirm_commit:false,x:540,y:80}]:[])],
+    edges:[{from:'source',to:'agent',kind:'context'},{from:'agent',to:'work',kind:'context'},...(mode==='copy'?[{from:'work',to:'commit',kind:'control'}]:[])]};
    await call('/workflows',wf);const run=await call('/runs',{workflow_id:wf.id});let d;
    for(let i=0;i<300;i++){d=await call('/runs/'+run.id);assert.notEqual(d.run.status,'failed',d.run.error);if(d.run.status==='completed')break;await new Promise(r=>setTimeout(r,50))}
    assert.equal(d.run.status,'completed');const ws=d.run.workspace;
    if(mode==='copy'){
     assert(!fs.existsSync(path.join(ws,'web/node_modules'))&&!fs.existsSync(path.join(ws,'services/api/venv')),'dependency folders are not copied');
     assert.equal(fs.readFileSync(path.join(ws,'services/venv'),'utf8'),'VENV_NAME=worker\n');
+    // The local commit takes the run's files, not the .venv, node_modules and caches it created.
+    const git=(...a)=>execFileSync('git',a,{cwd:ws}).toString();
+    assert.deepEqual(git('show','--name-only','--format=','HEAD').trim().split('\n').sort(),['result.md','services/venv']);
+    assert.equal(git('status','--porcelain','--untracked-files=all'),'');
+    assert(fs.readFileSync(path.join(ws,'.git/info/exclude'),'utf8').split('\n').includes('.venv/'));
+    assert(!fs.existsSync(path.join(ws,'.gitignore')),'the project .gitignore is not written');
+    checks.push('copy: the local commit leaves out the .venv, node_modules and caches the run created, through .git/info/exclude');
    }else{
     assert.equal(ws,fs.realpathSync(path.join(sources,'permanent')));assert(fs.lstatSync(path.join(ws,'web/node_modules/.bin/tool')).isSymbolicLink());
    }
@@ -88,8 +97,17 @@ emit(dict(type='result',result='<nodo_result>'+json.dumps(dict(status='completed
     const listed=execFileSync('python3',['-c','import sys,zipfile;print("\\n".join(zipfile.ZipFile(sys.argv[1]).namelist()))',file]).toString();
     assert(/services\/venv$/m.test(listed)&&/result\.md$/m.test(listed),listed);assert(!/\.venv|tools\/venv|node_modules|\.dart_tool|\.next|\.pytest_cache/.test(listed),listed);
     checks.push('Storage hides the folders in the workspace and the result ZIP leaves them out instead of failing on their links');
-    // /sources keeps showing real folders.
-    assert((await call('/storage?root=sources&path=copied')).entries.some(e=>e.name==='.venv'));
+    // /sources hides them too, a file named venv stays; its ZIP leaves them out instead of failing on their links.
+    const sourceNames=async p=>(await call('/storage?root=sources&path='+encodeURIComponent(p))).entries.map(e=>e.name);
+    assert.deepEqual(await sourceNames('copied'),['services','web','app.py']);assert.deepEqual(await sourceNames('copied/services'),['api','venv']);
+    assert.deepEqual(await sourceNames('copied/services/api'),[]);assert.deepEqual(await sourceNames('copied/web'),[]);
+    await call('/storage?root=sources&path='+encodeURIComponent('copied/.venv'),undefined,400);
+    checks.push('Storage hides them inside /sources too and refuses them typed by hand, while a file named venv stays');
+    const sourceZip=await page.request.get(base+'/api/storage/download?root=sources&path=copied');assert.equal(sourceZip.status(),200,await sourceZip.text());
+    fs.writeFileSync(file,await sourceZip.body());
+    const sourceListed=execFileSync('python3',['-c','import sys,zipfile;print("\\n".join(zipfile.ZipFile(sys.argv[1]).namelist()))',file]).toString();
+    assert(/^copied\/app\.py$/m.test(sourceListed)&&/^copied\/services\/venv$/m.test(sourceListed),sourceListed);assert(!/\.venv|api\/venv|node_modules/.test(sourceListed),sourceListed);
+    checks.push('the ZIP of a /sources folder leaves out .venv, venv and node_modules instead of failing on their links');
    }
   }
   assert.deepEqual(errors,[]);

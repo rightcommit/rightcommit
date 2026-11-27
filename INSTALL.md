@@ -288,10 +288,18 @@ python3 -m venv .venv
 ```
 
 `pip install` outside a virtual environment is refused by Debian. Create virtual environments in the
-workspace, not under `/tmp`: it is mounted without permission to run programs. When the tests
-need the virtual environment, set the Local CI step's test command to `.venv/bin/python -m pytest`:
-the command detected for `pyproject.toml`, `pytest.ini` or `setup.py` is `python3 -m pytest`, which
-uses the system Python.
+workspace, not under `/tmp`: it is mounted without permission to run programs.
+
+When the Local CI step has no test command and the workspace has `pyproject.toml`, `pytest.ini` or
+`setup.py`, the step picks the Python when it runs, in the run's workspace: `.venv/bin/python -m pytest`
+if `.venv/bin/python` exists, otherwise `venv/bin/python -m pytest`, otherwise `python3 -m pytest`,
+the system Python, which has no pytest in the image. A test command you set is used as written. A
+run that copies its Source does not copy the Source's `.venv` (see below), so in a copied workspace
+the virtual environment exists only if an agent created it during the run; with **Permanently
+modify source** the run uses the folder's own `.venv`. When the chosen Python has no pytest, the step
+fails with a message that says so: install pytest with the project's dependencies in a virtual
+environment in the project folder, as above, or set the test command. rightcommit does not create
+virtual environments or install packages by itself.
 
 When a run copies a Source folder into its workspace, it leaves out `.git`, `target` and these
 dependency, cache and generated build folders, at any depth: `.venv`, `venv`, `__pycache__`,
@@ -304,6 +312,13 @@ these names is copied. A project that commits one of these folders does not find
 workspace; with **Permanently modify source** the run works in the folder itself and keeps it.
 These folders do not count toward the copy size limit, the symbolic links inside them do not stop
 a run, and they are not shown in the Artifacts view, the workspace in Storage or the result ZIP.
+Storage hides them inside `/sources` too, where a folder's `.git` and `target` stay visible, and
+does not suggest them as Source folders; downloading a `/sources` folder as ZIP leaves them out
+and keeps the folder's `.git` and `target`.
+The local commit leaves out the untracked files inside them, in a copy and in a permanent Source,
+and its confirmation does not list them: before committing, rightcommit adds the missing folder
+names to the repository's `.git/info/exclude`, keeping the lines already there. It does not change
+`.gitignore`, and files that Git already tracks inside these folders are still committed.
 
 To add tools, build your own image on top of rightcommit. In the rightcommit folder:
 

@@ -373,6 +373,23 @@ fn ownership_walk_never_enters_links() {
 }
 
 #[test]
+fn ownership_walk_skips_only_entries_that_grant_no_more() {
+    let (file, dir, link) = (libc::S_IFREG as u32, libc::S_IFDIR as u32, libc::S_IFLNK as u32);
+    // A read-only file of a host folder (a Git object) keeps its owner, whatever it is.
+    for mode in [0o444, 0o400, 0o440, 0o555, 0o000] {
+        assert!(agents::owner_can_stay(file | mode, 0, 0, 20001, 20001), "{mode:o}");
+    }
+    // Any write bit, a folder or a link with another owner still needs the new owner.
+    for mode in [file | 0o644, file | 0o200, file | 0o020, file | 0o002, file | 0o466, dir | 0o555, dir | 0o444, link | 0o444, link | 0o777] {
+        assert!(!agents::owner_can_stay(mode, 0, 0, 20001, 20001), "{mode:o}");
+        assert!(!agents::owner_can_stay(mode, 20001, 0, 20001, 20001), "{mode:o}");
+        assert!(!agents::owner_can_stay(mode, 0, 20001, 20001, 20001), "{mode:o}");
+        // Already owned by the wanted user and group: nothing left to change.
+        assert!(agents::owner_can_stay(mode, 20001, 20001, 20001, 20001), "{mode:o}");
+    }
+}
+
+#[test]
 fn source_copy_limit_is_inclusive_and_preflight_rejects_oversized_files() {
     let d = tempfile::tempdir().unwrap();
     let source = d.path().join("source");
@@ -1769,6 +1786,31 @@ async fn missing_test_program_is_named() {
     ci.test_command.clear();
     let error = crate::connectors::execute(&a, 1, &r, &ci).await.unwrap_err().to_string();
     assert!(error.contains("Imposta il comando di test nel nodo Connection"), "{error}");
+}
+
+#[tokio::test]
+async fn python_tests_run_with_the_workspace_virtual_environment() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = tempfile::tempdir().unwrap();
+    let a = app(d.path());
+    let (r, ci) = local_test_run(&a).await;
+    let root = Path::new(&r.workspace);
+    std::fs::remove_file(root.join("Cargo.toml")).unwrap();
+    std::fs::write(root.join("pyproject.toml"), "[project]\nname = \"demo\"\n").unwrap();
+    // A virtual environment the run created, whose Python has no pytest yet.
+    let python = root.join(".venv/bin/python");
+    std::fs::create_dir_all(python.parent().unwrap()).unwrap();
+    std::fs::write(&python, "#!/bin/sh\necho \"$0: No module named $2\" >&2\nexit 1\n").unwrap();
+    std::fs::set_permissions(&python, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let error = crate::connectors::execute(&a, 1, &r, &ci).await.unwrap_err().to_string();
+    assert!(logged(&a, &r).iter().any(|t| t == "Comando di test: .venv/bin/python -m pytest (rilevato da pyproject.toml)"));
+    let (first, rest) = error.split_once('\n').unwrap();
+    assert!(first.starts_with("pytest is not installed for .venv/bin/python. Install it with the project's dependencies in a virtual environment"), "{error}");
+    assert!(rest.starts_with(".venv/bin/python: ") && rest.contains("No module named pytest"), "{error}");
+    // Once pytest is there, the same command passes.
+    std::fs::write(&python, "#!/bin/sh\necho \"1 passed with $0\"\n").unwrap();
+    let out = crate::connectors::execute(&a, 1, &r, &ci).await.unwrap();
+    assert!(out.summary.contains("1 passed with .venv/bin/python"), "{}", out.summary);
 }
 
 #[tokio::test]

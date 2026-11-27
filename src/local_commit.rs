@@ -10,6 +10,11 @@
 //! waits for approval, like a Connection that writes to an external service. The preview
 //! changes nothing in the repository, and the approval holds only for the exact content
 //! that was shown: the commit checks it again just before committing.
+//!
+//! Untracked files inside the dependency and cache folders of `project_tree::DEPENDENCY_DIRS`
+//! (`.venv`, `node_modules`, …) are never part of the run's changes, in the preview or the
+//! commit, and before staging the commit lists those folders in the repository's
+//! `.git/info/exclude`. Files git already tracks in them are committed as any other file.
 use crate::{App, agents, model::Run};
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
@@ -179,6 +184,10 @@ async fn status(app: &App, uid: i64, root: &Path, scope: &Path) -> Result<Vec<Ch
             }
             b'?' => {
                 let path = record.get(2..).context("Stato Git non riconosciuto")?;
+                // As `.git/info/exclude` leaves them out once the commit has written it.
+                if dependency(path) {
+                    continue;
+                }
                 // With every untracked file listed, a directory is a nested repository.
                 let kind = if path.ends_with(b"/") { Kind::Unsupported } else { Kind::File };
                 changes.push(Change { path: path.to_vec(), index: "untracked".into(), kind });
@@ -188,6 +197,48 @@ async fn status(app: &App, uid: i64, root: &Path, scope: &Path) -> Result<Vec<Ch
     }
     Ok(changes)
 }
+
+/// A path git lists inside a dependency or cache folder at any depth: one of its parent folders
+/// is named in `project_tree::DEPENDENCY_DIRS`. A nested repository is listed as a folder with a
+/// trailing slash, so `node_modules/` counts as well. Git does not enter links, so every parent
+/// is a real folder, as the `name/` lines of `.git/info/exclude` require.
+fn dependency(path: &[u8]) -> bool {
+    let mut parents: Vec<&[u8]> = path.split(|b| *b == b'/').collect();
+    // The entry's own name, or the empty name after a folder's slash.
+    parents.pop();
+    parents.iter().any(|name| crate::project_tree::dependency_dir(os(name), false))
+}
+
+/// Lists every `project_tree::DEPENDENCY_DIRS` folder in the repository's `.git/info/exclude`,
+/// so neither this commit nor a later `git add --all` takes the `.venv` or `node_modules` a run
+/// created. Only missing lines are added and the rest of the file is kept; `.gitignore` is not
+/// touched. Git names the file, which in a linked worktree is the main repository's one. The
+/// file is written by a shell run as the user, like git: the repository is the user's, and the
+/// server must not follow a link the user placed there.
+pub(crate) async fn exclude_dependency_dirs(app: &App, uid: i64, root: &Path) -> Result<()> {
+    let out = agents::git_bytes(app, uid, root, &[os(b"rev-parse"), os(b"--git-path"), os(b"info/exclude")], 30).await?;
+    // Always a path with a folder, `.git/info/exclude` or an absolute one.
+    let file = out.strip_suffix(b"\n").unwrap_or(&out).to_vec();
+    const SCRIPT: &str = r#"file=$1; shift
+mkdir -p -- "${file%/*}" || exit 1
+[ -e "$file" ] || : > "$file" || exit 1
+missing=
+for line in "$@"; do
+  grep -qxF -e "$line" -- "$file" || missing="$missing$line
+"
+done
+[ -n "$missing" ] || exit 0
+if [ -s "$file" ] && [ -n "$(tail -c 1 -- "$file")" ]; then printf '\n' >> "$file" || exit 1; fi
+printf '%s' "$missing" >> "$file""#;
+    let lines: Vec<String> = std::iter::once(EXCLUDE_HEADER.to_owned())
+        .chain(crate::project_tree::DEPENDENCY_DIRS.iter().map(|name| format!("{name}/")))
+        .collect();
+    let mut args = vec![OsStr::new("-c"), OsStr::new(SCRIPT), OsStr::new("sh"), os(&file)];
+    args.extend(lines.iter().map(OsStr::new));
+    agents::program_bytes(app, uid, "sh", root, &args, 30).await?;
+    Ok(())
+}
+const EXCLUDE_HEADER: &str = "# Dependency and cache folders, left out of rightcommit's local commit";
 
 /// The commit the branch points to, or `None` on a branch that has no commit yet.
 async fn head(app: &App, uid: i64, root: &Path) -> Result<Option<String>> {
@@ -288,6 +339,10 @@ async fn plan(app: &App, uid: i64, r: &Run) -> Result<Plan> {
         let (mut kept, mut review) = (vec![], vec![]);
         for (key, before) in &plan {
             let path = hex::decode(key)?;
+            // Runs started by earlier versions recorded these too; they are not in the commit.
+            if before.starts_with("untracked|") && dependency(&path) {
+                continue;
+            }
             let index = current.get(path.as_slice()).map_or("clean", |c| c.index.as_str());
             // An edit that was there before the run must still be exactly as it was; one that
             // could not be read then cannot be shown unchanged now.
@@ -328,8 +383,11 @@ pub(crate) async fn commit(app: &App, uid: i64, r: &Run, approved: Option<&str>)
         return Ok(None);
     }
     if !run.is_empty() {
+        exclude_dependency_dirs(app, uid, &root).await?;
         // `--only` builds the commit from these paths alone; other staged entries stay staged.
-        let mut add = vec![os(b"--literal-pathspecs"), os(b"add"), os(b"--all"), os(b"--")];
+        // `--force`: a file git tracks inside an ignored folder, such as one in node_modules,
+        // is refused without it. Every path here is one git status listed, never an ignored one.
+        let mut add = vec![os(b"--literal-pathspecs"), os(b"add"), os(b"--all"), os(b"--force"), os(b"--")];
         add.extend(run.iter().map(|p| os(p)));
         agents::git_bytes(app, uid, &root, &add, 60).await?;
         let mut commit = vec![
@@ -738,6 +796,100 @@ mod tests {
         assert!(!out.summary.contains("outside.txt"), "{}", out.summary);
         assert_eq!(committed(&ws), ["app/a.txt"]);
         assert_eq!(lines(git(&ws, &["status", "--porcelain", "--untracked-files=all"])), [" M outside.txt", "?? elsewhere.txt"]);
+    }
+
+    /// What a run leaves when it installs dependencies: a virtual environment as `python3 -m venv`
+    /// makes it, node_modules with a package that is a Git repository, and caches.
+    fn dependencies(ws: &Path) {
+        write(ws, ".venv/lib/python3/site-packages/pkg.py", "x = 1\n");
+        write(ws, ".venv/pyvenv.cfg", "home = /usr/bin\n");
+        std::os::unix::fs::symlink("/usr/bin/python3", ws.join(".venv/lib/python3/python3")).unwrap();
+        write(ws, "web/node_modules/pkg/index.js", "module.exports = 1\n");
+        git(&ws.join("web/node_modules/pkg"), &["init", "-q"]);
+        write(ws, "src/__pycache__/app.cpython-311.pyc", "cache\n");
+        write(ws, "services/api/venv/bin/activate", "# activate\n");
+    }
+    fn excluded(dir: &Path) -> String {
+        let file = git(dir, &["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"]);
+        std::fs::read_to_string(file.trim()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn dependency_folders_created_by_the_run_stay_out_of_the_commit() {
+        let d = tempfile::tempdir().unwrap();
+        let a = crate::tests::app(d.path());
+        let (r, _, ws) = project(&a, "copy", &[("app.py", "print(1)\n")], |_| {}).await;
+        // The copy's own repository lists them from the start.
+        assert!(excluded(&ws).lines().any(|l| l == ".venv/"), "{}", excluded(&ws));
+        dependencies(&ws);
+        write(&ws, "app.py", "print(2)\n");
+        // A file named like a dependency folder is project content.
+        write(&ws, "services/venv", "VENV_NAME=api\n");
+        let r = at_commit(&a, r, ExecutionMode::Interactive, true);
+        engine::drive(&a, 1, &r.id).await.unwrap();
+        // The confirmation shows exactly what the commit takes.
+        let preview = waiting(&a, &r);
+        assert_eq!(paths(&preview), ["app.py", "services/venv"]);
+        engine::decide(&a, &reviewer(), &r.id, "approve", "").unwrap();
+        engine::drive(&a, 1, &r.id).await.unwrap();
+        assert_eq!(a.store.run(1, &r.id).unwrap().status, "completed");
+        assert_eq!(committed(&ws), ["app.py", "services/venv"]);
+        assert_eq!(git(&ws, &["ls-files", "--others", "--exclude-standard"]), "");
+        assert!(!ws.join(".gitignore").exists());
+    }
+
+    #[tokio::test]
+    async fn the_exclude_is_completed_once_and_tracked_dependency_files_still_commit() {
+        let d = tempfile::tempdir().unwrap();
+        let a = crate::tests::app(d.path());
+        // Committed with the project before the run: git keeps tracking it.
+        let files = [("a.txt", "a\n"), ("vendor/node_modules/patched.js", "v1\n"), (".gitignore", "*.log\n")];
+        let (mut r, commit, ws) = project(&a, "direct", &files, |dir| {
+            std::fs::write(dir.join(".git/info/exclude"), "# user's own rules\nsecrets.txt").unwrap();
+            // Already there before the run, untracked: neither kept nor stopping the commit.
+            write(dir, ".venv/lib/old.py", "old\n");
+        }).await;
+        // A run started by an earlier version recorded the untracked .venv file as well.
+        let mut recorded: std::collections::BTreeMap<String, String> = serde_json::from_str(&r.context[super::START]).unwrap();
+        assert!(recorded.is_empty(), "{recorded:?}");
+        recorded.insert(hex::encode(".venv/lib/old.py"), "untracked|file:false:0".into());
+        r.context.insert(super::START.into(), serde_json::to_string(&recorded).unwrap());
+        dependencies(&ws);
+        write(&ws, ".venv/lib/old.py", "changed by the run\n");
+        write(&ws, "a.txt", "run\n");
+        write(&ws, "vendor/node_modules/patched.js", "v2\n");
+        let out = crate::connectors::execute(&a, 1, &r, &commit).await.unwrap();
+        assert!(!out.summary.contains("left out"), "{}", out.summary);
+        assert_eq!(committed(&ws), ["a.txt", "vendor/node_modules/patched.js"]);
+        let exclude = excluded(&ws);
+        assert!(exclude.starts_with("# user's own rules\nsecrets.txt\n# Dependency and cache folders"), "{exclude}");
+        for name in crate::project_tree::DEPENDENCY_DIRS {
+            assert_eq!(exclude.lines().filter(|l| *l == format!("{name}/")).count(), 1, "{name}");
+        }
+        assert_eq!(std::fs::read_to_string(ws.join(".gitignore")).unwrap(), "*.log\n");
+        // A second commit adds nothing to the file.
+        write(&ws, "a.txt", "again\n");
+        crate::connectors::execute(&a, 1, &r, &commit).await.unwrap();
+        assert_eq!(excluded(&ws), exclude);
+        assert_eq!(committed(&ws), ["a.txt"]);
+    }
+
+    #[tokio::test]
+    async fn a_linked_worktree_writes_the_main_repository_exclude() {
+        let d = tempfile::tempdir().unwrap();
+        let a = crate::tests::app(d.path());
+        let feature = a.sources.join("feature");
+        let (r, commit, ws) = project_at(&a, "direct", "feature", &[("a.txt", "a\n")], |dir| {
+            git(dir, &["worktree", "add", "-q", "-b", "feature", &feature.to_string_lossy()]);
+        }).await;
+        let main = a.sources.join("project");
+        assert!(ws.join(".git").is_file());
+        dependencies(&ws);
+        write(&ws, "a.txt", "run\n");
+        crate::connectors::execute(&a, 1, &r, &commit).await.unwrap();
+        assert_eq!(committed(&ws), ["a.txt"]);
+        assert!(std::fs::read_to_string(main.join(".git/info/exclude")).unwrap().lines().any(|l| l == "node_modules/"));
+        assert_eq!(git(&ws, &["ls-files", "--others", "--exclude-standard"]), "");
     }
 
     #[tokio::test]

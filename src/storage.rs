@@ -206,15 +206,26 @@ fn resolve(base: &Path, s: &str) -> anyhow::Result<PathBuf> {
     }
     Ok(p)
 }
-/// Run workspaces hide and export neither `.git`, `target` nor dependency and cache folders, at
-/// any depth: see `project_tree::omitted`. /sources and examples show every real folder.
-/// A path component that does not exist yet counts as a folder.
-fn workspace_omitted(base: &Path, rest: &str) -> bool {
+/// Entries Storage neither lists, measures nor opens by path, at any depth. Run workspaces hide
+/// `.git`, `target` and the dependency and cache folders (`project_tree::omitted`); /sources and
+/// examples hide only the dependency and cache folders (`project_tree::dependency_dir`), as their
+/// ZIP leaves them out, and show the user's own `.git` and `target`. A file with one of these names
+/// is shown. Uploads into such a folder in /sources are not refused.
+fn hidden(root: &str, name: &std::ffi::OsStr, is_file: bool) -> bool {
+    if root == "workspaces" {
+        crate::project_tree::omitted(name, is_file)
+    } else {
+        crate::project_tree::dependency_dir(name, is_file)
+    }
+}
+/// Whether a component of `rest` under `base` is hidden. A component that does not exist yet
+/// counts as a folder.
+fn hidden_path(root: &str, base: &Path, rest: &str) -> bool {
     let mut cursor = base.to_path_buf();
     Path::new(rest).components().any(|c| {
         cursor.push(c);
         let is_file = std::fs::symlink_metadata(&cursor).is_ok_and(|m| m.is_file());
-        crate::project_tree::omitted(c.as_os_str(), is_file)
+        hidden(root, c.as_os_str(), is_file)
     })
 }
 fn workspace_path(app: &App, uid: i64, path: &str) -> anyhow::Result<PathBuf> {
@@ -229,17 +240,19 @@ fn workspace_path(app: &App, uid: i64, path: &str) -> anyhow::Result<PathBuf> {
         "Workspace non valido"
     );
     anyhow::ensure!(
-        !workspace_omitted(&base, rest),
+        !hidden_path("workspaces", &base, rest),
         "Cartella interna esclusa dall'esportazione"
     );
     resolve(&base, rest)
 }
 fn storage_path(app: &App, uid: i64, q: &Location) -> anyhow::Result<PathBuf> {
     if q.root == "workspaces" {
-        workspace_path(app, uid, &q.path)
-    } else {
-        resolve(&root(app, &q.root)?, &q.path)
+        return workspace_path(app, uid, &q.path);
     }
+    let base = root(app, &q.root)?;
+    relative(&q.path)?;
+    anyhow::ensure!(!hidden_path(&q.root, &base, &q.path), "Cartella interna esclusa dall'esportazione");
+    resolve(&base, &q.path)
 }
 fn reports(
     app: &App,
@@ -288,9 +301,10 @@ fn report_view(app: &App, uid: i64, path: &str) -> anyhow::Result<Option<Value>>
     }
     Ok(None)
 }
-/// Logical byte totals, never file contents or symlink targets. Runs on a
-/// blocking worker; directory listings remain usable while totals are computed.
-fn folder_bytes(path: &Path, omit_build: bool) -> anyhow::Result<u64> {
+/// Logical byte totals, never file contents or symlink targets, of what Storage shows in `root`:
+/// without the folders it hides. Runs on a blocking worker; directory listings remain usable
+/// while totals are computed.
+fn folder_bytes(path: &Path, root: &str) -> anyhow::Result<u64> {
     let meta = std::fs::symlink_metadata(path)?;
     anyhow::ensure!(!meta.is_symlink(), "Link simbolico non supportato");
     if meta.is_file() {
@@ -300,10 +314,10 @@ fn folder_bytes(path: &Path, omit_build: bool) -> anyhow::Result<u64> {
     for entry in std::fs::read_dir(path)? {
         let entry = entry?;
         let kind = entry.file_type()?;
-        if kind.is_symlink() || (omit_build && crate::project_tree::omitted(&entry.file_name(), kind.is_file())) {
+        if kind.is_symlink() || hidden(root, &entry.file_name(), kind.is_file()) {
             continue;
         }
-        total = total.saturating_add(folder_bytes(&entry.path(), omit_build)?);
+        total = total.saturating_add(folder_bytes(&entry.path(), root)?);
     }
     Ok(total)
 }
@@ -323,7 +337,7 @@ fn logical_bytes_cached(
         if let Some(bytes) = cache.get(path) {
             *bytes
         } else {
-            let bytes = folder_bytes(path, q.root == "workspaces")?;
+            let bytes = folder_bytes(path, &q.root)?;
             cache.insert(path.clone(), bytes);
             bytes
         }
@@ -439,9 +453,7 @@ pub async fn list(
     for e in std::fs::read_dir(p)?.take(10001) {
         let e = e?;
         let m = e.path().symlink_metadata()?;
-        if m.file_type().is_symlink()
-            || (q.root == "workspaces" && crate::project_tree::omitted(&e.file_name(), m.is_file()))
-        {
+        if m.file_type().is_symlink() || hidden(&q.root, &e.file_name(), m.is_file()) {
             continue;
         }
         entries.push(
@@ -586,7 +598,8 @@ pub async fn download(
     } else {
         storage_path(&app, u.id, &q)?
     };
-    let omit = if q.root == "workspaces" { crate::project_tree::export_rules().to_string() } else { "{}".into() };
+    // Dependency folders such as .venv hold links (bin/python3, lib64) that would stop the ZIP.
+    let omit = if q.root == "workspaces" { crate::project_tree::export_rules() } else { crate::project_tree::source_export_rules() }.to_string();
     let bytes=tokio::task::spawn_blocking(move||->anyhow::Result<Vec<u8>>{
  let mut child=std::process::Command::new("python3").args(["-c",r#"
 import sys,os,zipfile,io
@@ -698,8 +711,11 @@ mod tests {
         std::fs::create_dir(d.path().join("target")).unwrap();
         std::fs::write(d.path().join("target/cache"), b"cache").unwrap();
         std::os::unix::fs::symlink(d.path(), d.path().join("loop")).unwrap();
-        assert_eq!(folder_bytes(d.path(), false).unwrap(), 4 * 1024 * 1024 * 1024 + 8);
-        assert_eq!(folder_bytes(d.path(), true).unwrap(), 4 * 1024 * 1024 * 1024 + 3);
+        std::fs::create_dir(d.path().join(".venv")).unwrap();
+        std::fs::write(d.path().join(".venv/pyvenv.cfg"), b"venv").unwrap();
+        // /sources counts target and leaves .venv out; a workspace leaves both out.
+        assert_eq!(folder_bytes(d.path(), "sources").unwrap(), 4 * 1024 * 1024 * 1024 + 8);
+        assert_eq!(folder_bytes(d.path(), "workspaces").unwrap(), 4 * 1024 * 1024 * 1024 + 3);
     }
     #[tokio::test]
     async fn workspace_access_is_owned_and_excludes_internal_paths() {
@@ -819,10 +835,105 @@ mod tests {
         for hidden in [".venv", "api/venv", "node_modules", ".dart_tool", ".git/"] {
             assert!(!listed.contains(hidden), "{hidden} in ZIP:\n{listed}");
         }
-        // /sources shows every real folder, as before.
+    }
+    #[tokio::test]
+    async fn source_folders_export_without_dependency_folders() {
+        use axum::response::IntoResponse;
+        let d = tempfile::tempdir().unwrap();
+        // The ZIP refuses a link anywhere above its files, and the macOS temp folder sits behind one.
+        let base = std::fs::canonicalize(d.path()).unwrap();
+        let app = crate::tests::app(&base);
+        let user = || User { id: 1, email: String::new() };
+        let query = |root: &str, path: &str| Query(Location { root: root.into(), path: path.into(), directory: false });
         let source = app.sources.join("project");
-        std::fs::create_dir_all(source.join(".venv/lib")).unwrap();
-        assert_eq!(names(list(State(app.clone()), user(), query("sources", "project".into())).await.unwrap().0), [".venv"]);
+        std::fs::create_dir_all(source.join("src")).unwrap();
+        std::fs::write(source.join("src/app.py"), "print(1)\n").unwrap();
+        std::fs::write(source.join("services-venv"), "x").unwrap();
+        crate::source_access::tests::venv(&source.join(".venv"));
+        crate::source_access::tests::venv(&source.join("services/api/venv"));
+        std::fs::write(source.join("services/venv"), "a file, not a folder").unwrap();
+        std::fs::create_dir_all(source.join("web/node_modules/.bin")).unwrap();
+        std::os::unix::fs::symlink("/etc", source.join("web/node_modules/.bin/tool")).unwrap();
+        // The user's own repository and build output stay in the ZIP of their folder.
+        std::fs::create_dir_all(source.join(".git")).unwrap();
+        std::fs::write(source.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::create_dir_all(source.join("target")).unwrap();
+        std::fs::write(source.join("target/out.txt"), "built\n").unwrap();
+        let listed = |bytes: &[u8]| {
+            let zip = base.join("source.zip");
+            std::fs::write(&zip, bytes).unwrap();
+            let out = std::process::Command::new("python3")
+                .args(["-c", "import sys,zipfile;print('\\n'.join(zipfile.ZipFile(sys.argv[1]).namelist()))"])
+                .arg(&zip).output().unwrap();
+            String::from_utf8(out.stdout).unwrap()
+        };
+        // It used to fail on the links inside .venv and node_modules.
+        for path in ["project", "project/services"] {
+            let response = download(State(app.clone()), user(), query("sources", path)).await.unwrap().into_response();
+            let names = listed(&axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap());
+            assert!(names.lines().any(|l| l.ends_with("services/venv")), "{names}");
+            for hidden in [".venv", "api/venv", "node_modules"] {
+                assert!(!names.contains(hidden), "{hidden} in ZIP of {path}:\n{names}");
+            }
+            if path == "project" {
+                for kept in ["project/src/app.py", "project/.git/HEAD", "project/target/out.txt", "project/services-venv"] {
+                    assert!(names.lines().any(|l| l == kept), "{kept} missing:\n{names}");
+                }
+            }
+        }
+        // Any other link still stops the export.
+        std::os::unix::fs::symlink("/etc", source.join("src/escape")).unwrap();
+        assert!(download(State(app.clone()), user(), query("sources", "project")).await.is_err());
+    }
+    #[tokio::test]
+    async fn source_folders_hide_dependency_folders_in_storage() {
+        let d = tempfile::tempdir().unwrap();
+        let app = crate::tests::app(d.path());
+        let user = || User { id: 1, email: String::new() };
+        let query = |root: &str, path: &str| Query(Location { root: root.into(), path: path.into(), directory: false });
+        let names = |listing: Value| listing["entries"].as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap().to_owned()).collect::<Vec<_>>();
+        let source = app.sources.join("project");
+        std::fs::create_dir_all(source.join("src")).unwrap();
+        std::fs::write(source.join("src/app.py"), "print(1)\n").unwrap();
+        crate::source_access::tests::venv(&source.join(".venv"));
+        crate::source_access::tests::venv(&source.join("services/api/venv"));
+        std::fs::write(source.join("services/venv"), "a file, not a folder").unwrap();
+        std::fs::create_dir_all(source.join("web/node_modules/pkg")).unwrap();
+        std::fs::write(source.join("web/node_modules/pkg/index.js"), "x").unwrap();
+        std::fs::create_dir_all(source.join(".git")).unwrap();
+        std::fs::write(source.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::create_dir_all(source.join("target")).unwrap();
+        std::fs::write(source.join("target/out.txt"), "built\n").unwrap();
+        // A dependency folder directly in /sources is neither listed nor offered as a Source folder.
+        std::fs::create_dir_all(app.sources.join("node_modules")).unwrap();
+        let ls = |path: &'static str| list(State(app.clone()), user(), query("sources", path));
+        assert_eq!(names(ls("").await.unwrap().0), ["project"]);
+        // The user's own .git and target stay visible, a file named venv too, at any depth.
+        assert_eq!(names(ls("project").await.unwrap().0), [".git", "services", "src", "target", "web"]);
+        assert_eq!(names(ls("project/services").await.unwrap().0), ["api", "venv"]);
+        assert!(names(ls("project/services/api").await.unwrap().0).is_empty());
+        assert!(names(ls("project/web").await.unwrap().0).is_empty());
+        assert_eq!(ls("project/services/venv").await.unwrap().0["file"], true);
+        // Typed by hand, as in a workspace: neither listed, opened, measured, indexed nor downloaded.
+        for path in [".venv", ".venv/pyvenv.cfg", "services/api/venv", "web/node_modules/pkg/index.js"] {
+            let path = format!("project/{path}");
+            assert!(list(State(app.clone()), user(), query("sources", &path)).await.is_err(), "{path}");
+            assert!(download(State(app.clone()), user(), query("sources", &path)).await.is_err(), "{path}");
+            assert!(rag_source(&app, 1, "sources", &path).is_err(), "{path}");
+            assert!(logical_bytes(&app, 1, &Location { root: "sources".into(), path, directory: false }).is_err());
+        }
+        assert!(storage_path(&app, 1, &Location { root: "examples".into(), path: "demo/.venv".into(), directory: false }).is_err());
+        // Folder sizes count what Storage shows: .git and target, not the dependency folders.
+        let sizes = entry_sizes(State(app.clone()), user(), query("sources", "project")).await.unwrap().0;
+        assert_eq!(sizes["sizes"]["services"], "a file, not a folder".len());
+        assert_eq!(sizes["sizes"]["web"], 0);
+        assert_eq!(sizes["sizes"][".git"], "ref: refs/heads/main\n".len());
+        assert!(sizes["sizes"].get(".venv").is_none());
+        // Uploading into one is not refused, and the guide does not suggest them as Source folders.
+        let upload_query = Query(Location { root: "sources".into(), path: "project/.venv/notes.txt".into(), directory: false });
+        assert!(upload(State(app.clone()), user(), upload_query, Bytes::from_static(b"x")).await.is_ok());
+        let guide = crate::manager::design_guide(&app, 1).unwrap();
+        assert_eq!(guide["source_folders"], json!(["project"]));
     }
     #[test]
     fn rejects_escape_and_symlinks() {

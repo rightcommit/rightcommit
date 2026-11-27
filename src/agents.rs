@@ -77,13 +77,31 @@ pub fn own_tree(app: &App, uid: i64, p: &Path) -> Result<()> {
     // changed relative to a folder opened without following links, never by its path.
     let id = (20000 + uid) as libc::uid_t;
     walk_nofollow(p, &mut |dir, name| {
-        ensure!(
-            unsafe { libc::fchownat(dir, name.as_ptr(), id, id as libc::gid_t, libc::AT_SYMLINK_NOFOLLOW) } == 0,
-            "chown fallito: {}",
-            std::io::Error::last_os_error()
-        );
-        Ok(())
+        if unsafe { libc::fchownat(dir, name.as_ptr(), id, id as libc::gid_t, libc::AT_SYMLINK_NOFOLLOW) } == 0 {
+            return Ok(());
+        }
+        let error = std::io::Error::last_os_error();
+        // Docker Desktop on macOS refuses even root a new owner for a read-only file of a mounted
+        // host folder (every Git object of a repository made on the Mac): such an entry, looked at
+        // relative to the same folder without following it, is skipped only when it grants no more.
+        if matches!(error.raw_os_error(), Some(libc::EACCES | libc::EPERM)) {
+            let mut st: libc::stat = unsafe { std::mem::zeroed() };
+            if unsafe { libc::fstatat(dir, name.as_ptr(), &mut st, libc::AT_SYMLINK_NOFOLLOW) } == 0
+                && owner_can_stay(st.st_mode as u32, st.st_uid, st.st_gid, id, id as libc::gid_t)
+            {
+                return Ok(());
+            }
+        }
+        bail!("chown fallito: {error}")
     })
+}
+/// Whether an entry whose owner cannot be changed may stay as it is: it already has the wanted
+/// owner, or it is a regular file without any write bit, which nobody was going to write and the
+/// user can still read when its mode allows; leaving it gives the user less access, never more.
+/// Folders, links and writable files always need the new owner.
+pub(crate) fn owner_can_stay(mode: u32, uid: u32, gid: u32, wanted_uid: u32, wanted_gid: u32) -> bool {
+    (uid == wanted_uid && gid == wanted_gid)
+        || (mode & libc::S_IFMT as u32 == libc::S_IFREG as u32 && mode & 0o222 == 0)
 }
 
 /// Calls `visit(folder, name)` for every entry below `root`, at any depth. Each folder is opened
@@ -778,8 +796,13 @@ pub async fn tool(
 /// Git with raw arguments and raw standard output, for paths that are not valid UTF-8
 /// or that the text cleanup of `tool` could alter. Errors carry the redacted stderr.
 pub async fn git_bytes(app: &App, uid: i64, cwd: &Path, args: &[&std::ffi::OsStr], timeout: u64) -> Result<Vec<u8>> {
+    program_bytes(app, uid, "git", cwd, args, timeout).await
+}
+/// Like `git_bytes` for another program from the search path, run as the user: for a file the
+/// server must change in a folder the user owns without writing it as itself.
+pub(crate) async fn program_bytes(app: &App, uid: i64, program: &str, cwd: &Path, args: &[&std::ffi::OsStr], timeout: u64) -> Result<Vec<u8>> {
     let s = app.store.settings(uid)?;
-    let mut c = base_command(app, uid, "git", cwd)?;
+    let mut c = base_command(app, uid, program, cwd)?;
     c.args(args);
     let child = c.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
     let _group = ProcessGroup(child.id().context("PID non disponibile")?);
@@ -788,7 +811,7 @@ pub async fn git_bytes(app: &App, uid: i64, cwd: &Path, args: &[&std::ffi::OsStr
         .context("Tempo massimo comando superato")??;
     ensure!(
         out.status.success(),
-        "git: {}",
+        "{program}: {}",
         redact_for_user(app, uid, &String::from_utf8_lossy(&out.stderr), &s).chars().take(4000).collect::<String>()
     );
     Ok(out.stdout)

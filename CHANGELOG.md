@@ -3,6 +3,38 @@
 What changed in each version of rightcommit. Releases are also listed on
 [GitHub](https://github.com/rightcommit/rightcommit/releases).
 
+## [1.10.6] - 2026-11-27
+
+### Changed
+
+- The local commit leaves out the dependency and cache folders a run created (`.venv`,
+  `node_modules`, `__pycache__`, `.pytest_cache` and the rest of the list in INSTALL.md),
+  in a copied workspace and in a permanent Source. Untracked files inside them are not
+  committed and are not listed in the commit confirmation. Before committing, rightcommit
+  adds the missing folder names to the repository's `.git/info/exclude`; `.gitignore` is not
+  changed, and files that Git already tracks inside these folders are still committed.
+- The Local CI step runs the detected Python tests with the project's virtual environment:
+  `.venv/bin/python -m pytest` when `.venv/bin/python` exists in the run workspace, then
+  `venv/bin/python`, otherwise `python3 -m pytest`. A test command set in the node is used as
+  written. When that Python has no pytest, the error starts with a line that says so and how
+  to install it.
+- Storage hides the dependency and cache folders inside /sources and examples too, at any
+  depth: they are not listed, counted in folder sizes, opened by a typed path or suggested
+  as Source folders. The folder's own `.git` and `target` stay visible, and so does a file
+  with one of those names.
+- The Activity log shows in Italian the first line of messages the server writes in English.
+
+### Fixed
+
+- Downloading a /sources folder as ZIP failed when it contained a `.venv` or `node_modules`,
+  because of the symbolic links inside them. The ZIP now leaves the dependency and cache
+  folders out and keeps the folder's `.git` and `target`.
+- With Docker Desktop on macOS, a run on a permanent Source that is a Git repository created
+  on the Mac failed at start with "chown fallito: Permission denied": read-only files of a
+  mounted folder, such as Git objects, cannot change owner. They are now left as they are.
+- The local commit failed with "paths are ignored" when the run changed a file that Git
+  tracks inside an ignored folder.
+
 ## [1.10.5] - 2026-11-27
 
 ### Added
