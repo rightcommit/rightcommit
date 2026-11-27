@@ -1137,6 +1137,34 @@ impl PiTurnStatus {
     }
 }
 
+/// `codex exec --json` writes `error` both for a stream retry ("Reconnecting... 1/5") and for a
+/// fatal error, and does not say which: a fatal error also ends the turn with `turn.failed` and a
+/// non-zero exit, a retry that works is followed by `turn.completed` and exit 0. So an `error`
+/// fails the turn unless a `turn.completed` follows it and Codex exits successfully.
+#[derive(Default)]
+struct CodexTurnStatus {
+    error: Option<String>,
+    completed_after_error: bool,
+}
+
+impl CodexTurnStatus {
+    fn observe(&mut self, kind: &str, event: &Value) {
+        match kind {
+            "error" => {
+                self.error = Some(event.to_string());
+                self.completed_after_error = false;
+            }
+            "turn.completed" => self.completed_after_error = true,
+            _ => {}
+        }
+    }
+
+    /// The error that fails the turn, if any; `turn.failed` is reported on its own.
+    fn failure(self, exited_successfully: bool) -> Option<String> {
+        self.error.filter(|_| !(self.completed_after_error && exited_successfully))
+    }
+}
+
 /// Pi refuses to start when two packages register the same tool, which fails every turn.
 pub(crate) fn explain_agent_failure(runtime: &str, detail: String) -> String {
     if runtime == "pi" && detail.contains("conflicts with") {
@@ -1271,6 +1299,25 @@ pub async fn turn(app: &App, uid: i64, run: &mut Run, request: Turn<'_>) -> Resu
     })
 }
 
+/// `-c` overrides that give Codex the run's MCP bridge. Turns run with approval policy `never`, so
+/// the bridge's tools, which carry no annotations, must be approved by the server entry itself:
+/// otherwise a sandboxed turn refuses every call ("MCP tool call requires approval, but approval
+/// policy is never"); only danger-full-access approves them. Codex knows the key since 0.122.0 and
+/// ignores unknown server keys, so it is always passed.
+fn codex_mcp_overrides(exe: &str) -> Vec<String> {
+    [
+        ("command", serde_json::Value::from(exe).to_string()),
+        ("args", "[\"mcp-bridge\"]".into()),
+        ("env_vars", "[\"NODO_MCP_TOKEN\",\"NODO_MCP_ENDPOINT\"]".into()),
+        ("startup_timeout_sec", "30".into()),
+        ("tool_timeout_sec", "330".into()),
+        ("default_tools_approval_mode", "\"approve\"".into()),
+    ]
+    .into_iter()
+    .flat_map(|(key, value)| ["-c".to_string(), format!("mcp_servers.nodo.{key}={value}")])
+    .collect()
+}
+
 async fn turn_once(app: &App, uid: i64, run: &mut Run, request: Turn<'_>) -> Result<AgentResult> {
     crate::auth::ensure_active(app, uid)?;
     let Turn {
@@ -1376,21 +1423,8 @@ runtime: runtime.into(),
             if ["minimal", "low", "medium", "high", "xhigh"].contains(&cfg.effort.as_str()) {
                 cmd.args(["-c", &format!("model_reasoning_effort={:?}", cfg.effort)]);
             }
-            if let Some(mcp) = &mcp {
-                let exe = std::env::current_exe()?.to_string_lossy().into_owned();
-                for (key, value) in [
-                    ("command", serde_json::to_string(&exe)?),
-                    ("args", "[\"mcp-bridge\"]".into()),
-                    (
-                        "env_vars",
-                        "[\"NODO_MCP_TOKEN\",\"NODO_MCP_ENDPOINT\"]".into(),
-                    ),
-                    ("startup_timeout_sec", "30".into()),
-                    ("tool_timeout_sec", "330".into()),
-                ] {
-                    cmd.args(["-c", &format!("mcp_servers.nodo.{key}={value}")]);
-                }
-                let _ = mcp;
+            if mcp.is_some() {
+                cmd.args(codex_mcp_overrides(&std::env::current_exe()?.to_string_lossy()));
             }
             cmd.arg("-");
         }
@@ -1541,6 +1575,11 @@ runtime: runtime.into(),
     } else {
         None
     };
+    // Read before launch, like the Claude baseline. Without a readable log the resumed turn keeps
+    // the thread totals Codex reports.
+    let codex_baseline = (runtime == "codex" && !fresh)
+        .then(|| crate::codex_cost::thread_total(&app.data.join(format!("users/{uid}")), &session.native_id))
+        .flatten();
     let mut child = cmd
         .spawn()
         .with_context(|| format!("CLI {runtime} non disponibile"))?;
@@ -1564,6 +1603,7 @@ runtime: runtime.into(),
     let mut text = String::new();
     let mut failed = None;
     let mut pi_status = PiTurnStatus::default();
+    let mut codex_status = CodexTurnStatus::default();
     let mut seen_session = None;
     let mut count = 0usize;
     let started = std::time::Instant::now();
@@ -1575,6 +1615,7 @@ runtime: runtime.into(),
         *run.attempts.get(&node).unwrap_or(&1),
     );
     telemetry.claude_api_baseline = claude_api_baseline;
+    telemetry.codex_baseline = codex_baseline;
     let mut activity = crate::agent_activity::Tracker::default();
     emit(
         app,
@@ -1625,6 +1666,16 @@ runtime: runtime.into(),
             if runtime == "pi" {
                 pi_status.observe(ty, &v);
             }
+            if runtime == "codex" {
+                codex_status.observe(ty, &v);
+                if ty == "error" {
+                    // Retry notices stay visible as an ordinary line; the error of a failed turn
+                    // is reported with the turn.
+                    let message = v["message"].as_str().map_or_else(|| v.to_string(), str::to_owned);
+                    let notice = serde_json::json!({"runtime":runtime,"phase":"notice","detail":message});
+                    emit(app, uid, &rid, "activity", &node, &redact_turn(&notice.to_string()));
+                }
+            }
             if ty == "thread.started" {
                 seen_session = v["thread_id"].as_str().map(str::to_owned);
             }
@@ -1672,7 +1723,7 @@ runtime: runtime.into(),
                     failed = Some(v["message"].to_string());
                 }
             }
-            if ["turn.failed", "error"].contains(&ty) {
+            if ty == "turn.failed" || ty == "error" && runtime != "codex" {
                 failed = Some(v.to_string());
             }
             if let Some(m) = message {
@@ -1711,6 +1762,7 @@ runtime: runtime.into(),
     }
     let status = child.wait().await?;
     let stderr = err_task.await.unwrap_or_default();
+    let failed = failed.or(codex_status.failure(status.success()));
     let retry_pi = managing && runtime == "pi" && failed.is_none() && pi_status.can_retry();
     let failed = failed.or(pi_status.assistant_error);
     let compact_error =
@@ -2035,6 +2087,21 @@ mod pi_readiness_tests {
     fn model_is_required_before_pi_launch() {
         assert!(validate_pi_model("pi","").is_err());assert!(validate_pi_model("pi","  ").is_err());assert!(validate_pi_model("pi","configured-model").is_ok());assert!(validate_pi_model("codex","").is_ok());
     }
+    #[test]
+    fn codex_mcp_bridge_is_approved_by_its_server_entry() {
+        let args = codex_mcp_overrides("/opt/right \"commit\"/rightcommit");
+        assert!(args.chunks(2).all(|pair| pair[0] == "-c" && pair[1].starts_with("mcp_servers.nodo.")));
+        let values: Vec<&str> = args.iter().skip(1).step_by(2).map(String::as_str).collect();
+        assert_eq!(values, [
+            r#"mcp_servers.nodo.command="/opt/right \"commit\"/rightcommit""#,
+            r#"mcp_servers.nodo.args=["mcp-bridge"]"#,
+            r#"mcp_servers.nodo.env_vars=["NODO_MCP_TOKEN","NODO_MCP_ENDPOINT"]"#,
+            "mcp_servers.nodo.startup_timeout_sec=30",
+            "mcp_servers.nodo.tool_timeout_sec=330",
+            // Without it a sandboxed turn with approval policy `never` refuses every bridge call.
+            r#"mcp_servers.nodo.default_tools_approval_mode="approve""#,
+        ]);
+    }
 }
 
 #[cfg(test)]
@@ -2211,5 +2278,93 @@ mod server_environment_tests {
             "token=[redacted] pass=[redacted] cred=[redacted] short=abc123 url=https://service.test/public"
         );
         assert_eq!(redact_server_secrets(text, &[]), text);
+    }
+}
+
+#[cfg(test)]
+mod codex_retry_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn status(lines: &[Value], exited_successfully: bool) -> Option<String> {
+        let mut status = CodexTurnStatus::default();
+        for line in lines {
+            status.observe(line["type"].as_str().unwrap_or(""), line);
+        }
+        status.failure(exited_successfully)
+    }
+    #[test]
+    fn a_retry_notice_followed_by_a_completed_turn_is_not_a_failure() {
+        let retry = json!({"type":"error","message":"Reconnecting... 1/5 (stream disconnected before completion)"});
+        let completed = json!({"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}});
+        assert_eq!(status(&[retry.clone(), completed.clone()], true), None);
+        assert_eq!(status(&[completed.clone()], true), None);
+        // No completion after the error, a later error, or a non-zero exit: the last error stands.
+        assert_eq!(status(&[retry.clone()], true), Some(retry.to_string()));
+        let fatal = json!({"type":"error","message":"unexpected status 401 Unauthorized"});
+        assert_eq!(status(&[retry.clone(), completed.clone(), fatal.clone()], true), Some(fatal.to_string()));
+        assert_eq!(status(&[retry.clone(), completed], false), Some(retry.to_string()));
+    }
+    /// A stand-in codex writes what `codex exec --json` 0.172.0 writes for each case.
+    #[tokio::test]
+    async fn a_codex_turn_that_recovers_after_reconnecting_completes() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let app = crate::tests::app(dir.path());
+        app.store.update_settings(1, |s| {
+            s.agents.insert("codex".into(), AgentConfig { api_key: "test-codex".into(), ..Default::default() });
+            Ok(())
+        }).unwrap();
+        let tools = crate::distribution::tools(dir.path());
+        std::fs::create_dir_all(&tools).unwrap();
+        std::fs::write(tools.join("codex"), r#"#!/bin/sh
+cat > /dev/null
+result='{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"<nodo_result>{\"status\":\"completed\",\"summary\":\"Recovered\"}</nodo_result>"}}'
+completed='{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
+printf '%s\n' '{"type":"thread.started","thread_id":"retry-session"}' '{"type":"turn.started"}'
+printf '%s\n' '{"type":"error","message":"Reconnecting... 1/5 (stream disconnected before completion: idle timeout)"}'
+case "$(cat "$HOME/mode")" in
+  completed) printf '%s\n' "$result" "$completed" ;;
+  failed) printf '%s\n' '{"type":"error","message":"Reconnecting... 5/5"}' '{"type":"turn.failed","error":{"message":"exceeded retry limit, last status: 503 Service Unavailable"}}'; exit 1 ;;
+  unanswered) printf '%s\n' "$result" ;;
+  exit) printf '%s\n' "$result" "$completed"; exit 1 ;;
+esac
+"#).unwrap();
+        std::fs::set_permissions(tools.join("codex"), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let home = user_home(&app, 1).unwrap();
+        let w: Workflow = serde_json::from_value(json!({
+            "id":"retry", "name":"Retry", "description":"", "entry":"step",
+            "nodes":[{"id":"source","kind":"Source","source_type":"example"},
+                {"id":"author","kind":"Agent","runtime":"codex"},
+                {"id":"step","kind":"Task","agent":"author","prompt":"Work"}],
+            "edges":[{"from":"source","to":"author","kind":"context"},{"from":"author","to":"step","kind":"context"}]
+        })).unwrap();
+        for mode in ["completed", "failed", "unanswered", "exit"] {
+            std::fs::write(home.join("mode"), mode).unwrap();
+            let r = crate::engine::create(&app, 1, w.clone(), "Request".into(), None).await.unwrap();
+            let result = crate::engine::drive(&app, 1, &r.id).await;
+            let saved = app.store.run(1, &r.id).unwrap();
+            let events = app.store.events(1, &r.id, 0).unwrap();
+            // The retry notice stays in the Activity log as an ordinary line, not as an error.
+            let notice = events.iter().find(|e| e.kind == "activity" && e.text.contains("Reconnecting... 1/5")).expect(mode);
+            assert_eq!(serde_json::from_str::<Value>(&notice.text).unwrap()["phase"], "notice", "{mode}");
+            let turn: Value = serde_json::from_str(&events.iter().find(|e| e.kind == "agent_turn").unwrap().text).unwrap();
+            if mode == "completed" {
+                result.unwrap();
+                assert_eq!(saved.status, "completed");
+                assert_eq!(saved.outputs["step"].summary, "Recovered");
+                assert_eq!(turn["status"], "cli_success");
+                assert!(!events.iter().any(|e| e.kind == "error"));
+                continue;
+            }
+            let error = result.unwrap_err().to_string();
+            assert_ne!(saved.status, "completed", "{mode}");
+            assert_eq!(turn["status"], "cli_error", "{mode}");
+            // The error is the one Codex reported last, as before.
+            match mode {
+                "failed" => assert!(error.contains("turn.failed") && error.contains("exceeded retry limit"), "{error}"),
+                _ => assert!(error.contains("Reconnecting... 1/5"), "{mode}: {error}"),
+            }
+        }
     }
 }

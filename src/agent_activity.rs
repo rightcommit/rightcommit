@@ -117,6 +117,14 @@ impl Tracker {
                     if event["detail"] == "" {
                         event["detail"] = json!(detail(&input));
                     }
+                    // A refused or failed MCP call says why only in item.error.message.
+                    if failed
+                        && let Some(reason) = item["error"]["message"].as_str().map(str::trim).filter(|s| !s.is_empty())
+                    {
+                        let shown = event["detail"].as_str().unwrap_or("");
+                        let text = if shown.is_empty() { reason.to_string() } else { format!("{shown}: {reason}") };
+                        event["detail"] = json!(text.chars().take(2000).collect::<String>());
+                    }
                     if let Some(code) = item["exit_code"].as_i64() {
                         event["exit_code"] = json!(code);
                     }
@@ -170,5 +178,27 @@ mod tests {
         }
         let end = t.observe("pi",&json!({"type":"tool_execution_end","toolCallId":"4","toolName":"web_fetch","isError":false,"result":{"details":{"url":"https://example.com"}}}));
         assert_eq!(end[0]["phase"], "end");
+    }
+    #[test]
+    fn codex_mcp_failures_show_their_reason() {
+        let mut t = Tracker::default();
+        let call = json!({"id":"item_1","type":"mcp_tool_call","server":"nodo","tool":"workspace__read","arguments":{"path":"README.md"},"result":null,"error":null,"status":"in_progress"});
+        assert_eq!(t.observe("codex", &json!({"type":"item.started","item":call}))[0]["detail"], "");
+        let mut refused = call.clone();
+        refused["status"] = json!("failed");
+        refused["error"] = json!({"message":"MCP tool call requires approval, but approval policy is never"});
+        let end = t.observe("codex", &json!({"type":"item.completed","item":refused}));
+        assert_eq!(end[0]["phase"], "error");
+        assert_eq!(end[0]["tool"], "workspace__read");
+        assert_eq!(end[0]["detail"], "MCP tool call requires approval, but approval policy is never");
+        // A shown detail keeps its place before the reason; a completed call shows no error.
+        t.observe("codex", &json!({"type":"item.started","item":{"id":"2","type":"command_execution","command":"ls"}}));
+        let end = t.observe("codex", &json!({"type":"item.completed","item":{"id":"2","type":"command_execution","exit_code":1,"status":"failed","error":{"message":"denied"}}}));
+        assert_eq!(end[0]["detail"], "ls: denied");
+        let mut done = call.clone();
+        done["id"] = json!("item_3");
+        done["status"] = json!("completed");
+        done["error"] = json!({"message":"ignored"});
+        assert_eq!(t.observe("codex", &json!({"type":"item.completed","item":done}))[0]["detail"], "");
     }
 }

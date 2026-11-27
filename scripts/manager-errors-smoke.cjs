@@ -23,7 +23,14 @@ if mode in ('plain','plain-twice') and not (follow_up and mode=='plain'):
 if mode=='fail':
  print(json.dumps({'type':'turn.failed','error':{'message':'unexpected status 401 Unauthorized: Incorrect API key provided: fake-partial******** url: https://provider.invalid request id: secret-request'}}),flush=True)
  sys.exit(1)
-result={'status':'completed','summary':'Output reported above.' if mode=='plain' else 'Recovered successfully','details':'','questions':[],'artifacts':[],'decision':'explain'}
+# Codex 0.172.0 writes each stream retry as an error event: it then completes, or fails the turn and exits 1.
+if mode.startswith('reconnect'):
+ print(json.dumps({'type':'error','message':'Reconnecting... 1/5 (stream disconnected before completion: idle timeout)'}),flush=True)
+if mode=='reconnect-fail':
+ print(json.dumps({'type':'error','message':'Reconnecting... 5/5 (stream disconnected before completion: idle timeout)'}),flush=True)
+ print(json.dumps({'type':'turn.failed','error':{'message':'exceeded retry limit, last status: 503 Service Unavailable'}}),flush=True)
+ sys.exit(1)
+result={'status':'completed','summary':{'plain':'Output reported above.','reconnect':'Recovered after reconnecting'}.get(mode,'Recovered successfully'),'details':'','questions':[],'artifacts':[],'decision':'explain'}
 print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':'<nodo_result>'+json.dumps(result)+'</nodo_result>'}}),flush=True)
 print(json.dumps({'type':'turn.completed','usage':{'input_tokens':1,'output_tokens':1}}),flush=True)
 `);fs.chmodSync(path.join(dir,'codex'),0o755);fs.writeFileSync(path.join(dir,'mode'),'fail');
@@ -49,6 +56,10 @@ print(json.dumps({'type':'turn.completed','usage':{'input_tokens':1,'output_toke
   await page.locator('#manager-error-settings').click();await page.locator('#settings-panel-agents').waitFor({state:'visible'});await page.keyboard.press('Escape');
   const history=await call('/manager/chat?workflow_id='+w.id);assert.equal(history.messages.length,1,'Retry must not duplicate the unanswered user message');assert.equal(history.messages[0].role,'user');assert(!JSON.stringify(history).includes('fake-partial'));
   fs.writeFileSync(path.join(dir,'mode'),'success');const response=await send('retry me');assert.equal(response.status(),200,await response.text());assert.equal(await page.locator('.manager-error').count(),0);assert.match(await page.locator('#manager-messages').textContent(),/Recovered successfully/);assert.equal(await input.inputValue(),'');
+  // A stream retry notice followed by turn.completed is a recovered turn; retries that end with turn.failed are an error.
+  fs.writeFileSync(path.join(dir,'mode'),'reconnect');const reconnected=await send('reconnect me');assert.equal(reconnected.status(),200,await reconnected.text());assert.equal(await page.locator('.manager-error').count(),0);assert.match(await page.locator('#manager-messages').textContent(),/Recovered after reconnecting/);
+  fs.writeFileSync(path.join(dir,'mode'),'reconnect-fail');const lost=await send('reconnect again');assert.equal(lost.status(),400);await page.locator('.manager-error').waitFor();assert.match(await page.locator('.manager-error p').textContent(),/temporarily unavailable/);
+  fs.writeFileSync(path.join(dir,'mode'),'success');const resent=await send('reconnect again');assert.equal(resent.status(),200,await resent.text());assert.equal(await page.locator('.manager-error').count(),0);
   // An answer without the structured result gets one follow-up in the same session; the text already written is the reply.
   const calls=()=>fs.readFileSync(path.join(dir,'calls'),'utf8').trim().split('\n').map(line=>JSON.parse(line));let seen=calls().length;
   // While the follow-up runs, the chat's activity line shows the same notice as the Activity log of a run.
@@ -68,6 +79,6 @@ print(json.dumps({'type':'turn.completed','usage':{'input_tokens':1,'output_toke
   await page.locator('.manager-error').waitFor();assert.match(await page.locator('.manager-error p').textContent(),/no rightcommit structured result/);
   assert.deepEqual(calls().slice(seen),[{mode:'plain-twice',follow_up:false,resume:true},{mode:'plain-twice',follow_up:true,resume:true}]);
   assert.deepEqual(errors,[]);
-  console.log('PASS: actual native 401, safe HTTP/history, IT/EN, dismiss and focus/caret, draft recovery, typing during failure, settings action, deduplicated retry and successful recovery, one structured-result follow-up in the same session keeping the written reply with its IT/EN notice in the chat, and the unchanged error with no third turn');
+  console.log('PASS: actual native 401, safe HTTP/history, IT/EN, dismiss and focus/caret, draft recovery, typing during failure, settings action, deduplicated retry and successful recovery, a turn recovered after a Codex reconnect and one whose retries end with turn.failed, one structured-result follow-up in the same session keeping the written reply with its IT/EN notice in the chat, and the unchanged error with no third turn');
  }finally{await browser?.close();if(server&&server.exitCode===null){server.kill('SIGINT');await new Promise(resolve=>server.once('exit',resolve))}fs.rmSync(dir,{recursive:true,force:true})}
 })().catch(e=>{console.error(e);process.exitCode=1});

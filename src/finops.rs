@@ -93,6 +93,20 @@ pub struct Tracker {
     tools: HashSet<String>,
     messages: HashSet<String>,
     pub claude_api_baseline: Option<u64>,
+    /// Codex thread totals before a resumed turn: `turn.completed` reports the whole thread.
+    pub codex_baseline: Option<Value>,
+}
+/// The turn's own usage: every counter of a thread total minus the same counter before the turn.
+fn since(total: &Value, before: &Value) -> Value {
+    let mut turn = total.clone();
+    if let Some(map) = turn.as_object_mut() {
+        for (key, value) in map.iter_mut() {
+            if let Some(n) = value.as_u64() {
+                *value = json!(n.saturating_sub(before[key.as_str()].as_u64().unwrap_or(0)));
+            }
+        }
+    }
+    turn
 }
 impl Tracker {
     pub fn new(runtime: &str, node: &str, binding: &str, model: &str, attempt: u32) -> Self {
@@ -107,6 +121,7 @@ impl Tracker {
             tools: HashSet::new(),
             messages: HashSet::new(),
             claude_api_baseline: Some(0),
+            codex_baseline: None,
         }
     }
     pub fn observe(&mut self, v: &Value, sid: &str) -> Option<Usage> {
@@ -156,7 +171,14 @@ impl Tracker {
             } else if (self.runtime == "claude" && ty == "result")
                 || (self.runtime == "codex" && ty == "turn.completed")
             {
-                let u = &v["usage"];
+                let turn;
+                let u = match &self.codex_baseline {
+                    Some(before) if self.runtime == "codex" => {
+                        turn = since(&v["usage"], before);
+                        &turn
+                    }
+                    _ => &v["usage"],
+                };
                 if !u["input_tokens"].is_number() || !u["output_tokens"].is_number() {
                     return None;
                 }
@@ -411,30 +433,94 @@ fn historical_pi(
             continue;
         };
         let mut valid = false;
+        let mut rows = Vec::new();
+        // The turns of the session (a `user` message): when each began and the rows written in it.
+        let mut log_turns: Vec<(Option<i64>, Vec<usize>)> = Vec::new();
         for line in BufReader::new(f).lines().map_while(Result::ok) {
             let Ok(v) = serde_json::from_str::<Value>(&line) else {
                 continue;
             };
             if v["type"] == "session" {
+                // Compare paths, not strings: a direct source at the root of the sources
+                // folder is saved with a trailing slash that Pi does not keep in its log.
                 valid = v["id"].as_str() == Some(&s.native_id)
-                    && v["cwd"].as_str() == Some(&r.workspace);
+                    && v["cwd"]
+                        .as_str()
+                        .is_some_and(|cwd| Path::new(cwd) == Path::new(&r.workspace));
                 continue;
             }
-            if !valid || v["type"] != "message" || v["message"]["role"] != "assistant" {
+            if !valid || v["type"] != "message" {
                 continue;
             }
             let m = &v["message"];
+            if m["role"] == "user" {
+                let started = m["timestamp"].as_i64().or_else(|| {
+                    v["timestamp"].as_str()?.parse::<jiff::Timestamp>().ok().map(|d| d.as_millisecond())
+                });
+                log_turns.push((started, Vec::new()));
+                continue;
+            }
+            if m["role"] != "assistant" {
+                continue;
+            }
             let at = m["timestamp"].as_i64().unwrap_or(0);
             let (node, attempt) = node_at(events, at);
             if let Some(u) = pi_usage(m, &s.native_id, &node, binding, attempt, "native_history") {
-                result.push(u)
+                if let Some((_, turn_rows)) = log_turns.last_mut() {
+                    turn_rows.push(rows.len());
+                }
+                rows.push(u)
             }
         }
+        attribute_pi_turns(binding, events, &log_turns, &mut rows);
+        result.extend(rows);
         if !valid {
             missed += 1
         }
     }
     (result, missed)
+}
+/// Gives every assistant message of a session turn to the step that ran it. Run events have
+/// whole-second times, so the last messages of a turn can carry a later millisecond time than the
+/// `running` event of the next step started in the same second. Each Pi turn is one `--print`
+/// process with one prompt, which Pi writes as a `user` message, and one `agent_turn` event (its
+/// binding, node and attempt): when the binding's counts agree, the turns are matched in order.
+/// Pi's automatic retries (`continue`), compactions and extension messages (`custom_message`) add
+/// no `user` message. Otherwise (a turn that failed before Pi wrote its prompt, a prompt sent by an
+/// installed extension, runs saved before `agent_turn`) the turn goes to the step running when it
+/// began, which comes after that step's `running` event and before the next one. Messages before
+/// the first prompt keep their own time.
+fn attribute_pi_turns(
+    binding: &str,
+    events: &[Event],
+    log_turns: &[(Option<i64>, Vec<usize>)],
+    rows: &mut [Usage],
+) {
+    let run_turns: Vec<(String, u32)> = events
+        .iter()
+        .filter(|e| e.kind == "agent_turn")
+        .filter_map(|e| serde_json::from_str::<Value>(&e.text).ok())
+        .filter(|v| v["binding"] == binding && v["runtime"] == "pi")
+        .map(|v| {
+            let attempt = v["attempt"].as_u64().unwrap_or(0);
+            (v["node"].as_str().unwrap_or("").to_owned(), u32::try_from(attempt).unwrap_or(u32::MAX))
+        })
+        .collect();
+    let in_order = run_turns.len() == log_turns.len();
+    for (i, (started, turn_rows)) in log_turns.iter().enumerate() {
+        let Some(&first) = turn_rows.first() else {
+            continue;
+        };
+        let (node, attempt) = if in_order {
+            run_turns[i].clone()
+        } else {
+            node_at(events, started.unwrap_or(rows[first].at))
+        };
+        for &row in turn_rows {
+            rows[row].node.clone_from(&node);
+            rows[row].attempt = attempt;
+        }
+    }
 }
 fn event_data(app: &App, uid: i64, rid: &str) -> anyhow::Result<Vec<Event>> {
     let db = app.store.db.lock().unwrap();
@@ -933,6 +1019,30 @@ mod tests {
         assert_eq!(u.calls, None);
     }
     #[test]
+    fn resumed_codex_turns_count_only_their_own_tokens() {
+        // Measured with codex exec resume: the second turn reports 61944 = 29925 + its own 32019.
+        let completed = |input: u64, cached: u64, output: u64, reasoning: u64| json!({"type":"turn.completed","usage":{"input_tokens":input,"cached_input_tokens":cached,"cache_write_input_tokens":0,"output_tokens":output,"reasoning_output_tokens":reasoning}});
+        let mut first = Tracker::new("codex", "task", "author", "model", 1);
+        let u = first.observe(&completed(29925, 20000, 300, 100), "sid").unwrap();
+        assert_eq!((u.input, u.cache_read, u.output, u.reasoning), (29925, Some(20000), 300, Some(100)));
+        let mut resumed = Tracker::new("codex", "task", "author", "model", 1);
+        resumed.codex_baseline = Some(json!({"input_tokens":29925,"cached_input_tokens":20000,"cache_write_input_tokens":0,"output_tokens":300,"reasoning_output_tokens":100,"total_tokens":30225}));
+        let u = resumed.observe(&completed(61944, 45000, 520, 160), "sid").unwrap();
+        assert_eq!((u.input, u.cache_read, u.cache_write, u.output, u.reasoning), (32019, Some(25000), Some(0), 220, Some(60)));
+        // A log without token counts subtracts nothing; a total below the log never goes negative.
+        let mut empty = Tracker::new("codex", "task", "author", "model", 1);
+        empty.codex_baseline = Some(json!({}));
+        assert_eq!(empty.observe(&completed(10, 0, 1, 0), "sid").unwrap().input, 10);
+        let mut reset = Tracker::new("codex", "task", "author", "model", 1);
+        reset.codex_baseline = Some(json!({"input_tokens":99,"output_tokens":9}));
+        let u = reset.observe(&completed(10, 0, 1, 0), "sid").unwrap();
+        assert_eq!((u.input, u.output), (0, 0));
+        // Other runtimes never use it.
+        let mut claude = Tracker::new("claude", "task", "author", "model", 1);
+        claude.codex_baseline = Some(json!({"input_tokens":99}));
+        assert_eq!(claude.observe(&json!({"type":"result","usage":{"input_tokens":100,"output_tokens":5}}), "sid").unwrap().input, 100);
+    }
+    #[test]
     fn claude_does_not_double_count_cache_or_tool_events() {
         let mut t = Tracker::new("claude", "task", "author", "model", 2);
         let tool = json!({"type":"assistant","message":{"id":"message-1","content":[{"type":"tool_use","id":"tool-1"}]}});
@@ -980,6 +1090,85 @@ mod tests {
             ),
             ("task".into(), 2)
         );
+    }
+    /// Two steps on one Pi session, the second started in the second in which the first ended:
+    /// the last message of the first turn (22:04:07.141) went to the second step.
+    #[tokio::test]
+    async fn pi_messages_go_to_the_turn_that_wrote_them_when_steps_change_within_a_second() {
+        let d = tempfile::tempdir().unwrap();
+        let app = crate::tests::app(d.path());
+        let mut r = crate::engine::create(&app, 1, crate::presets::all().remove(0), "split".into(), None)
+            .await
+            .unwrap();
+        let sid = crate::model::id();
+        r.sessions.insert(
+            "author".into(),
+            NativeSession {
+                provider: String::new(), base_url: String::new(), runtime: "pi".into(),
+                native_id: sid.clone(), model: "alias".into(), turns: 2,
+            },
+        );
+        let ms = |at: &str| at.parse::<jiff::Timestamp>().unwrap().as_millisecond();
+        let entry = |at: &str, message: Value| json!({"type":"message","timestamp":at,"message":message});
+        let user = |at: &str| entry(at, json!({"role":"user","content":"prompt","timestamp":ms(at)}));
+        let assistant = |at: &str, input: u64, stop: &str| entry(at, json!({"role":"assistant","responseId":at,"model":"test-model","stopReason":stop,
+            "content":[],"timestamp":ms(at),"usage":{"input":input,"output":10,"cacheRead":0,"cacheWrite":0}}));
+        let lines = [
+            json!({"type":"session","version":3,"id":sid,"cwd":r.workspace}),
+            entry("2026-11-26T22:03:40.510Z", json!({"role":"system","content":"","sections":{},"timestamp":ms("2026-11-26T22:03:40.510Z")})),
+            user("2026-11-26T22:03:40.512Z"),
+            assistant("2026-11-26T22:03:52.300Z", 1000, "toolUse"),
+            entry("2026-11-26T22:03:53.000Z", json!({"role":"toolResult","toolCallId":"c","toolName":"bash","content":[],"isError":false,"timestamp":ms("2026-11-26T22:03:53.000Z")})),
+            assistant("2026-11-26T22:04:07.141Z", 2000, "stop"),
+            json!({"type":"compaction","timestamp":"2026-11-26T22:04:07.300Z","summary":"s","firstKeptEntryId":"x","tokensBefore":3000}),
+            user("2026-11-26T22:04:07.620Z"),
+            // An automatic retry continues the turn: Pi keeps the failed attempt and adds no prompt.
+            assistant("2026-11-26T22:04:10.000Z", 0, "error"),
+            json!({"type":"context_edit","timestamp":"2026-11-26T22:04:10.001Z","targetId":"y","replacement":null}),
+            json!({"type":"custom_message","timestamp":"2026-11-26T22:04:11.000Z","customType":"ext","content":"note","display":false}),
+            assistant("2026-11-26T22:04:30.004Z", 4000, "stop"),
+        ];
+        let write = |lines: &[Value]| {
+            let path = d.path().join(format!("2026-11-26T22-03-40-500Z_{sid}.jsonl"));
+            std::fs::write(&path, lines.iter().map(|l| l.to_string() + "\n").collect::<String>()).unwrap();
+            vec![path]
+        };
+        let second = |at: &str| ms(at) / 1000;
+        let event = |kind: &str, node: &str, text: String, at: &str| Event {
+            seq: 0, run: r.id.clone(), kind: kind.into(), node: node.into(), text, created: second(at),
+        };
+        let turn = |node: &str, at: &str| event("agent_turn", node, json!({"binding":"author","runtime":"pi","node":node,"attempt":1,"status":"cli_success"}).to_string(), at);
+        // Run events keep whole seconds: the second step starts at 22:04:07, read as .000.
+        let states = vec![
+            event("state", "first", "running".into(), "2026-11-26T22:03:40Z"),
+            turn("first", "2026-11-26T22:04:07Z"),
+            event("state", "first", "completed".into(), "2026-11-26T22:04:07Z"),
+            event("state", "second", "running".into(), "2026-11-26T22:04:07Z"),
+            turn("second", "2026-11-26T22:04:30Z"),
+            event("state", "second", "completed".into(), "2026-11-26T22:04:30Z"),
+        ];
+        let split = |events: &[Event], files: &[PathBuf]| {
+            let (rows, missed) = historical_pi(&r, events, files, &mut 0);
+            assert_eq!(missed, 0);
+            assert_eq!(rows.len(), 4);
+            assert!(rows.iter().all(|u| u.attempt == 1));
+            let tokens = |node: &str| rows.iter().filter(|u| u.node == node).map(|u| u.input + u.output).sum::<u64>();
+            (tokens("first"), tokens("second"))
+        };
+        let files = write(&lines);
+        // Matched in order with the run's turns on the binding.
+        assert_eq!(split(&states, &files), (3020, 4020));
+        // Runs saved before agent_turn, or a turn that never reached the session: each session
+        // turn goes to the step running when it began.
+        let legacy: Vec<_> = states.iter().filter(|e| e.kind != "agent_turn").cloned().collect();
+        assert_eq!(split(&legacy, &files), (3020, 4020));
+        let mut unmatched = states.clone();
+        unmatched.insert(1, turn("first", "2026-11-26T22:03:40Z"));
+        assert_eq!(split(&unmatched, &files), (3020, 4020));
+        // A prompt sent by an installed extension during the second step is a turn of its own.
+        let mut prompted = lines.to_vec();
+        prompted.insert(10, user("2026-11-26T22:04:10.500Z"));
+        assert_eq!(split(&states, &write(&prompted)), (3020, 4020));
     }
     #[tokio::test]
     async fn historical_usage_is_owned_and_not_duplicated_by_live_collection() {
@@ -1031,6 +1220,39 @@ runtime: "pi".into(),
         assert_eq!(other["summary"]["metrics"]["records"], 0);
         assert!(other["summary"]["metrics"]["usd"].is_null());
         assert_ne!(other["runs"][0]["id"], r.id);
+    }
+    /// Runs saved up to 1.10.4 for a direct source at the root of the sources folder keep a
+    /// trailing slash in their workspace; Pi writes its `cwd` without it.
+    #[tokio::test]
+    async fn pi_history_is_read_for_a_workspace_with_or_without_a_trailing_slash() {
+        let d = tempfile::tempdir().unwrap();
+        let app = crate::tests::app(d.path());
+        let mut r = crate::engine::create(&app, 1, crate::presets::all().remove(0), "slash".into(), None)
+            .await
+            .unwrap();
+        let sid = crate::model::id();
+        r.sessions.insert(
+            "author".into(),
+            NativeSession {
+                provider: String::new(), base_url: String::new(), runtime: "pi".into(),
+                native_id: sid.clone(), model: "alias".into(), turns: 1,
+            },
+        );
+        let cwd = r.workspace.trim_end_matches('/').to_string();
+        let path = d.path().join(format!("2026-11-27T10-00-00-000Z_{sid}.jsonl"));
+        let lines = [json!({"type":"session","version":3,"id":sid,"cwd":cwd}), json!({"type":"message","message":message()})];
+        std::fs::write(&path, lines.iter().map(|l| l.to_string() + "\n").collect::<String>()).unwrap();
+        let files = vec![path];
+        for workspace in [cwd.clone(), format!("{cwd}/")] {
+            r.workspace = workspace;
+            let (rows, missed) = historical_pi(&r, &[], &files, &mut 0);
+            assert_eq!((rows.len(), missed), (1, 0), "{}", r.workspace);
+            assert_eq!(rows[0].input + rows[0].output, 65);
+        }
+        // Another folder is still refused.
+        r.workspace = format!("{cwd}-other/");
+        let (rows, missed) = historical_pi(&r, &[], &files, &mut 0);
+        assert_eq!((rows.len(), missed), (0, 1));
     }
     #[tokio::test]
     async fn codex_estimates_and_history_are_separate_owned_and_not_duplicated() {

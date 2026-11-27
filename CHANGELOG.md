@@ -3,6 +3,38 @@
 What changed in each version of rightcommit. Releases are also listed on
 [GitHub](https://github.com/rightcommit/rightcommit/releases).
 
+## [1.10.7] - 2026-11-28
+
+### Changed
+
+- The Docker and Podman image and `rightcommit setup` install Codex 0.172.0 (was 0.166.0),
+  Claude Code 2.1.332 (was 2.1.316) and Pi 1.7.0 (was 1.5.2). With Pi 1.7.0 each Qwen Token
+  Plan provider has its own key variable (`QWEN_TOKEN_PLAN_TEAM_API_KEY`,
+  `QWEN_TOKEN_PLAN_TEAM_CN_API_KEY`, `QWEN_TOKEN_PLAN_INDIVIDUAL_API_KEY`,
+  `QWEN_TOKEN_PLAN_INDIVIDUAL_CN_API_KEY`); the shared variable still works. Codex and Pi's
+  OpenAI providers now default to GPT-6.2 Sol when no model is set, and since Codex 0.169.0
+  `codex exec` ignores a project's own `.codex/config.toml` in a folder it does not trust.
+- Codex retry notices ("Reconnecting... 1/5") appear in the Activity log as agent notices,
+  and a failed Codex tool call shows its reason there.
+
+### Fixed
+
+- Outside the isolated Docker mode, Codex refused every call to rightcommit's MCP tools,
+  workspace and RAG tools alike, with "MCP tool call requires approval, but approval policy
+  is never", and the Task ended blocked. Native installations (Homebrew, cargo) were affected
+  with any recent Codex. rightcommit now approves the tools of its own MCP server.
+- A Codex turn that lost its connection, reconnected and completed was marked failed. It now
+  succeeds; a turn that Codex reports as failed still fails. Test connection follows the same
+  rule.
+- The usage of a resumed Codex turn counted the earlier turns of the session again in the
+  Activity log, in FinOps while the run was in progress and in the Project Manager totals.
+  Finished runs were already right.
+- FinOps could give the usage of a Codex or Pi turn to the next node when two steps on the
+  same session followed each other within a second. Totals were right; the split by node is
+  now right too.
+- FinOps did not read Pi's session log for runs saved up to 1.10.4 on a Source at the root of
+  /sources.
+
 ## [1.10.6] - 2026-11-27
 
 ### Changed

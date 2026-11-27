@@ -1,7 +1,8 @@
 // FinOps with a Codex ChatGPT sign-in: a stand-in codex writes the exec events and the native log
 // as Codex does with a ChatGPT plan (rate limits with plan_type) and with an API key (no plan).
-// The run works directly in the whole sources folder, which the app saves with a trailing slash:
-// both runs must be recovered from their logs and get the same estimated cost at API prices.
+// The runs work directly in the whole sources folder, saved as its plain path; up to 1.10.4 the app
+// saved that folder with a trailing slash Codex does not write in its log, so one run is turned back
+// into that form: both must be recovered from their logs and get the same estimated cost at API prices.
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),assert=require('node:assert/strict'),{spawn}=require('node:child_process');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright'),{DatabaseSync}=require('node:sqlite');
 (async()=>{
@@ -49,7 +50,7 @@ for event in [{'type':'thread.started','thread_id':sid},{'type':'turn.started'},
   await api('/workflows',wf);
   const run=async()=>{const r=await api('/runs',{workflow_id:wf.id});for(let i=0;i<300;i++){const d=await api('/runs/'+r.id);assert.notEqual(d.run.status,'failed',d.run.error);if(d.run.status==='completed')return d.run;await new Promise(r=>setTimeout(r,100))}throw new Error('run did not complete')};
   const plan=await run();
-  assert(plan.workspace.endsWith('/'),plan.workspace); // the case the native log must still match
+  assert.equal(plan.workspace,sources);
   // Then the same workflow with a personal API key, which takes precedence over the sign-in.
   let settings=await api('/settings');
   settings=await api('/settings',{revision:settings._revision,changes:{agents:{codex:{api_key:'sk-finops-stand-in'}}}},'PATCH');
@@ -57,6 +58,8 @@ for event in [{'type':'thread.started','thread_id':sid},{'type':'turn.started'},
   // Reference prices for the stand-in model, so the estimate does not depend on the network.
   const now=Math.floor(Date.now()/1000),pricing={prompt:'0.00000125',completion:'0.00001',input_cache_read:'0.000000125'};
   const db=new DatabaseSync(path.join(data,'system/nodo.sqlite'));db.exec('PRAGMA busy_timeout=5000');
+  // The ChatGPT run as saved up to 1.10.4, with the trailing slash the native log must still match.
+  db.prepare("UPDATE runs SET json=json_set(json,'$.workspace',?) WHERE id=?").run(sources+'/',plan.id);
   db.prepare('INSERT INTO finops_catalog(id,json) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(JSON.stringify({version:1,fetched_at:now,attempted_at:now,stale:false,data:[{id:'openai/gpt-6.2-sol',pricing}]}));db.close();
   const report=await api('/finops');
   assert(report.pricing.available&&report.pricing.prices['openai/gpt-6.2-sol']);
@@ -109,6 +112,6 @@ for event in [{'type':'thread.started','thread_id':sid},{'type':'turn.started'},
   await noSubscription();
   await page.screenshot({path:path.join(dir,'finops-codex-login-en.png'),fullPage:true});
   assert.deepEqual(errors,[]);
-  console.log('PASS: ChatGPT sign-in and API key runs with a trailing-slash workspace recovered from their logs with the same estimated cost, in totals, groupings and charts, IT/EN view');
+  console.log('PASS: ChatGPT sign-in and API key runs, one with the trailing-slash workspace of 1.10.4, recovered from their logs with the same estimated cost, in totals, groupings and charts, IT/EN view');
  }finally{await browser?.close();server.kill('SIGINT');if(!process.env.KEEP_FINOPS_SMOKE)fs.rmSync(dir,{recursive:true,force:true});else console.log(dir)}
 })().catch(e=>{console.error(e);process.exit(1)});

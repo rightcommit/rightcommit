@@ -322,4 +322,55 @@ runtime: "claude".into(),
         std::os::unix::fs::symlink(outside, &path).unwrap();
         assert!(files(&home).is_empty());
     }
+    /// Claude tokens come only from the live `result` of each turn, which carries the node that
+    /// ran it; the log only adds API time to those records and never moves them, comparing
+    /// milliseconds with milliseconds. Its `cwd` is compared as a path, so runs saved up to 1.10.4
+    /// with a trailing slash still match.
+    #[tokio::test]
+    async fn steps_changing_within_a_second_keep_their_usage_and_a_trailing_slash_workspace_matches() {
+        let d = tempfile::tempdir().unwrap();
+        let app = crate::tests::app(d.path());
+        let mut r = crate::engine::create(&app, 1, crate::presets::all().remove(0), "split".into(), None)
+            .await
+            .unwrap();
+        let sid = uuid::Uuid::new_v4().to_string();
+        r.sessions.insert(
+            "author".into(),
+            NativeSession {
+                provider: String::new(), base_url: String::new(), runtime: "claude".into(),
+                native_id: sid.clone(), model: "model".into(), turns: 2,
+            },
+        );
+        let cwd = r.workspace.trim_end_matches('/').to_string();
+        // The first turn ends at .150 and the second step starts at .500 of the same second.
+        let start = 1_790_000_000_100;
+        let dir = app.data.join("users/1/.claude/projects/project");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(format!("{sid}.jsonl")), row(&sid, &cwd, start, 100) + &row(&sid, &cwd, start + 20_000, 350)).unwrap();
+        let usage = |node: &str, at: i64| {
+            let mut u = Tracker::new("claude", node, "author", "model", 1)
+                .observe(&json!({"type":"result","usage":{"input_tokens":10,"output_tokens":5}}), &sid)
+                .unwrap();
+            u.at = at;
+            u
+        };
+        let event = |kind: &str, node: &str, text: &str| app.store.event(1, &r.id, kind, node, text).unwrap();
+        event("state", "first", "running");
+        event("usage", "first", &serde_json::to_string(&usage("first", start + 50)).unwrap());
+        event("state", "second", "running");
+        event("usage", "second", &serde_json::to_string(&usage("second", start + 20_050)).unwrap());
+        // Event times have whole seconds: both steps are recorded in the same one.
+        app.store.db.lock().unwrap().execute("UPDATE events SET json=json_set(json,'$.created',?)", [start / 1000]).unwrap();
+        for workspace in [cwd.clone(), format!("{cwd}/")] {
+            r.workspace = workspace;
+            app.store.save_run(1, &r).unwrap();
+            let report = crate::finops::report(&app, 1).unwrap();
+            let nodes = report["runs"][0]["nodes"].as_array().unwrap().clone();
+            let node = |id: &str| nodes.iter().find(|n| n["id"] == id).unwrap()["metrics"].clone();
+            for (id, llm_ms) in [("first", 100), ("second", 250)] {
+                assert_eq!(node(id)["total"], 15, "{} {id}", r.workspace);
+                assert_eq!(node(id)["llm_ms"], llm_ms, "{} {id}", r.workspace);
+            }
+        }
+    }
 }

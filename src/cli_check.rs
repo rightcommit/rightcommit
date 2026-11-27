@@ -65,6 +65,9 @@ fn failure_message(detail: &str) -> &'static str {
 fn check_output(stdout: &[u8], stderr: &[u8], success: bool) -> Result<(), &'static str> {
     let mut replied = false;
     let mut failed = !success;
+    // Codex writes `error` also for a stream retry that can still succeed: it counts unless a
+    // `turn.completed` follows; a fatal one ends with `turn.failed` and a non-zero exit.
+    let mut codex_error = false;
     let mut detail = String::from_utf8_lossy(stderr).into_owned();
     for line in String::from_utf8_lossy(stdout).lines() {
         let Ok(event) = serde_json::from_str::<Value>(line) else {
@@ -82,14 +85,19 @@ fn check_output(stdout: &[u8], stderr: &[u8], success: bool) -> Result<(), &'sta
             "item.completed" if event["item"]["type"] == "agent_message" => {
                 replied |= text(&event["item"]["text"]);
             }
-            "turn.failed" | "error" => {
+            "turn.failed" => {
                 failed = true;
                 detail.push_str(&event.to_string());
             }
+            "error" => {
+                codex_error = true;
+                detail.push_str(&event.to_string());
+            }
+            "turn.completed" => codex_error = false,
             _ => {}
         }
     }
-    if failed || !replied {
+    if failed || codex_error || !replied {
         return Err(failure_message(&detail));
     }
     Ok(())
@@ -275,6 +283,16 @@ printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"O
         assert_eq!(check_output(b"{}", b"", true), Err(FAILED));
         // Numbers in ordinary events, such as identifiers, are not read as error codes.
         assert_eq!(check_output(br#"{"type":"system","session_id":"401-429"}"#, b"", true), Err(FAILED));
+        // A Codex retry notice followed by a completed turn is a working connection; an error with
+        // no completion after it, or followed by turn.failed, is not.
+        let retry = r#"{"type":"error","message":"Reconnecting... 1/5 (stream disconnected before completion)"}"#;
+        let completed = r#"{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}"#;
+        let codex_ok = std::str::from_utf8(codex_ok).unwrap();
+        assert!(check_output(format!("{retry}\n{codex_ok}\n{completed}").as_bytes(), b"", true).is_ok());
+        assert_eq!(check_output(format!("{retry}\n{codex_ok}").as_bytes(), b"", true), Err(FAILED));
+        let failed = r#"{"type":"turn.failed","error":{"message":"exceeded retry limit, last status: 401 Unauthorized"}}"#;
+        assert!(check_output(format!("{retry}\n{failed}").as_bytes(), b"", false).unwrap_err().contains("Autenticazione"));
+        assert_eq!(check_output(format!("{retry}\n{codex_ok}\n{completed}").as_bytes(), b"", false), Err(FAILED));
         let limit = check_output(br#"{"type":"turn.failed","error":{"message":"You hit your usage limit sk-secret"}}"#, b"", true).unwrap_err();
         assert!(limit.contains("limite") && !limit.contains("sk-secret"));
         let model = check_output(br#"{"type":"result","is_error":true,"result":"The model nope does not exist"}"#, b"", false).unwrap_err();

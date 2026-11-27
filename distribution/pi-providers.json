@@ -1,5 +1,5 @@
 {
-  "version": "1.5.2",
+  "version": "1.7.0",
   "providers": [
     {
       "id": "amazon-bedrock",
@@ -262,33 +262,37 @@
     },
     {
       "id": "qwen-token-plan",
-      "label": "Qwen Token Plan",
-      "key_env": "QWEN_TOKEN_PLAN_API_KEY",
+      "label": "Qwen Token Plan Team",
+      "key_env": "QWEN_TOKEN_PLAN_TEAM_API_KEY",
       "env": [
+        "QWEN_TOKEN_PLAN_TEAM_API_KEY",
         "QWEN_TOKEN_PLAN_API_KEY"
       ]
     },
     {
       "id": "qwen-token-plan-cn",
-      "label": "Qwen Token Plan Cn",
-      "key_env": "QWEN_TOKEN_PLAN_CN_API_KEY",
+      "label": "Qwen Token Plan Team CN",
+      "key_env": "QWEN_TOKEN_PLAN_TEAM_CN_API_KEY",
       "env": [
+        "QWEN_TOKEN_PLAN_TEAM_CN_API_KEY",
         "QWEN_TOKEN_PLAN_CN_API_KEY"
       ]
     },
     {
       "id": "qwen-token-plan-individual",
       "label": "Qwen Token Plan Individual",
-      "key_env": "QWEN_TOKEN_PLAN_API_KEY",
+      "key_env": "QWEN_TOKEN_PLAN_INDIVIDUAL_API_KEY",
       "env": [
+        "QWEN_TOKEN_PLAN_INDIVIDUAL_API_KEY",
         "QWEN_TOKEN_PLAN_API_KEY"
       ]
     },
     {
       "id": "qwen-token-plan-individual-cn",
-      "label": "Qwen Token Plan Individual Cn",
-      "key_env": "QWEN_TOKEN_PLAN_CN_API_KEY",
+      "label": "Qwen Token Plan Individual CN",
+      "key_env": "QWEN_TOKEN_PLAN_INDIVIDUAL_CN_API_KEY",
       "env": [
+        "QWEN_TOKEN_PLAN_INDIVIDUAL_CN_API_KEY",
         "QWEN_TOKEN_PLAN_CN_API_KEY"
       ]
     },

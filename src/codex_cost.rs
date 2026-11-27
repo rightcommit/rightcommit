@@ -242,6 +242,8 @@ pub fn history(
         let mut seen = std::collections::HashSet::new();
         let mut rows = Vec::new();
         let mut open_turn = false;
+        // The turns of the log (`task_started`): when each began and the rows written in it.
+        let mut log_turns: Vec<(Option<i64>, Vec<usize>)> = Vec::new();
         for line in BufReader::new(file).lines() {
             let Ok(line) = line else {
                 failed = true;
@@ -275,6 +277,7 @@ pub fn history(
             }
             if v["type"] == "event_msg" && p["type"] == "task_started" {
                 open_turn = true;
+                log_turns.push((timestamp(&v), Vec::new()));
             }
             if v["type"] == "event_msg" && p["type"] == "task_complete" {
                 open_turn = false;
@@ -300,14 +303,13 @@ pub fn history(
             if !seen.insert(key.clone()) {
                 continue;
             }
-            let Some(at) = v["timestamp"]
-                .as_str()
-                .and_then(|s| s.parse::<jiff::Timestamp>().ok())
-                .map(|d| d.as_millisecond())
-            else {
+            let Some(at) = timestamp(&v) else {
                 failed = true;
                 break;
             };
+            if let Some((_, turn_rows)) = log_turns.last_mut() {
+                turn_rows.push(rows.len());
+            }
             let (node, attempt) = crate::finops::node_at(events, at);
             rows.push(crate::finops::Usage {
                 id: crate::store::hash(format!("codex:{sid}:{turn}:{key}")),
@@ -332,15 +334,121 @@ pub fn history(
         if failed || !valid || open_turn || rows.is_empty() {
             missed += 1;
         } else {
+            attribute_turns(binding, events, &log_turns, &mut rows);
             result.extend(rows);
         }
     }
     (result, missed)
 }
 
+fn timestamp(v: &Value) -> Option<i64> {
+    v["timestamp"].as_str()?.parse::<jiff::Timestamp>().ok().map(|d| d.as_millisecond())
+}
+
+/// Gives every row of a log turn to the step that ran it. Run events have whole-second times, so
+/// the last token count of a turn can carry a later millisecond time than the `running` event of
+/// the next step started in the same second. Each `codex exec` turn writes one `task_started` and
+/// one `agent_turn` event (its binding, node and attempt): when the binding's counts agree, the
+/// turns are matched in order. Otherwise (a turn that failed before Codex started it, a manual
+/// compaction, runs saved before `agent_turn`) the turn goes to the step running when it began,
+/// which comes after that step's `running` event and before the next one.
+fn attribute_turns(
+    binding: &str,
+    events: &[crate::model::Event],
+    log_turns: &[(Option<i64>, Vec<usize>)],
+    rows: &mut [crate::finops::Usage],
+) {
+    let run_turns: Vec<(String, u32)> = events
+        .iter()
+        .filter(|e| e.kind == "agent_turn")
+        .filter_map(|e| serde_json::from_str::<Value>(&e.text).ok())
+        .filter(|v| v["binding"] == binding && v["runtime"] == "codex")
+        .map(|v| {
+            let attempt = v["attempt"].as_u64().unwrap_or(0);
+            (v["node"].as_str().unwrap_or("").to_owned(), u32::try_from(attempt).unwrap_or(u32::MAX))
+        })
+        .collect();
+    let in_order = run_turns.len() == log_turns.len();
+    for (i, (started, turn_rows)) in log_turns.iter().enumerate() {
+        let Some(&first) = turn_rows.first() else {
+            continue;
+        };
+        let (node, attempt) = if in_order {
+            run_turns[i].clone()
+        } else {
+            crate::finops::node_at(events, started.unwrap_or(rows[first].at))
+        };
+        for &row in turn_rows {
+            rows[row].node.clone_from(&node);
+            rows[row].attempt = attempt;
+        }
+    }
+}
+
+/// The thread totals saved in a native session's log, read before a resumed turn: `turn.completed`
+/// of `codex exec` reports the thread's running totals, which Codex restores from this log. A log
+/// with no token count yet gives an empty object; a missing, ambiguous or foreign log gives None.
+pub fn thread_total(home: &std::path::Path, sid: &str) -> Option<Value> {
+    use std::io::{BufRead, BufReader};
+    uuid::Uuid::parse_str(sid).ok()?;
+    let dir = home.join(".codex/sessions");
+    if dir.ancestors().take_while(|p| p.starts_with(home)).any(|p| p.is_symlink()) {
+        return None;
+    }
+    let mut files = Vec::new();
+    crate::finops::pi_files(&dir, &mut files, 0);
+    let suffix = format!("{sid}.jsonl");
+    let mut matches = files
+        .iter()
+        .filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().ends_with(&suffix)));
+    let path = matches.next()?;
+    if matches.next().is_some() || path.metadata().ok()?.len() > 32 * 1024 * 1024 {
+        return None;
+    }
+    let (mut valid, mut total) = (false, json!({}));
+    for line in BufReader::new(std::fs::File::open(path).ok()?).lines() {
+        let v: Value = serde_json::from_str(&line.ok()?).ok()?;
+        let p = &v["payload"];
+        if v["type"] == "session_meta" {
+            valid = p["id"].as_str() == Some(sid);
+        }
+        if !valid {
+            return None;
+        }
+        if v["type"] == "event_msg" && p["type"] == "token_count" && p["info"]["total_token_usage"].is_object() {
+            total = p["info"]["total_token_usage"].clone();
+        }
+    }
+    valid.then_some(total)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn thread_total_is_the_last_token_count_of_the_session_log() {
+        let home = tempfile::tempdir().unwrap();
+        let sid = "019abc00-0000-7000-8000-000000000001";
+        let folder = home.path().join(".codex/sessions/2026/11/27");
+        std::fs::create_dir_all(&folder).unwrap();
+        let log = folder.join(format!("rollout-2026-11-27T10-00-00-{sid}.jsonl"));
+        assert!(thread_total(home.path(), sid).is_none());
+        let meta = json!({"type":"session_meta","payload":{"id":sid}});
+        std::fs::write(&log, format!("{meta}\n")).unwrap();
+        assert_eq!(thread_total(home.path(), sid), Some(json!({})));
+        let lines = [
+            meta.clone(),
+            log_line("token_count", "2026-11-27T10:00:01Z", 100, 100, None),
+            json!({"type":"event_msg","payload":{"type":"token_count","info":null}}),
+            log_line("token_count", "2026-11-27T10:00:02Z", 250, 150, None),
+        ];
+        std::fs::write(&log, lines.iter().map(|l| format!("{l}\n")).collect::<String>()).unwrap();
+        assert_eq!(thread_total(home.path(), sid).unwrap()["input_tokens"], 250);
+        // Another session's log under this name, or an id that is not Codex's, is never read.
+        std::fs::write(&log, format!("{}\n", json!({"type":"session_meta","payload":{"id":"other"}}))).unwrap();
+        assert!(thread_total(home.path(), sid).is_none());
+        assert!(thread_total(home.path(), "../escape").is_none());
+    }
     fn sample() -> crate::finops::Usage {
         serde_json::from_value(json!({"id":"u","node":"n","binding":"author","runtime":"codex","model":"gpt-test","attempt":1,"at":1,"input":100,"output":20,"cache_read":40,"cache_write":10,"reasoning":5,"usd":null,"llm_ms":null,"calls":1,"tools":0,"source":"codex_native_history"})).unwrap()
     }
@@ -500,6 +608,72 @@ mod tests {
         // Another folder is still refused.
         r.workspace = format!("{cwd}-other/");
         assert_eq!(history(&r, &[], &files, &mut 0).1, 1);
+    }
+    /// Observed with two Tasks on one Codex session, the second started in the second in which the
+    /// first ended: its last token count (22:04:07.141) went to the second Task (13249 / 63353).
+    #[tokio::test]
+    async fn token_counts_go_to_the_turn_that_wrote_them_when_steps_change_within_a_second() {
+        let d = tempfile::tempdir().unwrap();
+        let app = crate::tests::app(d.path());
+        let mut r = crate::engine::create(&app, 1, crate::presets::all().remove(0), "split".into(), None)
+            .await
+            .unwrap();
+        let sid = "019ac1f0-0000-7000-8000-00000000c0de";
+        r.sessions.insert(
+            "author".into(),
+            crate::model::NativeSession {
+                provider: String::new(), base_url: String::new(), runtime: "codex".into(),
+                native_id: sid.into(), model: "gpt-test".into(), turns: 2,
+            },
+        );
+        let token = |at: &str, total: u64, input: u64, output: u64| json!({"timestamp":at,"type":"event_msg","payload":{"type":"token_count",
+            "info":{"total_token_usage":{"input_tokens":total,"output_tokens":0},"last_token_usage":{"input_tokens":input,"cached_input_tokens":0,"output_tokens":output}}}});
+        let task = |at: &str, kind: &str, turn: &str| json!({"timestamp":at,"type":"event_msg","payload":{"type":kind,"turn_id":turn}});
+        let lines = [
+            json!({"timestamp":"2026-11-26T22:03:40.500Z","type":"session_meta","payload":{"id":sid,"cwd":r.workspace}}),
+            json!({"timestamp":"2026-11-26T22:03:40.510Z","type":"turn_context","payload":{"turn_id":"t1","model":"gpt-test"}}),
+            task("2026-11-26T22:03:40.512Z", "task_started", "t1"),
+            token("2026-11-26T22:03:52.300Z", 13249, 13000, 249),
+            token("2026-11-26T22:04:07.141Z", 26808, 13400, 159),
+            task("2026-11-26T22:04:07.150Z", "task_complete", "t1"),
+            json!({"timestamp":"2026-11-26T22:04:07.618Z","type":"turn_context","payload":{"turn_id":"t2","model":"gpt-test"}}),
+            task("2026-11-26T22:04:07.620Z", "task_started", "t2"),
+            token("2026-11-26T22:04:30.004Z", 76602, 49000, 794),
+            task("2026-11-26T22:04:30.010Z", "task_complete", "t2"),
+        ];
+        let path = d.path().join(format!("rollout-2026-11-26T23-03-40-{sid}.jsonl"));
+        std::fs::write(&path, lines.iter().map(|l| l.to_string() + "\n").collect::<String>()).unwrap();
+        let files = vec![path];
+        let second = |at: &str| at.parse::<jiff::Timestamp>().unwrap().as_second();
+        let event = |kind: &str, node: &str, text: String, at: &str| crate::model::Event {
+            seq: 0, run: r.id.clone(), kind: kind.into(), node: node.into(), text, created: second(at),
+        };
+        let turn = |node: &str, at: &str| event("agent_turn", node, json!({"binding":"author","runtime":"codex","node":node,"attempt":1,"status":"cli_success"}).to_string(), at);
+        // Run events keep whole seconds: the second Task starts at 22:04:07, read as .000.
+        let states = vec![
+            event("state", "first", "running".into(), "2026-11-26T22:03:40Z"),
+            turn("first", "2026-11-26T22:04:07Z"),
+            event("state", "first", "completed".into(), "2026-11-26T22:04:07Z"),
+            event("state", "second", "running".into(), "2026-11-26T22:04:07Z"),
+            turn("second", "2026-11-26T22:04:30Z"),
+            event("state", "second", "completed".into(), "2026-11-26T22:04:30Z"),
+        ];
+        let split = |events: &[crate::model::Event]| {
+            let (rows, missed) = history(&r, events, &files, &mut 0);
+            assert_eq!(missed, 0);
+            let tokens = |node: &str| rows.iter().filter(|u| u.node == node).map(|u| u.input + u.output).sum::<u64>();
+            assert!(rows.iter().all(|u| u.attempt == 1));
+            (tokens("first"), tokens("second"))
+        };
+        // Matched in order with the run's turns on the binding.
+        assert_eq!(split(&states), (26808, 49794));
+        // Runs saved before agent_turn, or a turn that never reached the log: each log turn goes
+        // to the step running when it began.
+        let legacy: Vec<_> = states.iter().filter(|e| e.kind != "agent_turn").cloned().collect();
+        assert_eq!(split(&legacy), (26808, 49794));
+        let mut unmatched = states.clone();
+        unmatched.insert(1, turn("first", "2026-11-26T22:03:40Z"));
+        assert_eq!(split(&unmatched), (26808, 49794));
     }
     #[tokio::test]
     async fn native_history_deduplicates_checks_ownership_and_rejects_partial_logs() {

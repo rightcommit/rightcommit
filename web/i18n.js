@@ -483,6 +483,7 @@ const en={
 "Strumento completato":"Tool completed",
 "Errore strumento":"Tool failed",
 "Agente avviato":"Agent started",
+"Avviso dell’agente":"Agent notice",
 "Risultato strutturato mancante: richiesto all’agente":"Structured result missing: requested from the agent",
 "Attività":"Activity",
 "Token in ingresso":"Input tokens",

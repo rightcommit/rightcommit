@@ -53,8 +53,8 @@ without a personal key. Only permit users covered by the key owner's provider ag
 
 ### Complete provider variable list
 
-This list matches the pinned Pi **1.5.2** catalog and rightcommit's actual
-forwarding rules: **43 provider entries** and **72 distinct provider variables**.
+This list matches the pinned Pi **1.7.0** catalog and rightcommit's actual
+forwarding rules: **43 provider entries** and **76 distinct provider variables**.
 The source is [distribution/pi-providers.json](distribution/pi-providers.json), with the
 application's filters applied. Provider-specific variables are passed only to the selected
 Pi provider, including in Multi-provider mode and for the administrator's Project Manager,
@@ -98,10 +98,10 @@ environment-based authentication route in this version.
 | Opencode | `opencode` | `OPENCODE_API_KEY` |
 | Opencode Go | `opencode-go` | `OPENCODE_API_KEY` |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` |
-| Qwen Token Plan | `qwen-token-plan` | `QWEN_TOKEN_PLAN_API_KEY` |
-| Qwen Token Plan Cn | `qwen-token-plan-cn` | `QWEN_TOKEN_PLAN_CN_API_KEY` |
-| Qwen Token Plan Individual | `qwen-token-plan-individual` | `QWEN_TOKEN_PLAN_API_KEY` |
-| Qwen Token Plan Individual Cn | `qwen-token-plan-individual-cn` | `QWEN_TOKEN_PLAN_CN_API_KEY` |
+| Qwen Token Plan Team | `qwen-token-plan` | `QWEN_TOKEN_PLAN_TEAM_API_KEY`<br>`QWEN_TOKEN_PLAN_API_KEY` |
+| Qwen Token Plan Team CN | `qwen-token-plan-cn` | `QWEN_TOKEN_PLAN_TEAM_CN_API_KEY`<br>`QWEN_TOKEN_PLAN_CN_API_KEY` |
+| Qwen Token Plan Individual | `qwen-token-plan-individual` | `QWEN_TOKEN_PLAN_INDIVIDUAL_API_KEY`<br>`QWEN_TOKEN_PLAN_API_KEY` |
+| Qwen Token Plan Individual CN | `qwen-token-plan-individual-cn` | `QWEN_TOKEN_PLAN_INDIVIDUAL_CN_API_KEY`<br>`QWEN_TOKEN_PLAN_CN_API_KEY` |
 | Radius | `radius` | `RADIUS_API_KEY` |
 | Together AI | `together` | `TOGETHER_API_KEY` |
 | Vercel AI Gateway | `vercel-ai-gateway` | `AI_GATEWAY_API_KEY` |
