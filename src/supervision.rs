@@ -561,6 +561,7 @@ runtime: "codex".into(),
             input: "test supervision".into(),
             base_run: None,
             allow_large_source_copy: false,
+            create_missing_source_folders: false,
             execution: Some(execution),
         };
         let error = crate::api::prepare_run(&app, 1, start(chosen_for("openrouter")), None).await.unwrap_err().to_string();

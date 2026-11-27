@@ -160,8 +160,9 @@ fn workspace_snapshot(r: &Run) -> Result<(String, Vec<String>)> {
         for entry in std::fs::read_dir(root)? {
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().into_owned();
-            if [".git", "target", "node_modules"].contains(&name.as_str()) { continue; }
             let meta = std::fs::symlink_metadata(entry.path())?;
+            // Like the copy: dependency folders such as .venv hold links and are recreated by runs.
+            if crate::project_tree::omitted(&entry.file_name(), meta.is_file()) { continue; }
             ensure!(!meta.is_symlink(), "Link simbolico non supportato: {name}");
             let path = format!("{prefix}{name}");
             let copy_path = format!("{copy_prefix}{name}");
@@ -687,6 +688,21 @@ mod tests {
         let w = insert(&r);
         assert!(preview(&app, 2, &r.id, &w, None).is_err());
         app.busy.lock().unwrap().insert(r.id.clone());
+        assert!(preview(&app, 1, &r.id, &w, None).is_err());
+    }
+    #[tokio::test]
+    async fn preview_works_with_a_virtual_environment_and_ignores_its_changes() {
+        let (_dir, app, r) = fixture().await;
+        let w = insert(&r);
+        let ws = Path::new(&r.workspace);
+        crate::source_access::tests::venv(&ws.join(".venv"));
+        crate::source_access::tests::venv(&ws.join("services/api/venv"));
+        let p = preview(&app, 1, &r.id, &w, None).unwrap();
+        assert!(!p.workspace_files.iter().any(|f| f.contains("venv")), "{:?}", p.workspace_files);
+        std::fs::write(ws.join(".venv/lib/python3/site-packages/installed.py"), "x").unwrap();
+        assert_eq!(preview(&app, 1, &r.id, &w, None).unwrap().token, p.token);
+        // Any other link is still refused.
+        std::os::unix::fs::symlink("/etc", ws.join("config")).unwrap();
         assert!(preview(&app, 1, &r.id, &w, None).is_err());
     }
     #[tokio::test]

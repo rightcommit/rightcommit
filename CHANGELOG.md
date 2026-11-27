@@ -3,6 +3,50 @@
 What changed in each version of rightcommit. Releases are also listed on
 [GitHub](https://github.com/rightcommit/rightcommit/releases).
 
+## [1.10.5] - 2026-11-27
+
+### Added
+
+- **Missing Source folders are named and can be created at start.** When a Source of type
+  Folder in /sources points to a folder that does not exist, starting the run from the
+  interface opens a dialog that names the Source and the folder: **Create** makes the folder,
+  empty, inside /sources and starts the run; **No** starts nothing. Scheduled runs,
+  sub-workflows, A2A and API calls never create folders: they stop with an error that names
+  the Source and the folder. API clients can send `create_missing_source_folders: true` after
+  a 409 `source_folders_missing` response.
+- The Docker and Podman image includes `pip` and `venv` for its Python 3, so a Python project
+  can install its dependencies, pytest included, in a virtual environment inside its
+  workspace. [Tools for your project's tests](INSTALL.md#tools-for-your-projects-tests) has the
+  commands and the test command to set for the Local CI step.
+
+### Changed
+
+- Dependency, cache and generated build folders are skipped at any depth, as `node_modules`
+  already was in part: `.venv`, `venv`, `__pycache__`, `.pytest_cache`, `.tox`,
+  `node_modules`, `.next`, `.gradle`, `.dart_tool`, `.terraform`, `_build` and more (the full
+  list is in INSTALL.md). They are not copied from a Source into the workspace and do not
+  count toward the copy size limit, they are not captured as artifacts or shown in the
+  Artifacts view, in the workspace in Storage or in the result ZIP, and RAG does not index
+  them. A file with one of these names is still copied. A project that commits one of these
+  folders does not find it in a copied workspace; with **Permanently modify source** it stays
+  in place.
+
+### Fixed
+
+- A Source folder that holds a Python virtual environment can start a run. The copy refused
+  the symbolic links inside `.venv`, and **Permanently modify source** refused them too, also
+  inside `node_modules`.
+- A Source whose folder does not exist, or is a file, no longer stops the start with
+  "No such file or directory": the error names the Source and the path.
+- **Edit and continue** no longer fails when the workspace holds a virtual environment, and
+  the result ZIP no longer fails on a `venv` or `.tox` folder.
+
+### Security
+
+- The server changes the ownership of files and copies them without following a symbolic
+  link, also when a folder is replaced by a link while it works, and the file watcher no
+  longer follows links.
+
 ## [1.10.4] - 2026-11-26
 
 ### Changed

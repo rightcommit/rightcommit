@@ -20,7 +20,11 @@ impl Monitor {
     pub fn start(roots: Vec<PathBuf>) -> anyhow::Result<Self> {
         let changes = Arc::new(Mutex::new(Changes::default()));
         let events = changes.clone();
-        let mut watcher = notify::recommended_watcher(move |result: notify::Result<Event>| {
+        let watched = roots.clone();
+        // Never follow links: on Linux the default would add watches through every link the
+        // agent creates, such as .venv/lib64 or a link to /.
+        let config = notify::Config::default().with_follow_symlinks(false);
+        let mut watcher = RecommendedWatcher::new(move |result: notify::Result<Event>| {
             let mut changes = events.lock().unwrap();
             match result {
                 Ok(event) if !matches!(event.kind, EventKind::Access(_)) => {
@@ -28,7 +32,13 @@ impl Monitor {
                         changes.uncertain = true;
                     }
                     for path in event.paths {
-                        if !path.components().any(|c| c.as_os_str() == ".git") {
+                        // Inside a root, .git and dependency folders (npm or pip installs make
+                        // thousands of events) are never artifacts.
+                        let inside = watched.iter().find_map(|root| path.strip_prefix(root).ok()).unwrap_or(&path);
+                        let folders = inside.parent().unwrap_or(std::path::Path::new(""));
+                        if !inside.components().any(|c| c.as_os_str() == ".git")
+                            && !folders.components().any(|c| crate::project_tree::dependency_dir(c.as_os_str(), false))
+                        {
                             changes.paths.insert(path);
                         }
                     }
@@ -41,7 +51,7 @@ impl Monitor {
                 Err(_) => changes.uncertain = true,
                 _ => {}
             }
-        })?;
+        }, config)?;
         for root in &roots {
             watcher.watch(root, RecursiveMode::Recursive)?;
         }

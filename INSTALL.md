@@ -252,7 +252,10 @@ Then, in a workflow:
 
 1. Select the **Source** node and set **Source type** to **Folder in /sources**.
 2. Click **Path or URL** and pick your project from the list of folders in `/sources`, or type a
-   subfolder path.
+   subfolder path. If the folder does not exist yet, **Start** asks whether to create it:
+   **Create** makes the empty folder in `/sources` and starts the run, **No** starts nothing.
+   Scheduled runs never create folders: they stop with an error that names the Source and the
+   folder.
 3. Choose **Source handling**: **Create a copy of the source** works on a copy in the run's
    workspace and leaves your folder unchanged; **Permanently modify source** lets the run edit
    your folder directly. When a folder is larger than the copy threshold, the app asks before
@@ -273,8 +276,34 @@ A public repository also works without copying: set **Source type** to
 ## Tools for your project's tests
 
 The **Local CI** step runs your project's tests inside the container, with the tools installed
-there. The image includes Rust (`cargo`), Node.js with npm, Python 3, make and gcc. It does not
-include Go, Java, Maven, Gradle or pytest.
+there. The image includes Rust (`cargo`), Node.js with npm, Python 3 with `pip` and `venv`, make
+and gcc. It does not include Go, Java, Maven or Gradle.
+
+A Python project installs its dependencies, pytest included, in a virtual environment inside
+its workspace, the way a Node.js project installs them in `node_modules`:
+
+```sh
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt pytest
+```
+
+`pip install` outside a virtual environment is refused by Debian. Create virtual environments in the
+workspace, not under `/tmp`: it is mounted without permission to run programs. When the tests
+need the virtual environment, set the Local CI step's test command to `.venv/bin/python -m pytest`:
+the command detected for `pyproject.toml`, `pytest.ini` or `setup.py` is `python3 -m pytest`, which
+uses the system Python.
+
+When a run copies a Source folder into its workspace, it leaves out `.git`, `target` and these
+dependency, cache and generated build folders, at any depth: `.venv`, `venv`, `__pycache__`,
+`.pytest_cache`, `.tox`, `.nox`, `.mypy_cache`, `.ruff_cache`, `.ipynb_checkpoints`,
+`node_modules`, `bower_components`, `.next`, `.nuxt`, `.svelte-kit`, `.turbo`, `.parcel-cache`,
+`.angular`, `.pnpm-store`, `.nyc_output`, `.gradle`, `_build`, `.build`, `DerivedData`,
+`.dart_tool`, `.terraform`, `.stack-work`, `dist-newstyle`, `zig-cache`, `.zig-cache`, `zig-out`,
+`CMakeFiles`, `.ccls-cache`, `.cache`, `.direnv`. Each run creates its own; a file with one of
+these names is copied. A project that commits one of these folders does not find it in a copied
+workspace; with **Permanently modify source** the run works in the folder itself and keeps it.
+These folders do not count toward the copy size limit, the symbolic links inside them do not stop
+a run, and they are not shown in the Artifacts view, the workspace in Storage or the result ZIP.
 
 To add tools, build your own image on top of rightcommit. In the rightcommit folder:
 
@@ -282,7 +311,7 @@ To add tools, build your own image on top of rightcommit. In the rightcommit fol
 
    ```dockerfile
    FROM ghcr.io/rightcommit/rightcommit:latest
-   RUN apt-get update && apt-get install -y --no-install-recommends python3-pytest golang-go maven \
+   RUN apt-get update && apt-get install -y --no-install-recommends golang-go maven gradle \
        && rm -rf /var/lib/apt/lists/*
    ```
 

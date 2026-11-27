@@ -926,7 +926,7 @@ const en={
 "Sorgente originale — contenuto attuale condiviso":"Original source — current shared content",
 "Le cartelle in /sources seguono la modalità scelta nel nodo: modifica permanente o copia. I repository remoti vengono sempre clonati nel workspace. Scegli come gestire review e domande per questa esecuzione.":"Folders in /sources use the selected mode: permanent changes or a copy. Remote repositories are always cloned into the workspace. Choose how to handle reviews and questions for this run.",
 "Le Source in modalità permanente vengono modificate direttamente. Le altre usano copie nel workspace.":"Permanent sources are modified directly. Other sources use copies in the workspace.",
-"File delle tue esecuzioni. In modalità permanente mostrano il contenuto attuale condiviso della sorgente. Consultazione e download; build e cartelle Git esclusi dallo ZIP.":"Files from your runs. Permanent mode shows the current shared source content. Browse and download; build and Git folders are excluded from ZIP exports.",
+"File delle tue esecuzioni. In modalità permanente mostrano il contenuto attuale condiviso della sorgente. Consultazione e download; build, dipendenze, cache e cartelle Git nascosti ed esclusi dallo ZIP.":"Files from your runs. Permanent mode shows the current shared source content. Browse and download; build, dependency, cache and Git folders are hidden and excluded from ZIP exports.",
 
 "Artefatti considerati":"Referenced artifacts",
 "Modalità di esecuzione":"Execution mode",
@@ -2069,6 +2069,19 @@ Object.assign(en,{
  "Esiste già un server MCP con ID {t1}: conferma la sostituzione": "An MCP server with ID {t1} already exists: confirm the replacement",
  "Proposta di registrazione MCP non leggibile": "The MCP registration proposal cannot be read",
  "La proposta di registrazione MCP contiene un valore per {t1}, che sembra un segreto: indica solo il nome della variabile": "The MCP registration proposal contains a value for {t1}, which looks like a secret: give only the variable name"
+});
+// A Source folder missing from /sources at run start, or a file where the folder should be:
+// {t1} is the Source title, {t2} the folder, as written. The run start error, also kept in the
+// schedule history, and the dialog of a manual start that offers to create the folders.
+Object.assign(en,{
+ "Source {t1}: la cartella {t2} non esiste in /sources. Creala o scegli un’altra cartella": "Source {t1}: the folder {t2} does not exist in /sources. Create it or choose another folder",
+ "Le cartelle di questi Source non esistono in /sources: {t1}. Creale o scegli altre cartelle": "The folders of these Sources do not exist in /sources: {t1}. Create them or choose other folders",
+ "Source {t1}: {t2} in /sources è un file, non una cartella. Scegli una cartella": "Source {t1}: {t2} in /sources is a file, not a folder. Choose a folder",
+ "Cartella Source mancante": "Missing Source folder",
+ "Cartelle Source mancanti": "Missing Source folders",
+ "Il Source {t1} usa la cartella {t2}, che non esiste in /sources. Vuoi crearla e avviare l’esecuzione?": "The Source {t1} uses the folder {t2}, which does not exist in /sources. Create it and start the run?",
+ "Questi Source usano cartelle che non esistono in /sources: {t1}. Vuoi crearle e avviare l’esecuzione?": "These Sources use folders that do not exist in /sources: {t1}. Create them and start the run?",
+ "No": "No"
 });
 // A supervisor model saved for one Pi provider while the supervisor now runs another provider or
 // agent: {t1}… hold the model ID and labels such as "Pi (OpenRouter)" or "Codex", as written.

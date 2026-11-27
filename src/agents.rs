@@ -73,12 +73,85 @@ pub fn own_tree(app: &App, uid: i64, p: &Path) -> Result<()> {
     // Native installs never change ownership. Avoid a recursive no-op stat walk.
     if !cfg!(target_os = "linux") || !app.isolate { return Ok(()); }
     own(app, uid, p)?;
-    if p.is_dir() && !p.is_symlink() {
-        for e in std::fs::read_dir(p)? {
-            own_tree(app, uid, &e?.path())?;
+    // The agent may own and change the tree while the server runs as root: every entry is
+    // changed relative to a folder opened without following links, never by its path.
+    let id = (20000 + uid) as libc::uid_t;
+    walk_nofollow(p, &mut |dir, name| {
+        ensure!(
+            unsafe { libc::fchownat(dir, name.as_ptr(), id, id as libc::gid_t, libc::AT_SYMLINK_NOFOLLOW) } == 0,
+            "chown fallito: {}",
+            std::io::Error::last_os_error()
+        );
+        Ok(())
+    })
+}
+
+/// Calls `visit(folder, name)` for every entry below `root`, at any depth. Each folder is opened
+/// relative to its parent with `O_NOFOLLOW`, so a link is visited (and can be changed itself) but
+/// never entered, even when a folder is replaced by a link while the walk runs. A `root` that is a
+/// link or not a folder has nothing below it.
+pub(crate) fn walk_nofollow(
+    root: &Path,
+    visit: &mut dyn FnMut(libc::c_int, &std::ffi::CStr) -> Result<()>,
+) -> Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+    const FLAGS: libc::c_int = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+    fn not_folder(error: &std::io::Error) -> bool {
+        matches!(error.raw_os_error(), Some(libc::ENOTDIR | libc::ELOOP | libc::ENOENT))
+    }
+    fn clear_errno() {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        unsafe { *libc::__errno_location() = 0 }
+        #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd"))]
+        unsafe { *libc::__error() = 0 }
+    }
+    struct Folder(*mut libc::DIR);
+    impl Drop for Folder {
+        fn drop(&mut self) {
+            unsafe { libc::closedir(self.0) };
         }
     }
-    Ok(())
+    fn walk(fd: libc::c_int, visit: &mut dyn FnMut(libc::c_int, &std::ffi::CStr) -> Result<()>) -> Result<()> {
+        let stream = unsafe { libc::fdopendir(fd) };
+        if stream.is_null() {
+            let error = std::io::Error::last_os_error();
+            unsafe { libc::close(fd) };
+            return Err(error.into());
+        }
+        let folder = Folder(stream);
+        loop {
+            clear_errno();
+            let entry = unsafe { libc::readdir(folder.0) };
+            if entry.is_null() {
+                let error = std::io::Error::last_os_error();
+                ensure!(error.raw_os_error().unwrap_or(0) == 0, "Lettura cartella non riuscita: {error}");
+                return Ok(());
+            }
+            let (name, kind) = unsafe { (std::ffi::CStr::from_ptr((*entry).d_name.as_ptr()).to_owned(), (*entry).d_type) };
+            if name.as_bytes() == b"." || name.as_bytes() == b".." {
+                continue;
+            }
+            visit(fd, &name)?;
+            if kind == libc::DT_DIR || kind == libc::DT_UNKNOWN {
+                let child = unsafe { libc::openat(fd, name.as_ptr(), FLAGS) };
+                if child < 0 {
+                    let error = std::io::Error::last_os_error();
+                    if not_folder(&error) {
+                        continue;
+                    }
+                    return Err(error.into());
+                }
+                walk(child, visit)?;
+            }
+        }
+    }
+    let path = std::ffi::CString::new(root.as_os_str().as_bytes())?;
+    let fd = unsafe { libc::open(path.as_ptr(), FLAGS) };
+    if fd < 0 {
+        let error = std::io::Error::last_os_error();
+        return if not_folder(&error) { Ok(()) } else { Err(error.into()) };
+    }
+    walk(fd, visit)
 }
 /// Resolve API-key inheritance at execution time; never persist or publish the admin key.
 pub(crate) fn effective_agent_config(app: &App, uid: i64, runtime: &str, config: &AgentConfig) -> Result<AgentConfig> {
@@ -1716,8 +1789,7 @@ pub fn parse_result(text: &str) -> Result<AgentResult> {
     Ok(result)
 }
 
-const COPY_OMIT: &[&str] = &[".git", "target", "node_modules"];
-
+// The copy leaves out `.git`, `target` and the dependency folders: see `project_tree::omitted`.
 // Only /sources folder copies have a per-file limit. Snapshots and examples
 // must not discard large files (including files originating in remote repos).
 pub fn copy_source_tree(src: &Path, dst: &Path, limit: u64) -> Result<()> {
@@ -1741,7 +1813,7 @@ pub fn source_tree_info(src: &Path, limit: Option<u64>) -> Result<(u64, Option<S
     let mut copy_error = None;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
-        if COPY_OMIT.contains(&entry.file_name().to_string_lossy().as_ref()) {
+        if crate::project_tree::omitted(&entry.file_name(), entry.file_type()?.is_file()) {
             continue;
         }
         let path = entry.path();
@@ -1792,7 +1864,7 @@ fn copy_tree_inner(src: &Path, dst: &Path, max_file_bytes: Option<u64>) -> Resul
     for e in std::fs::read_dir(src)? {
         let e = e?;
         let name = e.file_name();
-        if COPY_OMIT.contains(&name.to_string_lossy().as_ref()) {
+        if crate::project_tree::omitted(&name, e.file_type()?.is_file()) {
             continue;
         }
         let p = e.path();
@@ -1818,9 +1890,26 @@ fn copy_tree_inner(src: &Path, dst: &Path, max_file_bytes: Option<u64>) -> Resul
                     limit / (1024 * 1024)
                 );
             }
-            std::fs::copy(&p, dst.join(name))?;
+            copy_file_nofollow(&p, &dst.join(name))?;
         }
     }
+    Ok(())
+}
+/// Copies a regular file without following a link that replaced it after its type was checked
+/// (an earlier workspace belongs to the agent), keeping its permission bits like `std::fs::copy`.
+fn copy_file_nofollow(src: &Path, dst: &Path) -> Result<()> {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let mut input = std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW).open(src)?;
+    let metadata = input.metadata()?;
+    ensure!(metadata.is_file(), "File Source non supportato: {}", src.display());
+    let mut output = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(dst)?;
+    std::io::copy(&mut input, &mut output)?;
+    output.set_permissions(std::fs::Permissions::from_mode(metadata.permissions().mode() & 0o777))?;
     Ok(())
 }
 /// Content proof for CI: include project files and executable modes, not build caches.
@@ -1832,25 +1921,13 @@ pub(crate) fn workspace_fingerprint(root: &Path) -> Result<String> {
             let entry = entry?;
             let path = entry.path();
             let name = entry.file_name();
-            if [
-                ".git",
-                "target",
-                "node_modules",
-                ".nodo",
-                ".rightcommit",
-                "__pycache__",
-                ".pytest_cache",
-                ".mypy_cache",
-                ".cache",
-                ".venv",
-                ".tox",
-                ".gradle",
-            ]
-            .contains(&name.to_string_lossy().as_ref())
+            let meta = std::fs::symlink_metadata(&path)?;
+            // What the copy leaves out, and rightcommit's own folders (whatever their type).
+            if crate::project_tree::omitted(&name, meta.is_file())
+                || crate::source_access::internal_dir(&name.to_string_lossy())
             {
                 continue;
             }
-            let meta = std::fs::symlink_metadata(&path)?;
             let relative = path.strip_prefix(root)?.to_string_lossy().into_owned();
             if meta.file_type().is_symlink() {
                 records.push((

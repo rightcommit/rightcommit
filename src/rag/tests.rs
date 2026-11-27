@@ -162,6 +162,25 @@ fn source_rejects_traversal_and_symlinks() {
     let (m, _, _) = scan(&file, &Config::default(), &AtomicBool::new(false)).unwrap();
     assert_eq!(m.files.len(), 1);
 }
+#[test]
+fn dependency_folders_are_not_indexed_at_any_depth() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("source");
+    std::fs::create_dir_all(source.join("src")).unwrap();
+    std::fs::write(source.join("src/app.py"), "print(1)\n").unwrap();
+    crate::source_access::tests::venv(&source.join(".venv"));
+    crate::source_access::tests::venv(&source.join("services/api/venv"));
+    for cache in ["web/node_modules/pkg", "src/__pycache__", ".pytest_cache", ".tox/py3/lib"] {
+        std::fs::create_dir_all(source.join(cache)).unwrap();
+        std::fs::write(source.join(cache).join("cached.py"), "x = 1\n").unwrap();
+    }
+    // A folder named like a dependency folder is the root itself: it is indexed.
+    let cfg = Config { hidden: true, ..Config::default() };
+    let (m, _, _) = scan(&source, &cfg, &AtomicBool::new(false)).unwrap();
+    assert_eq!(m.files.keys().collect::<Vec<_>>(), ["src/app.py"]);
+    let (m, _, _) = scan(&source.join("services/api/venv"), &cfg, &AtomicBool::new(false)).unwrap();
+    assert_eq!(m.files.keys().collect::<Vec<_>>(), ["lib/python3/site-packages/module.py"]);
+}
 #[tokio::test]
 #[ignore = "Downloads real public ONNX model on first run"]
 async fn real_fastembed_embeddings_and_token_splitting() {

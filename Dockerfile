@@ -26,7 +26,7 @@ FROM node:24-bookworm-slim
 COPY distribution/agents.env /tmp/agents.env
 RUN . /tmp/agents.env \
     && apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates git curl bash python3 ripgrep jq util-linux tini build-essential pkg-config libssl-dev \
+    ca-certificates git curl bash python3 python3-venv python3-pip ripgrep jq util-linux tini build-essential pkg-config libssl-dev \
     && rm -rf /var/lib/apt/lists/* \
     && npm install --global --allow-scripts=@anthropic-ai/claude-code @openai/codex@${CODEX_VERSION} @anthropic-ai/claude-code@${CLAUDE_VERSION} @earendil-works/pi-coding-agent@${PI_VERSION} \
     && npm cache clean --force \

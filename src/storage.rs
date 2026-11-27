@@ -1,7 +1,7 @@
 use crate::{
     App,
     auth::{ApiResult, bad},
-    model::User,
+    model::{Node, User, Workflow},
 };
 use axum::{
     Json,
@@ -39,6 +39,125 @@ pub(crate) fn source_folder(app: &App, name: &str, location: &str) -> anyhow::Re
     anyhow::ensure!(folder.is_dir(), "Seleziona una cartella");
     Ok(folder)
 }
+/// What the folder of a Source of type "Folder in /sources" is on disk.
+enum FolderState {
+    Ready(PathBuf),
+    Missing,
+    /// The relative path of the first component that is not a folder.
+    NotFolder(String),
+}
+fn folder_state(base: &Path, location: &str) -> anyhow::Result<FolderState> {
+    let rel = relative(if location == "." { "" } else { location })?;
+    let mut cursor = base.to_path_buf();
+    let mut shown = PathBuf::new();
+    for c in rel.components() {
+        cursor.push(c);
+        shown.push(c);
+        match std::fs::symlink_metadata(&cursor) {
+            Ok(m) if m.file_type().is_symlink() => anyhow::bail!("Link simbolici non supportati"),
+            Ok(m) if m.is_dir() => {}
+            Ok(_) => return Ok(FolderState::NotFolder(shown.to_string_lossy().into_owned())),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(FolderState::Missing),
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(FolderState::Ready(cursor))
+}
+/// A Source whose folder does not exist in /sources: node ID, the title errors show and the folder.
+#[derive(Debug, Clone, serde::Serialize)]
+pub(crate) struct MissingFolder {
+    pub node: String,
+    pub title: String,
+    pub folder: String,
+}
+/// Run start refused because Source folders do not exist. The API answers with the code
+/// source_folders_missing and the list, so the interface can offer to create them.
+#[derive(Debug)]
+pub(crate) struct MissingSourceFolders(pub Vec<MissingFolder>);
+impl std::fmt::Display for MissingSourceFolders {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.0.as_slice() {
+            [one] => write!(f, "Source {}: la cartella {} non esiste in /sources. Creala o scegli un’altra cartella", one.title, one.folder),
+            many => write!(
+                f,
+                "Le cartelle di questi Source non esistono in /sources: {}. Creale o scegli altre cartelle",
+                many.iter().map(|m| format!("{} ({})", m.title, m.folder)).collect::<Vec<_>>().join(", ")
+            ),
+        }
+    }
+}
+impl std::error::Error for MissingSourceFolders {}
+fn node_label(n: &Node) -> &str {
+    if n.title.trim().is_empty() { &n.id } else { &n.title }
+}
+fn missing(n: &Node) -> MissingFolder {
+    MissingFolder { node: n.id.clone(), title: node_label(n).into(), folder: n.location.clone() }
+}
+fn not_folder(n: &Node, shown: &str) -> anyhow::Error {
+    anyhow::anyhow!("Source {}: {} in /sources è un file, non una cartella. Scegli una cartella", node_label(n), shown)
+}
+/// The folder of a Source in /sources, with errors that name the Source and its folder.
+pub(crate) fn node_source_folder(app: &App, n: &Node) -> anyhow::Result<PathBuf> {
+    match folder_state(&root(app, "sources")?, &n.location)? {
+        FolderState::Ready(path) => Ok(path),
+        FolderState::Missing => Err(MissingSourceFolders(vec![missing(n)]).into()),
+        FolderState::NotFolder(shown) => Err(not_folder(n, &shown)),
+    }
+}
+/// Checks the folders of the Sources of type "Folder in /sources" a new run reads (the first
+/// Source is skipped when the run starts from an earlier run). Missing folders refuse the start
+/// with MissingSourceFolders; with `create`, given only when the person confirmed it, they are
+/// created inside /sources first. Returns the folders created.
+pub(crate) fn check_source_folders(app: &App, w: &Workflow, base_run: bool, create: bool) -> anyhow::Result<Vec<PathBuf>> {
+    let checked: Vec<_> = w.nodes.iter().filter(|n| n.kind == "Source").enumerate()
+        .filter(|(i, n)| n.source_type == "folder" && !(*i == 0 && base_run)).map(|(_, n)| n).collect();
+    if checked.is_empty() {
+        return Ok(vec![]);
+    }
+    let base = root(app, "sources")?;
+    let mut absent = vec![];
+    for n in checked {
+        match folder_state(&base, &n.location)? {
+            FolderState::Ready(_) => {}
+            FolderState::Missing => absent.push(n),
+            FolderState::NotFolder(shown) => return Err(not_folder(n, &shown)),
+        }
+    }
+    if absent.is_empty() {
+        return Ok(vec![]);
+    }
+    if !create {
+        return Err(MissingSourceFolders(absent.iter().map(|n| missing(n)).collect()).into());
+    }
+    let mut created = vec![];
+    for n in absent {
+        create_folder(&base, n, &mut created)?;
+        node_source_folder(app, n)?;
+    }
+    Ok(created)
+}
+/// Creates the missing tail of a Source folder inside /sources one folder at a time, with the
+/// server's default permissions, like a folder made with New folder in Storage: existing
+/// components must be real folders, never links or files.
+fn create_folder(base: &Path, n: &Node, created: &mut Vec<PathBuf>) -> anyhow::Result<()> {
+    let mut cursor = base.to_path_buf();
+    let mut shown = PathBuf::new();
+    for c in relative(&n.location)?.components() {
+        cursor.push(c);
+        shown.push(c);
+        match std::fs::create_dir(&cursor) {
+            Ok(()) => created.push(cursor.clone()),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(e.into()),
+        }
+        let m = std::fs::symlink_metadata(&cursor)?;
+        anyhow::ensure!(!m.file_type().is_symlink(), "Link simbolici non supportati");
+        if !m.is_dir() {
+            return Err(not_folder(n, &shown.to_string_lossy()));
+        }
+    }
+    Ok(())
+}
 pub async fn source_size(
     State(app): State<App>,
     user: User,
@@ -47,8 +166,18 @@ pub async fn source_size(
     if q.root != "sources" {
         return Err(bad("Dimensione copia disponibile solo per sources"));
     }
-    let folder = source_folder(&app, "sources", &q.path)?;
     let threshold = app.store.settings(user.id)?.source_copy_limit_bytes()?;
+    // Nothing to copy from a folder that does not exist yet, or from a file in its place: the run
+    // start refuses them with an error naming the Source, and offers to create a missing folder.
+    let folder = match folder_state(&root(&app, "sources")?, &q.path)? {
+        FolderState::Ready(folder) => folder,
+        FolderState::Missing => {
+            return Ok(Json(json!({"bytes":0,"threshold_bytes":threshold,"copy_error":null,"missing":true})));
+        }
+        FolderState::NotFolder(shown) => {
+            return Ok(Json(json!({"bytes":0,"threshold_bytes":threshold,"copy_error":null,"not_folder":shown})));
+        }
+    };
     let (bytes, copy_error) = crate::artifacts::blocking(move || {
         crate::agents::source_tree_info(&folder, Some(threshold))
     }).await?;
@@ -77,7 +206,17 @@ fn resolve(base: &Path, s: &str) -> anyhow::Result<PathBuf> {
     }
     Ok(p)
 }
-const EXPORT_OMIT: &[&str] = &[".git", "target", "node_modules", "__pycache__", ".venv"];
+/// Run workspaces hide and export neither `.git`, `target` nor dependency and cache folders, at
+/// any depth: see `project_tree::omitted`. /sources and examples show every real folder.
+/// A path component that does not exist yet counts as a folder.
+fn workspace_omitted(base: &Path, rest: &str) -> bool {
+    let mut cursor = base.to_path_buf();
+    Path::new(rest).components().any(|c| {
+        cursor.push(c);
+        let is_file = std::fs::symlink_metadata(&cursor).is_ok_and(|m| m.is_file());
+        crate::project_tree::omitted(c.as_os_str(), is_file)
+    })
+}
 fn workspace_path(app: &App, uid: i64, path: &str) -> anyhow::Result<PathBuf> {
     relative(path)?;
     let (id, rest) = path.split_once('/').unwrap_or((path, ""));
@@ -90,9 +229,7 @@ fn workspace_path(app: &App, uid: i64, path: &str) -> anyhow::Result<PathBuf> {
         "Workspace non valido"
     );
     anyhow::ensure!(
-        !Path::new(rest)
-            .components()
-            .any(|c| EXPORT_OMIT.iter().any(|name| c.as_os_str() == *name)),
+        !workspace_omitted(&base, rest),
         "Cartella interna esclusa dall'esportazione"
     );
     resolve(&base, rest)
@@ -162,10 +299,8 @@ fn folder_bytes(path: &Path, omit_build: bool) -> anyhow::Result<u64> {
     let mut total = 0u64;
     for entry in std::fs::read_dir(path)? {
         let entry = entry?;
-        if omit_build && EXPORT_OMIT.contains(&entry.file_name().to_string_lossy().as_ref()) {
-            continue;
-        }
-        if entry.file_type()?.is_symlink() {
+        let kind = entry.file_type()?;
+        if kind.is_symlink() || (omit_build && crate::project_tree::omitted(&entry.file_name(), kind.is_file())) {
             continue;
         }
         total = total.saturating_add(folder_bytes(&entry.path(), omit_build)?);
@@ -305,8 +440,7 @@ pub async fn list(
         let e = e?;
         let m = e.path().symlink_metadata()?;
         if m.file_type().is_symlink()
-            || (q.root == "workspaces"
-                && EXPORT_OMIT.contains(&e.file_name().to_string_lossy().as_ref()))
+            || (q.root == "workspaces" && crate::project_tree::omitted(&e.file_name(), m.is_file()))
         {
             continue;
         }
@@ -452,18 +586,22 @@ pub async fn download(
     } else {
         storage_path(&app, u.id, &q)?
     };
-    let omit = q.root == "workspaces";
+    let omit = if q.root == "workspaces" { crate::project_tree::export_rules().to_string() } else { "{}".into() };
     let bytes=tokio::task::spawn_blocking(move||->anyhow::Result<Vec<u8>>{
  let mut child=std::process::Command::new("python3").args(["-c",r#"
 import sys,os,zipfile,io
 from pathlib import Path
 p=Path(sys.argv[1]); files=[]
-omit={'.git','target','node_modules','__pycache__','.venv'} if sys.argv[2]=='true' else set()
+rules=__import__('json').loads(sys.argv[2]); any_type=set(rules.get('any',[])); folders=set(rules.get('folders',[]))
+# A file named like a dependency folder is content; a link with that name is left out unread.
+def skip(parent,n):
+ f=Path(parent)/n
+ return n in any_type or (n in folders and (f.is_symlink() or not f.is_file()))
 if p.is_dir():
  for parent,dirs,names in os.walk(p,followlinks=False):
-  dirs[:]=sorted(d for d in dirs if d not in omit)
+  dirs[:]=sorted(d for d in dirs if not skip(parent,d))
   files.extend(Path(parent)/d for d in dirs)
-  files.extend(Path(parent)/n for n in sorted(names) if n not in omit)
+  files.extend(Path(parent)/n for n in sorted(names) if not skip(parent,n))
   if len(files)>10000: raise ValueError('Limite di 10000 elementi superato')
 else: files=[p] if p.exists() else []
 reports=__import__('json').load(sys.stdin); selected=Path(sys.argv[3]) if sys.argv[3] else None
@@ -485,7 +623,7 @@ with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as z:
   if str(rel) not in z.namelist(): z.writestr(str(rel),content)
  if not z.namelist() and not p.is_dir(): raise ValueError('File non trovato')
 sys.stdout.buffer.write(out.getvalue())
-"#]).arg(p).arg(omit.to_string()).arg(selected).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn()?;
+"#]).arg(p).arg(omit).arg(selected).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn()?;
  use std::io::Write;
  let mut stdin=child.stdin.take().ok_or_else(||anyhow::anyhow!("Input ZIP non disponibile"))?;
  stdin.write_all(&serde_json::to_vec(&report_files)?)?;drop(stdin);
@@ -636,6 +774,55 @@ mod tests {
             assert!(report_view(&app, 2, &format!("{}/{path}",run.id)).is_err());
             assert!(rag_source(&app, 1, "workspaces", &format!("{}/{path}",run.id)).is_err());
         }
+    }
+    #[tokio::test]
+    async fn workspaces_hide_and_export_without_dependency_folders() {
+        use axum::response::IntoResponse;
+        let d = tempfile::tempdir().unwrap();
+        // The ZIP refuses a link anywhere above its files, and the macOS temp folder sits behind one.
+        let base = std::fs::canonicalize(d.path()).unwrap();
+        let app = crate::tests::app(&base);
+        let run = crate::engine::create(&app, 1, crate::presets::all().remove(0), "storage test".into(), None).await.unwrap();
+        let ws = Path::new(&run.workspace);
+        crate::source_access::tests::venv(&ws.join(".venv"));
+        crate::source_access::tests::venv(&ws.join("services/api/venv"));
+        std::fs::create_dir_all(ws.join("web/node_modules/.bin")).unwrap();
+        std::os::unix::fs::symlink("/etc", ws.join("web/node_modules/.bin/tool")).unwrap();
+        std::fs::create_dir_all(ws.join("app/.dart_tool")).unwrap();
+        std::fs::write(ws.join("app/.dart_tool/state"), "cache").unwrap();
+        std::fs::write(ws.join("services/venv"), "a file, not a folder").unwrap();
+        let user = || User { id: 1, email: String::new() };
+        let query = |root: &str, path: String| Query(Location { root: root.into(), path, directory: false });
+        let names = |listing: Value| listing["entries"].as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap().to_owned()).collect::<Vec<_>>();
+        let top = names(list(State(app.clone()), user(), query("workspaces", run.id.clone())).await.unwrap().0);
+        assert!(!top.contains(&".venv".to_string()) && top.contains(&"services".to_string()), "{top:?}");
+        let services = names(list(State(app.clone()), user(), query("workspaces", format!("{}/services", run.id))).await.unwrap().0);
+        assert!(services.contains(&"venv".to_string()), "a file named venv is shown: {services:?}");
+        let api = names(list(State(app.clone()), user(), query("workspaces", format!("{}/services/api", run.id))).await.unwrap().0);
+        assert!(api.is_empty(), "{api:?}");
+        assert!(workspace_path(&app, 1, &format!("{}/services/venv", run.id)).unwrap().is_file());
+        assert!(workspace_path(&app, 1, &format!("{}/services/api/venv/pyvenv.cfg", run.id)).is_err());
+        assert!(workspace_path(&app, 1, &format!("{}/app/.dart_tool/state", run.id)).is_err());
+        let q = Location { root: "workspaces".into(), path: format!("{}/services", run.id), directory: false };
+        assert_eq!(logical_bytes(&app, 1, &q).unwrap(), "a file, not a folder".len() as u64);
+        // The result ZIP used to fail on the links inside .venv; now it leaves the folders out.
+        let response = download(State(app.clone()), user(), query("workspaces", run.id.clone())).await.unwrap().into_response();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let zip = d.path().join("result.zip");
+        std::fs::write(&zip, &bytes).unwrap();
+        let listed = std::process::Command::new("python3")
+            .args(["-c", "import sys,zipfile;print('\\n'.join(zipfile.ZipFile(sys.argv[1]).namelist()))"])
+            .arg(&zip).output().unwrap();
+        let listed = String::from_utf8(listed.stdout).unwrap();
+        assert!(listed.lines().any(|l| l.ends_with("services/venv")), "{listed}");
+        assert!(listed.lines().any(|l| l.ends_with("src/lib.rs")), "{listed}");
+        for hidden in [".venv", "api/venv", "node_modules", ".dart_tool", ".git/"] {
+            assert!(!listed.contains(hidden), "{hidden} in ZIP:\n{listed}");
+        }
+        // /sources shows every real folder, as before.
+        let source = app.sources.join("project");
+        std::fs::create_dir_all(source.join(".venv/lib")).unwrap();
+        assert_eq!(names(list(State(app.clone()), user(), query("sources", "project".into())).await.unwrap().0), [".venv"]);
     }
     #[test]
     fn rejects_escape_and_symlinks() {

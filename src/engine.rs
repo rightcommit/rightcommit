@@ -520,6 +520,8 @@ pub async fn create_reserved(
     base_run: Option<String>, reserved_id: Option<String>,
 ) -> Result<Run> {
     validate_start(app, uid, &w)?;
+    // Starts without a person (schedules, A2A, API calls without the flag) never create folders.
+    crate::storage::check_source_folders(app, &w, base_run.is_some(), false)?;
     let settings = app.store.settings(uid)?;
     let active_agents: HashSet<_> = w.nodes.iter().filter(|n| {
         n.kind == "Task" && !n.skip || n.kind == "Gate" || n.kind == "Review" && n.mode != "human"
@@ -546,7 +548,7 @@ pub async fn create_reserved(
     // Resolve every direct binding before changing permissions or preparing files.
     for (i, n) in sources.iter().enumerate() {
         if crate::source_access::direct(n) && !(i == 0 && base_run.is_some()) {
-            let path = crate::storage::source_folder(app, "sources", &n.location)?;
+            let path = crate::storage::node_source_folder(app, n)?;
             let checked = path.clone();
             crate::artifacts::blocking(move || crate::source_access::validate_tree(&checked)).await?;
             source_context.insert(
@@ -604,7 +606,11 @@ pub async fn create_reserved(
                     } else {
                         "sources"
                     };
-                    let src = crate::storage::source_folder(app, namespace, &n.location)?;
+                    let src = if namespace == "sources" {
+                        crate::storage::node_source_folder(app, n)?
+                    } else {
+                        crate::storage::source_folder(app, namespace, &n.location)?
+                    };
                     if namespace == "sources" {
                         let (src, dest, limit) = (src.clone(), dest.clone(), settings.source_copy_limit_bytes()?);
                         crate::artifacts::blocking(move || agents::copy_source_tree(&src, &dest, limit)).await?;

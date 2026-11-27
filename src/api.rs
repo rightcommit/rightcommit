@@ -887,16 +887,27 @@ pub(crate) struct StartRun {
     pub base_run: Option<String>,
     #[serde(default)]
     pub allow_large_source_copy: bool,
+    /// Sent only by the interface after the person chose Create in the dialog about missing
+    /// Source folders: never set by schedules, sub-workflows or A2A.
+    #[serde(default)]
+    pub create_missing_source_folders: bool,
     pub execution: Option<ExecutionPolicy>,
 }
 async fn create_run(
     State(a): State<App>,
     u: User,
     Json(b): Json<StartRun>,
-) -> ApiResult<Json<Run>> {
+) -> Result<Json<Run>, axum::response::Response> {
     let lifecycle = a.lifecycle.clone();
     let _guard = lifecycle.write().await;
-    Ok(Json(prepare_run(&a, u.id, b, None).await?))
+    match prepare_run(&a, u.id, b, None).await {
+        Ok(r) => Ok(Json(r)),
+        // Missing Source folders: the code and the list let the interface offer to create them.
+        Err(e) => Err(match e.downcast_ref::<crate::storage::MissingSourceFolders>() {
+            Some(m) => (StatusCode::CONFLICT, Json(json!({"error":e.to_string(),"code":"source_folders_missing","missing":m.0}))).into_response(),
+            None => auth::ApiError::from(e).into_response(),
+        }),
+    }
 }
 pub(crate) async fn prepare_run(a: &App, uid: i64, b: StartRun, reserved_id: Option<String>) -> anyhow::Result<Run> {
     crate::auth::ensure_active(a, uid)?;
@@ -909,13 +920,16 @@ pub(crate) async fn prepare_run(a: &App, uid: i64, b: StartRun, reserved_id: Opt
     crate::templates::resolve_report_language(&mut w, b.locale.as_deref())?;
     engine::validate_start(a, uid, &w)?;
     crate::agent_auth::ensure_agents_configured(a, uid, &w).await?;
+    for folder in crate::storage::check_source_folders(a, &w, b.base_run.is_some(), b.create_missing_source_folders)? {
+        tracing::info!(user = uid, folder = %folder.display(), "Created a missing Source folder at run start");
+    }
     let copy_limit = a.store.settings(uid)?.source_copy_limit_bytes()?;
     for (i, n) in w.nodes.iter().filter(|n| n.kind == "Source").enumerate() {
         if n.source_type == "folder"
             && !crate::source_access::direct(n)
             && !(i == 0 && b.base_run.is_some())
         {
-            let path = crate::storage::source_folder(&a, "sources", &n.location)?;
+            let path = crate::storage::node_source_folder(a, n)?;
             let bytes = crate::artifacts::blocking(move || crate::agents::source_copy_size(&path, copy_limit)).await?;
             if bytes > copy_limit && !b.allow_large_source_copy {
                 anyhow::bail!(

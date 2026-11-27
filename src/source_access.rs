@@ -38,6 +38,10 @@ pub fn source_path(r: &Run, index: usize, n: &Node) -> String {
         })
 }
 
+/// A permanent Source must not hold links outside its dependency folders when a run takes it.
+/// The check is a second line of defence: the agent can create links during the run, so every
+/// server walker of the folder (ownership, artifacts, Storage, RAG) must never follow one, and
+/// none does.
 pub fn validate_tree(path: &Path) -> Result<()> {
     let metadata = std::fs::symlink_metadata(path)?;
     ensure!(
@@ -47,7 +51,12 @@ pub fn validate_tree(path: &Path) -> Result<()> {
     );
     if metadata.is_dir() {
         for e in std::fs::read_dir(path)? {
-            validate_tree(&e?.path())?;
+            let e = e?;
+            // Virtual environments and node_modules always hold links; nothing follows them.
+            if crate::project_tree::dependency_dir(&e.file_name(), e.file_type()?.is_file()) {
+                continue;
+            }
+            validate_tree(&e.path())?;
         }
     } else {
         ensure!(
@@ -73,7 +82,7 @@ pub fn validate_bindings(app: &App, r: &Run) -> Result<()> {
             .find(|n| n.id == id && direct(n))
             .ok_or_else(|| anyhow::anyhow!("Source diretta non valida"))?;
         ensure!(
-            crate::storage::source_folder(app, "sources", &n.location)? == Path::new(path),
+            crate::storage::node_source_folder(app, n)? == Path::new(path),
             "Percorso Source modificato"
         );
     }
@@ -117,7 +126,7 @@ pub fn available(app: &App, requested: &[PathBuf], excluded: &[String]) -> Resul
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn folder_workflow(mode: &str) -> Workflow {
@@ -339,6 +348,95 @@ mod tests {
             std::fs::read_to_string(original.join("notes.txt")).unwrap(),
             "original"
         );
+    }
+
+    /// A virtual environment as `python3 -m venv` makes it, with the links it always has.
+    pub(crate) fn venv(root: &Path) {
+        std::fs::create_dir_all(root.join("bin")).unwrap();
+        std::fs::create_dir_all(root.join("lib/python3/site-packages")).unwrap();
+        std::fs::write(root.join("lib/python3/site-packages/module.py"), "x = 1\n").unwrap();
+        std::fs::write(root.join("pyvenv.cfg"), "home = /usr/bin\n").unwrap();
+        std::os::unix::fs::symlink("/usr/bin/python3", root.join("bin/python3")).unwrap();
+        std::os::unix::fs::symlink("lib", root.join("lib64")).unwrap();
+    }
+
+    #[test]
+    fn direct_source_validation_skips_dependency_folders_but_not_other_links() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("project");
+        std::fs::create_dir_all(root.join("services/api")).unwrap();
+        std::fs::write(root.join("main.py"), "print(1)\n").unwrap();
+        venv(&root.join(".venv"));
+        venv(&root.join("services/api/venv"));
+        std::fs::create_dir_all(root.join("web/node_modules/.bin")).unwrap();
+        std::os::unix::fs::symlink("../tool/cli.js", root.join("web/node_modules/.bin/tool")).unwrap();
+        for cache in ["__pycache__", ".pytest_cache", ".tox"] {
+            std::fs::create_dir_all(root.join("services").join(cache)).unwrap();
+            std::os::unix::fs::symlink("/", root.join("services").join(cache).join("root")).unwrap();
+        }
+        validate_tree(&root).unwrap();
+        // A file with one of the names is project content and is checked like any other.
+        std::fs::write(root.join("services/venv"), "not a folder").unwrap();
+        validate_tree(&root).unwrap();
+        // A link named like a dependency folder is ignored, never followed.
+        std::os::unix::fs::symlink(dir.path(), root.join("services/api/node_modules")).unwrap();
+        validate_tree(&root).unwrap();
+        // Any other link is still refused, at any depth.
+        std::os::unix::fs::symlink("/etc", root.join("services/api/config")).unwrap();
+        let error = validate_tree(&root).unwrap_err().to_string();
+        assert!(error.contains("services/api/config"), "{error}");
+        std::fs::remove_file(root.join("services/api/config")).unwrap();
+        // .git and target keep their rules: links inside them are refused as before.
+        std::fs::create_dir_all(root.join("target")).unwrap();
+        std::os::unix::fs::symlink("/", root.join("target/root")).unwrap();
+        assert!(validate_tree(&root).is_err());
+    }
+
+    #[tokio::test]
+    async fn direct_source_with_a_virtual_environment_starts() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = crate::tests::app(dir.path());
+        let original = app.sources.join("material");
+        std::fs::create_dir_all(&original).unwrap();
+        std::fs::write(original.join("notes.txt"), "before").unwrap();
+        venv(&original.join(".venv"));
+        let w = folder_workflow("direct");
+        app.store.save_workflow(1, &w).unwrap();
+        let r = crate::engine::create(&app, 1, w.clone(), "test".into(), None).await.unwrap();
+        assert_eq!(PathBuf::from(&r.workspace), std::fs::canonicalize(&original).unwrap());
+        crate::artifacts::baseline(&app, 1, &r).unwrap();
+        std::fs::write(original.join(".venv/lib/python3/site-packages/new.py"), "y = 2\n").unwrap();
+        std::fs::write(original.join("notes.txt"), "after").unwrap();
+        crate::artifacts::snapshot(&app, 1, &r, "task", "", "").unwrap();
+        let paths: Vec<_> = app.store.artifacts(1, &r.id).unwrap().into_iter().map(|a| a.path).collect();
+        assert_eq!(paths, ["material/notes.txt"]);
+        crate::deletion::perform(&app, 1, &w.id, &[r.id]).unwrap();
+        assert!(original.join(".venv/bin/python3").is_symlink());
+    }
+
+    #[tokio::test]
+    async fn copied_workspace_with_a_virtual_environment_is_deleted_without_following_links() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = crate::tests::app(dir.path());
+        let original = app.sources.join("material");
+        std::fs::create_dir_all(&original).unwrap();
+        std::fs::write(original.join("notes.txt"), "before").unwrap();
+        venv(&original.join(".venv"));
+        let w = folder_workflow("");
+        app.store.save_workflow(1, &w).unwrap();
+        // The copy leaves the Source's .venv out; the run makes its own, with a link outside.
+        let r = crate::engine::create(&app, 1, w.clone(), "test".into(), None).await.unwrap();
+        let ws = PathBuf::from(&r.workspace);
+        assert!(ws.join("notes.txt").is_file() && !ws.join(".venv").exists());
+        venv(&ws.join(".venv"));
+        let outside = dir.path().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("keep.txt"), "keep").unwrap();
+        std::os::unix::fs::symlink(&outside, ws.join(".venv/lib/escape")).unwrap();
+        crate::deletion::perform(&app, 1, &w.id, &[r.id]).unwrap();
+        assert!(!ws.exists());
+        assert_eq!(std::fs::read_to_string(outside.join("keep.txt")).unwrap(), "keep");
+        assert!(original.join(".venv/bin/python3").is_symlink());
     }
 
     #[test]

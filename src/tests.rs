@@ -278,6 +278,101 @@ fn source_copy_refuses_symlinks() {
 }
 
 #[test]
+fn source_copy_leaves_out_dependency_folders_at_any_depth() {
+    let d = tempfile::tempdir().unwrap();
+    let source = d.path().join("source");
+    std::fs::create_dir_all(source.join("src")).unwrap();
+    std::fs::write(source.join("src/app.py"), "print(1)\n").unwrap();
+    crate::source_access::tests::venv(&source.join(".venv"));
+    crate::source_access::tests::venv(&source.join("services/api/venv"));
+    // Large dependency files are not counted toward the copy limit either.
+    let limit = Settings::default().source_copy_limit_bytes().unwrap();
+    for (folder, file) in [
+        ("web/node_modules/pkg", "huge.bin"),
+        ("services/api/__pycache__", "app.cpython.pyc"),
+        ("mobile/.dart_tool", "huge.bin"),
+        ("infra/.terraform/providers", "huge.bin"),
+        ("ios/.build", "huge.bin"),
+        ("lib/_build/dev", "huge.bin"),
+        ("tools/.gradle", "huge.bin"),
+        ("native/zig-cache", "huge.bin"),
+        ("native/CMakeFiles", "huge.bin"),
+    ] {
+        std::fs::create_dir_all(source.join(folder)).unwrap();
+        std::fs::File::create(source.join(folder).join(file)).unwrap().set_len(limit + 1).unwrap();
+    }
+    std::os::unix::fs::symlink("../pkg/cli.js", source.join("web/node_modules/pkg/cli")).unwrap();
+    // A file with one of the names is project content and is copied.
+    std::fs::write(source.join("services/venv"), "VENV_NAME=api\n").unwrap();
+    std::fs::write(source.join("mobile/.gradle"), "file\n").unwrap();
+    // A link with one of the names is left out without being followed.
+    std::os::unix::fs::symlink("/", source.join("src/node_modules")).unwrap();
+    assert_eq!(
+        agents::source_copy_size(&source, limit).unwrap(),
+        ("print(1)\n".len() + "VENV_NAME=api\n".len() + "file\n".len()) as u64
+    );
+    let dest = d.path().join("dest");
+    agents::copy_source_tree(&source, &dest, limit).unwrap();
+    assert_eq!(std::fs::read_to_string(dest.join("services/venv")).unwrap(), "VENV_NAME=api\n");
+    assert_eq!(std::fs::read_to_string(dest.join("mobile/.gradle")).unwrap(), "file\n");
+    assert!(dest.join("src/app.py").is_file());
+    for gone in [".venv", "services/api/venv", "web/node_modules", "services/api/__pycache__", "mobile/.dart_tool",
+        "infra/.terraform", "ios/.build", "lib/_build", "tools/.gradle", "native/zig-cache", "native/CMakeFiles", "src/node_modules"] {
+        assert!(std::fs::symlink_metadata(dest.join(gone)).is_err(), "{gone} copied");
+    }
+    // Generic names that can be real sources are copied.
+    for kept in ["build", "dist", "vendor", "bin", "out", ".bundle"] {
+        std::fs::create_dir_all(source.join(kept)).unwrap();
+        std::fs::write(source.join(kept).join("kept.txt"), "kept").unwrap();
+    }
+    let dest = d.path().join("dest-generic");
+    agents::copy_tree(&source, &dest).unwrap();
+    for kept in ["build", "dist", "vendor", "bin", "out", ".bundle"] {
+        assert!(dest.join(kept).join("kept.txt").is_file(), "{kept} not copied");
+    }
+    // Any other link is still refused, wherever it is.
+    std::os::unix::fs::symlink("/etc/passwd", source.join("services/api/passwd")).unwrap();
+    let error = agents::source_copy_size(&source, limit).unwrap_err().to_string();
+    assert!(error.contains("services/api/passwd"), "{error}");
+    assert!(agents::copy_tree(&source, &d.path().join("refused")).is_err());
+}
+
+#[test]
+fn ownership_walk_never_enters_links() {
+    let d = tempfile::tempdir().unwrap();
+    let (root, outside) = (d.path().join("workspace"), d.path().join("outside"));
+    std::fs::create_dir_all(outside.join("deep")).unwrap();
+    std::fs::write(outside.join("deep/secret"), "x").unwrap();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("src/main.py"), "x").unwrap();
+    crate::source_access::tests::venv(&root.join(".venv"));
+    std::os::unix::fs::symlink(&outside, root.join("src/escape")).unwrap();
+    std::os::unix::fs::symlink(root.join("missing"), root.join("dangling")).unwrap();
+    let mut seen = Vec::new();
+    agents::walk_nofollow(&root, &mut |_, name| {
+        seen.push(name.to_string_lossy().into_owned());
+        Ok(())
+    })
+    .unwrap();
+    seen.sort();
+    assert_eq!(
+        seen,
+        [".venv", "bin", "dangling", "escape", "lib", "lib64", "main.py", "module.py", "python3", "python3", "pyvenv.cfg", "site-packages", "src"]
+    );
+    // A root that is a link has nothing below it.
+    let mut count = 0;
+    agents::walk_nofollow(&root.join("src/escape"), &mut |_, _| { count += 1; Ok(()) }).unwrap();
+    assert_eq!(count, 0);
+    // The visitor can change the entry itself without following it, as own_tree does.
+    let (uid, gid) = unsafe { (libc::geteuid(), libc::getegid()) };
+    agents::walk_nofollow(&root, &mut |dir, name| {
+        anyhow::ensure!(unsafe { libc::fchownat(dir, name.as_ptr(), uid, gid, libc::AT_SYMLINK_NOFOLLOW) } == 0);
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
 fn source_copy_limit_is_inclusive_and_preflight_rejects_oversized_files() {
     let d = tempfile::tempdir().unwrap();
     let source = d.path().join("source");
@@ -1712,10 +1807,16 @@ async fn require_tests_gate_works_on_a_node_project() {
     r.context.insert(format!("test-proof:{}", ci.id), agents::workspace_fingerprint(Path::new(&r.workspace)).unwrap());
     assert!(engine::tests_current(&r).unwrap());
     // Dependencies and tool caches do not count as project changes.
-    for cache in ["node_modules/left-pad", ".pytest_cache", ".gradle", ".tox"] {
+    for cache in ["node_modules/left-pad", ".pytest_cache", ".gradle", ".tox", "services/api/venv/lib", "app/.dart_tool"] {
         std::fs::create_dir_all(Path::new(&r.workspace).join(cache)).unwrap();
         std::fs::write(Path::new(&r.workspace).join(cache).join("x"), "cache").unwrap();
     }
+    crate::source_access::tests::venv(&Path::new(&r.workspace).join(".venv"));
+    assert!(engine::tests_current(&r).unwrap());
+    // A file named like a dependency folder is project content.
+    std::fs::write(Path::new(&r.workspace).join("services/venv"), "VENV_NAME=api\n").unwrap();
+    assert!(!engine::tests_current(&r).unwrap());
+    std::fs::remove_file(Path::new(&r.workspace).join("services/venv")).unwrap();
     assert!(engine::tests_current(&r).unwrap());
     std::fs::write(Path::new(&r.workspace).join("index.js"), "module.exports = 1;\n").unwrap();
     assert!(!engine::tests_current(&r).unwrap());
@@ -1808,4 +1909,134 @@ fn agent_chosen_in_a_review_field_needs_no_edge() {
     w.nodes.iter_mut().find(|n| n.id == review_id).unwrap().agent = "author".into();
     let error = engine::validate(&w).unwrap_err().to_string();
     assert!(error.contains("è collegato all’Agent Reviewer ma ne ha assegnato un altro"), "{error}");
+}
+
+// Two folder Sources, a skipped Task and a human Review: the run starts without agent credentials.
+fn missing_folders_workflow() -> Workflow {
+    serde_json::from_value(serde_json::json!({"id":"missing-folders","name":"Missing folders","description":"","entry":"read","nodes":[
+        {"id":"project","kind":"Source","title":"Progetto QA","source_type":"folder","source_mode":"direct","location":"client/new-project"},
+        {"id":"docs","kind":"Source","source_type":"folder","source_mode":"copy","location":"docs/specs"},
+        {"id":"reader","kind":"Agent","title":"Reader"},
+        {"id":"read","kind":"Task","title":"Read","agent":"reader","skip":true},
+        {"id":"review","kind":"Review","mode":"human","prompt":"Check"}],
+        "edges":[{"from":"project","to":"reader","kind":"context"},{"from":"docs","to":"reader","kind":"context"},
+            {"from":"reader","to":"read","kind":"context"},{"from":"read","to":"review","kind":"control"}]})).unwrap()
+}
+fn start_missing(create: bool, base_run: Option<String>) -> crate::api::StartRun {
+    serde_json::from_value(serde_json::json!({"workflow_id":"missing-folders","base_run":base_run,"create_missing_source_folders":create})).unwrap()
+}
+fn no_workspace(dir: &Path) -> bool {
+    std::fs::read_dir(dir.join("users/1/workspaces")).map_or(true, |mut d| d.next().is_none())
+}
+
+#[tokio::test]
+async fn missing_source_folders_refuse_the_start_naming_each_source_and_folder() {
+    let d = tempfile::tempdir().unwrap();
+    let a = app(d.path());
+    std::fs::create_dir_all(&a.sources).unwrap();
+    let w = missing_folders_workflow();
+    a.store.save_workflow(1, &w).unwrap();
+    let error = crate::api::prepare_run(&a, 1, start_missing(false, None), None).await.unwrap_err();
+    let missing = &error.downcast_ref::<crate::storage::MissingSourceFolders>().expect("structured error").0;
+    assert_eq!(
+        missing.iter().map(|m| (m.node.as_str(), m.title.as_str(), m.folder.as_str())).collect::<Vec<_>>(),
+        [("project", "Progetto QA", "client/new-project"), ("docs", "docs", "docs/specs")]
+    );
+    assert_eq!(
+        error.to_string(),
+        "Le cartelle di questi Source non esistono in /sources: Progetto QA (client/new-project), docs (docs/specs). Creale o scegli altre cartelle"
+    );
+    // Nothing is created without the flag: no folder, no run, no workspace.
+    assert!(!a.sources.join("client").exists() && !a.sources.join("docs").exists());
+    assert!(a.store.runs(1).unwrap().is_empty() && no_workspace(d.path()));
+    // A single missing folder names its Source in one sentence, also on the engine path used by A2A.
+    std::fs::create_dir_all(a.sources.join("docs/specs")).unwrap();
+    let error = engine::create(&a, 1, w.clone(), "x".into(), None).await.unwrap_err();
+    assert_eq!(error.to_string(), "Source Progetto QA: la cartella client/new-project non esiste in /sources. Creala o scegli un’altra cartella");
+    assert!(error.downcast_ref::<crate::storage::MissingSourceFolders>().is_some());
+    assert!(!a.sources.join("client").exists() && a.store.runs(1).unwrap().is_empty());
+    // The size preview of a missing folder has nothing to copy instead of failing.
+    let preview = crate::storage::source_size(
+        axum::extract::State(a.clone()),
+        User { id: 1, email: "test@nodo.local".into() },
+        axum::extract::Query(serde_json::from_value(serde_json::json!({"path":"client/new-project"})).unwrap()),
+    ).await.unwrap().0;
+    assert_eq!((preview["bytes"].as_u64(), preview["missing"].as_bool()), (Some(0), Some(true)));
+    assert!(!a.sources.join("client").exists());
+}
+
+#[tokio::test]
+async fn confirmed_start_creates_the_missing_nested_folders_and_prepares_the_run() {
+    let d = tempfile::tempdir().unwrap();
+    let a = app(d.path());
+    std::fs::create_dir_all(a.sources.join("client")).unwrap();
+    a.store.save_workflow(1, &missing_folders_workflow()).unwrap();
+    let r = crate::api::prepare_run(&a, 1, start_missing(true, None), None).await.unwrap();
+    for folder in ["client/new-project", "docs/specs"] {
+        let m = std::fs::symlink_metadata(a.sources.join(folder)).unwrap();
+        assert!(m.is_dir() && !m.file_type().is_symlink(), "{folder}");
+        assert_eq!(std::fs::read_dir(a.sources.join(folder)).unwrap().count(), 0, "{folder}");
+    }
+    // The direct Source is the run's workspace; the copied one is prepared next to it.
+    assert_eq!(Path::new(&r.workspace), std::fs::canonicalize(a.sources.join("client/new-project")).unwrap());
+    assert!(Path::new(&r.context["source-path:docs"]).is_dir());
+    for _ in 0..200 {
+        if !a.busy.lock().unwrap().contains(&r.id) { break; }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(a.store.run(1, &r.id).unwrap().status, "waiting_review");
+}
+
+#[tokio::test]
+async fn a_file_or_a_link_in_the_path_is_never_turned_into_a_source_folder() {
+    let d = tempfile::tempdir().unwrap();
+    let a = app(d.path());
+    std::fs::create_dir_all(&a.sources).unwrap();
+    let mut w = missing_folders_workflow();
+    w.nodes.retain(|n| n.id != "docs");
+    w.edges.retain(|e| e.from != "docs");
+    a.store.save_workflow(1, &w).unwrap();
+    // A file where the folder should be, or where one of its parents should be.
+    std::fs::write(a.sources.join("client"), "not a folder").unwrap();
+    for create in [false, true] {
+        let error = crate::api::prepare_run(&a, 1, start_missing(create, None), None).await.unwrap_err().to_string();
+        assert_eq!(error, "Source Progetto QA: client in /sources è un file, non una cartella. Scegli una cartella");
+    }
+    std::fs::remove_file(a.sources.join("client")).unwrap();
+    std::fs::create_dir(a.sources.join("client")).unwrap();
+    std::fs::write(a.sources.join("client/new-project"), "not a folder").unwrap();
+    let error = crate::api::prepare_run(&a, 1, start_missing(true, None), None).await.unwrap_err().to_string();
+    assert_eq!(error, "Source Progetto QA: client/new-project in /sources è un file, non una cartella. Scegli una cartella");
+    assert!(std::fs::metadata(a.sources.join("client/new-project")).unwrap().is_file());
+    // A link in an existing part of the path is refused before anything is created behind it.
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::remove_dir_all(a.sources.join("client")).unwrap();
+    std::os::unix::fs::symlink(outside.path(), a.sources.join("client")).unwrap();
+    for create in [false, true] {
+        let error = crate::api::prepare_run(&a, 1, start_missing(create, None), None).await.unwrap_err().to_string();
+        assert_eq!(error, "Link simbolici non supportati");
+    }
+    assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
+    // An invalid path is refused as before, and never created.
+    w.nodes[0].location = "../escape".into();
+    a.store.save_workflow(1, &w).unwrap();
+    let error = crate::api::prepare_run(&a, 1, start_missing(true, None), None).await.unwrap_err().to_string();
+    assert_eq!(error, "Percorso non valido");
+    assert!(!d.path().join("escape").exists());
+    assert!(a.store.runs(1).unwrap().is_empty() && no_workspace(d.path()));
+}
+
+#[tokio::test]
+async fn a_run_from_an_earlier_run_does_not_need_the_first_source_folder() {
+    let d = tempfile::tempdir().unwrap();
+    let a = app(d.path());
+    std::fs::create_dir_all(&a.sources).unwrap();
+    let w = missing_folders_workflow();
+    // The first Source is replaced by the earlier run's workspace; the others are still checked.
+    let missing = crate::storage::check_source_folders(&a, &w, true, false).unwrap_err();
+    assert_eq!(missing.to_string(), "Source docs: la cartella docs/specs non esiste in /sources. Creala o scegli un’altra cartella");
+    let created = crate::storage::check_source_folders(&a, &w, true, true).unwrap();
+    assert_eq!(created, [a.sources.canonicalize().unwrap().join("docs"), a.sources.canonicalize().unwrap().join("docs/specs")]);
+    assert!(!a.sources.join("client").exists());
+    assert!(crate::storage::check_source_folders(&a, &w, true, false).unwrap().is_empty());
 }

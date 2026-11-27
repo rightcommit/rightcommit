@@ -37,6 +37,7 @@ mod mcp_workspace;
 mod model;
 mod parallelism;
 mod presets;
+mod project_tree;
 mod templates;
 mod test_command;
 mod rag;

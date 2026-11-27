@@ -233,6 +233,14 @@ fn working_roots(app: &App, uid: i64, run: &Run) -> Result<Vec<PathBuf>> {
     Ok(canonical)
 }
 
+/// Dependency and cache folders (node_modules, .venv…) are not run results: each run recreates
+/// them, and capturing them would store thousands of files and list them in every handoff.
+/// `target` is still captured: a built program can be a result. An entry removed during the
+/// scan is left to `walk`, which ignores missing files.
+fn skipped(entry: &std::fs::DirEntry) -> bool {
+    entry.file_type().is_ok_and(|kind| crate::project_tree::dependency_dir(&entry.file_name(), kind.is_file()))
+}
+
 fn inventory(app: &App, uid: i64, run: &Run) -> Result<BTreeMap<String, String>> {
     let cache = app.artifact_tracker.run(uid, &run.id);
     inventory_cached(app, uid, run, &mut cache.inventory.lock().unwrap())
@@ -263,7 +271,11 @@ fn inventory_cached(
                 return Ok(());
             }
             for entry in std::fs::read_dir(path)? {
-                walk(&entry?.path(), files, next, old)?;
+                let entry = entry?;
+                if skipped(&entry) {
+                    continue;
+                }
+                walk(&entry.path(), files, next, old)?;
             }
         } else if meta.is_file() {
             let key = path.to_string_lossy().into_owned();
@@ -366,7 +378,11 @@ fn metadata_inventory(
                 return Ok(());
             }
             for entry in std::fs::read_dir(path)? {
-                walk(&entry?.path(), files)?;
+                let entry = entry?;
+                if skipped(&entry) {
+                    continue;
+                }
+                walk(&entry.path(), files)?;
             }
         } else if meta.is_file() {
             files.insert(path.to_string_lossy().into_owned(), FileStamp::of(&meta));
@@ -1174,6 +1190,31 @@ mod tests {
         };
         app.store.save_run(1, &run).unwrap();
         (dir, app, run, second, copied)
+    }
+
+    #[test]
+    fn dependency_folders_are_not_captured_but_build_output_and_files_named_like_them_are() {
+        let (_dir, app, run, _, _) = fixture(true);
+        let root = Path::new(&run.workspace);
+        baseline(&app, 1, &run).unwrap();
+        crate::source_access::tests::venv(&root.join(".venv"));
+        crate::source_access::tests::venv(&root.join("services/api/venv"));
+        for cache in ["web/node_modules/pkg", "src/__pycache__", "mobile/.dart_tool", "infra/.terraform", "web/.next"] {
+            std::fs::create_dir_all(root.join(cache)).unwrap();
+            std::fs::write(root.join(cache).join("generated.js"), "x").unwrap();
+        }
+        std::os::unix::fs::symlink("/etc", root.join("web/node_modules/.bin")).unwrap();
+        std::fs::write(root.join("services/venv"), "VENV_NAME=api\n").unwrap();
+        std::fs::create_dir_all(root.join("target/release")).unwrap();
+        std::fs::write(root.join("target/release/app"), b"built\0program").unwrap();
+        snapshot(&app, 1, &run, "task", "", "").unwrap();
+        let mut paths: Vec<_> = app.store.artifacts(1, &run.id).unwrap().into_iter().map(|a| a.path).collect();
+        paths.sort();
+        assert_eq!(paths, ["main/services/venv", "main/target/release/app"]);
+        // A workspace scanned without a metadata baseline (older runs) skips them too.
+        let mut cache = InventoryCache::default();
+        let files = inventory_cached(&app, 1, &run, &mut cache).unwrap();
+        assert!(!files.keys().any(|p| p.contains("venv/") || p.contains("node_modules") || p.contains(".next")), "{files:?}");
     }
 
     #[test]

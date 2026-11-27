@@ -294,16 +294,8 @@ fn scan(
         }
         let name = p.file_name().unwrap_or_default().to_string_lossy();
         if p != source
-            && ([
-                ".git",
-                "target",
-                "node_modules",
-                ".venv",
-                ".nodo",
-                ".rightcommit",
-                "__pycache__",
-            ]
-            .contains(&name.as_ref())
+            && (crate::project_tree::omitted(p.file_name().unwrap_or_default(), m.is_file())
+                || crate::source_access::internal_dir(&name)
                 || (!cfg.hidden && name.starts_with('.')))
         {
             skipped += 1;
@@ -328,7 +320,12 @@ fn scan(
             skipped += 1;
             continue;
         }
-        let data = std::fs::read(&p)?;
+        // Opened without following a link that replaced the file after its type was checked.
+        let mut data = Vec::new();
+        {
+            use std::{io::Read, os::unix::fs::OpenOptionsExt};
+            std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW).open(&p)?.read_to_end(&mut data)?;
+        }
         let Ok(text) = String::from_utf8(data.clone()) else {
             skipped += 1;
             continue;

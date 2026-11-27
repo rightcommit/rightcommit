@@ -435,6 +435,8 @@ async fn tick(app: &App, recovery: bool) -> Result<()> {
                                 base_run: s.config.base_run.clone(),
                                 execution: s.config.execution.clone(),
                                 allow_large_source_copy: s.config.allow_large_source_copy,
+                                // A schedule has nobody to confirm the creation of a missing folder.
+                                create_missing_source_folders: false,
                             },
                             Some(rid),
                         )
@@ -709,6 +711,19 @@ mod tests {
             .unwrap();
         assert_eq!(app.store.run(1, &r.id).unwrap().status, "waiting_review");
         assert_eq!(run_schedule(&app, 1, &r.id).unwrap(), Some(s.id));
+    }
+    #[tokio::test]
+    async fn missing_source_folder_stops_the_scheduled_start_without_creating_it() {
+        let (_dir, app, mut s) = setup().await;
+        std::fs::remove_dir_all(app.sources.join("material")).unwrap();
+        due(&app, &mut s).await;
+        tick(&app, false).await.unwrap();
+        assert!(app.store.runs(1).unwrap().is_empty());
+        assert!(!app.sources.join("material").exists());
+        let history = entries(&app, 1, &s.id, 10).unwrap();
+        assert_eq!(history[0]["state"], "error");
+        assert_eq!(history[0]["run_id"], Value::Null);
+        assert_eq!(history[0]["message"], "Source source: la cartella material non esiste in /sources. Creala o scegli un’altra cartella");
     }
     #[tokio::test]
     async fn supervisor_model_chosen_for_another_pi_provider_stops_before_the_run() {
